@@ -1,0 +1,6 @@
+#pragma once
+
+#define IDI_INSTALLER_ICON 101
+#define IDR_APP_PAYLOAD 201
+#define IDR_UNINSTALL_PAYLOAD 202
+

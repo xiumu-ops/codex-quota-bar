@@ -1,0 +1,35 @@
+#include <windows.h>
+#include "resource.h"
+
+IDI_APP_ICON ICON "assets/icons/app-icon.ico"
+
+// 嵌入应用清单（Windows 11、PerMonitorV2 DPI 感知）
+1 24 "src/resources/app.manifest"
+
+1 VERSIONINFO
+ FILEVERSION 2,4,2,0
+ PRODUCTVERSION 2,4,2,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "xiumu-ops\0"
+            VALUE "FileDescription", "Codex-Quota-Bar\0"
+            VALUE "FileVersion", "2.4.2\0"
+            VALUE "InternalName", "Codex-Quota-Bar\0"
+            VALUE "OriginalFilename", "Codex-Quota-Bar.exe\0"
+            VALUE "ProductName", "Codex-Quota-Bar\0"
+            VALUE "ProductVersion", "2.4.2\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END
