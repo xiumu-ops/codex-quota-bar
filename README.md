@@ -4,6 +4,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2011%20x64-0078d4.svg)](https://github.com/xiumu-ops/codex-quota-bar)
 [![C++20](https://img.shields.io/badge/Language-C%2B%2B20-00599C.svg)](https://en.cppreference.com/w/cpp/20)
 [![Direct2D](https://img.shields.io/badge/Graphics-Direct2D%20%2F%20DirectWrite-success.svg)](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-portal)
+[![Windows CI](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/windows-ci.yml)
 
 基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：常驻工作区顶部，通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态。
 
@@ -89,6 +90,19 @@
 
 所有 CMake、MSBuild、可执行主程序与安装器中间文件统一写入隐藏目录 `.build\`；`dist\Release` 只保存可分发的单文件安装器及其 SHA256 校验文件。如需连同发布文件一起清理，执行 `.\scripts\clean.ps1 -IncludeDist`。
 
+### GitHub Actions 远程构建
+
+仓库内置 `.github/workflows/windows-ci.yml`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2022` 执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Windows CI > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并上传保留 30 天的构建产物。
+
+构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar-Windows-x64-<运行编号>`。压缩包中只包含带版本号的安装器和 SHA256 文件；工作流产物不是 GitHub Release，不会自动公开发布。
+
+如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
+
+- `WINDOWS_SIGNING_PFX_BASE64`：PFX 证书文件的 Base64 内容
+- `WINDOWS_SIGNING_PFX_PASSWORD`：PFX 证书密码
+
+签名证书只在非 Pull Request 构建中临时导入当前 Runner 的用户证书库，构建后立即移除。没有配置这两个 Secret 时工作流仍会生成未签名安装包并报告其签名状态；云端编译本身不会消除 Defender 对未签名程序的信誉检查。
+
 ### 项目目录
 
 ```text
@@ -141,7 +155,13 @@ dist\Release\Codex-Quota-Bar_version_2.4.2.exe
 dist\Release\Codex-Quota-Bar_version_2.4.2.sha256
 ```
 
-安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `Uninstall.exe /quiet` 可执行静默卸载并默认保留本地设置。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除程序文件与依赖。若 Windows 仍以错误 32 锁定可执行文件，卸载器会使用 `MOVEFILE_DELAY_UNTIL_REBOOT` 登记下次系统启动时删除，并明确提示需要重启。
+安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `Uninstall.exe /quiet` 可执行静默卸载并默认保留本地设置。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除程序文件与依赖。卸载器不会复制到临时目录，也不会启动 `cmd.exe` 自删除；正在运行的卸载器映像使用 Windows 原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 登记在下次系统启动时删除，并明确提示需要重启。
+
+### Defender 与代码签名
+
+公开发布的安装器、主程序和卸载器应使用同一个受信任发布者证书完成 Authenticode 签名与时间戳。未签名的新 Win32 程序无法继承发布者信誉，并且本程序需要启动 `codex app-server`、使用命名管道以及按用户选择注册伴随启动项，容易被 Defender 机器学习模型误判。项目不建议通过添加 Defender 排除项绕过检测。
+
+如干净构建被 Defender 判定为恶意软件，应将安装器、主程序和卸载器分别提交到 [Microsoft Security Intelligence 文件提交入口](https://www.microsoft.com/wdsi/filesubmission)，选择软件开发者和误报场景。构建脚本支持通过 `CODEX_QUOTA_SIGN_CERT_THUMBPRINT` 指定签名证书；自签名证书仅适合受控开发环境，不适合公开分发。
 
 ---
 
