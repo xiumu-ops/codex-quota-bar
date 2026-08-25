@@ -17,7 +17,7 @@ function Get-TargetProcesses {
 }
 
 $script:Failures = 0
-$ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\config.json"
+$ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config.json"
 $backupId = [Guid]::NewGuid().ToString("N")
 $ConfigBackup = "$ConfigFile.$backupId.cqbbak"
 $ConfigExisted = Test-Path -LiteralPath $ConfigFile

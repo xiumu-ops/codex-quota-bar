@@ -21,7 +21,8 @@ namespace CodexQuotaBar {
         int refreshIntervalMinutes = 1;
     };
 
-    // 所有应用设置统一持久化到 %LOCALAPPDATA%\Codex-Quota-Bar\config.json。
+    // 安装版设置位于安装根目录的 data\config.json；默认路径为
+    // %LOCALAPPDATA%\Codex-Quota-Bar\data\config.json。
     class ConfigStore {
     public:
         static AppSettings LoadSettings();

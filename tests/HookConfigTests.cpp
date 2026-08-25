@@ -69,7 +69,7 @@ int wmain() {
     bool ok = true;
     const std::filesystem::path hooksFile = root / L"hooks.json";
     const std::filesystem::path app =
-        L"C:\\Program Files (x86)\\Codex-Quota-Bar\\Codex-Quota-Bar.exe";
+        L"C:\\Users\\Test\\AppData\\Local\\Codex-Quota-Bar\\app\\Codex-Quota-Bar.exe";
     const std::string original =
         "{\n"
         "  \"description\": \"user hooks\",\n"

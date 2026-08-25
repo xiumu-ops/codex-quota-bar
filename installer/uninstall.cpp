@@ -20,6 +20,9 @@
 
 namespace {
 
+constexpr wchar_t kProductName[] = L"Codex-Quota-Bar";
+constexpr wchar_t kAppDirectoryName[] = L"app";
+constexpr wchar_t kDataDirectoryName[] = L"data";
 constexpr wchar_t kUninstallKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Codex-Quota-Bar";
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -174,7 +177,7 @@ bool DeleteStartupValue() {
 
 std::filesystem::path RegisteredPath(const wchar_t* valueName) {
     HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kUninstallKey, 0,
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kUninstallKey, 0,
                       KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
         return {};
     }
@@ -201,23 +204,20 @@ std::filesystem::path RegisteredHookFilePath() {
     return RegisteredPath(L"HookFilePath");
 }
 
-std::filesystem::path RegisteredUserDataPath() {
-    return RegisteredPath(L"UserDataDir");
-}
-
 bool IsRegisteredInstallDirectory(const std::filesystem::path& installDir) {
     const std::filesystem::path registered = RegisteredPath(L"InstallLocation");
     return !registered.empty() && EqualPath(installDir, registered) &&
-           _wcsicmp(installDir.filename().c_str(), L"Codex-Quota-Bar") == 0 &&
-           !installDir.parent_path().empty();
+           _wcsicmp(installDir.filename().c_str(), kAppDirectoryName) == 0 &&
+           _wcsicmp(installDir.parent_path().filename().c_str(), kProductName) == 0 &&
+           !installDir.parent_path().parent_path().empty();
 }
 
 void DeleteRegistrationAndShortcut() {
-    RegDeleteTreeW(HKEY_LOCAL_MACHINE, kUninstallKey);
-    const std::wstring commonPrograms = KnownFolder(FOLDERID_CommonPrograms);
-    if (!commonPrograms.empty()) {
+    RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
+    const std::wstring programs = KnownFolder(FOLDERID_Programs);
+    if (!programs.empty()) {
         const std::filesystem::path shortcut =
-            std::filesystem::path(commonPrograms) / L"Codex-Quota-Bar.lnk";
+            std::filesystem::path(programs) / L"Codex-Quota-Bar.lnk";
         DeleteFileW(shortcut.c_str());
     }
 }
@@ -315,23 +315,48 @@ std::wstring WindowsErrorText(DWORD errorCode) {
     return result;
 }
 
-void RemoveSettingsData() {
-    std::filesystem::path dataDir = RegisteredUserDataPath();
-    std::error_code error;
-    if (!dataDir.empty()) std::filesystem::remove_all(dataDir, error);
-    const std::wstring localAppData = KnownFolder(FOLDERID_LocalAppData);
-    if (!localAppData.empty()) {
-        const std::filesystem::path currentDataDir =
-            std::filesystem::path(localAppData) / L"Codex-Quota-Bar";
-        std::filesystem::remove_all(currentDataDir, error);
+void RemoveSettingsData(const std::filesystem::path& installDir) {
+    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
+        _wcsicmp(installDir.parent_path().filename().c_str(), kProductName) != 0) {
+        return;
     }
+    const std::filesystem::path dataDir =
+        installDir.parent_path() / kDataDirectoryName;
+    std::error_code error;
+    std::filesystem::remove_all(dataDir, error);
+}
+
+void RemoveEmptyInstallRoot(const std::filesystem::path& installDir) {
+    const std::filesystem::path installRoot = installDir.parent_path();
+    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
+        _wcsicmp(installRoot.filename().c_str(), kProductName) != 0) {
+        return;
+    }
+    std::error_code error;
+    if (std::filesystem::is_empty(installRoot, error) && !error) {
+        std::filesystem::remove(installRoot, error);
+    }
+}
+
+bool ScheduleInstallRootRemoval(const std::filesystem::path& installDir) {
+    const std::filesystem::path installRoot = installDir.parent_path();
+    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
+        _wcsicmp(installRoot.filename().c_str(), kProductName) != 0) {
+        return false;
+    }
+
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(installRoot, error)) {
+        if (error || !EqualPath(entry.path(), installDir)) return false;
+    }
+    return MoveFileExW(installRoot.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT) != FALSE;
 }
 
 int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet) {
     if (!IsRegisteredInstallDirectory(installDir)) {
         if (!quiet) {
             MessageBoxW(nullptr,
-                        L"安装目录与系统注册信息不一致，卸载已中止。",
+                        L"安装目录与当前用户注册信息不一致，卸载已中止。",
                         L"Codex-Quota-Bar 卸载程序",
                         MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
         }
@@ -398,8 +423,13 @@ int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet
     const bool removed = SafeRemoveInstallDirectory(installDir, removalError);
     const bool scheduled = !removed && ScheduleInstallDirectoryRemoval(installDir);
     if (removed || scheduled) {
+        if (removeData) RemoveSettingsData(installDir);
         DeleteRegistrationAndShortcut();
-        if (removeData) RemoveSettingsData();
+        if (removed) {
+            RemoveEmptyInstallRoot(installDir);
+        } else {
+            ScheduleInstallRootRemoval(installDir);
+        }
     }
 
     if (!quiet) {

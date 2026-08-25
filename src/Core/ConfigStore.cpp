@@ -25,13 +25,33 @@ namespace {
 
     std::mutex g_configMutex;
 
+    std::filesystem::path InstalledDataDirectory() {
+        std::wstring modulePath(32768, L'\0');
+        const DWORD length = GetModuleFileNameW(
+            nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+        if (length == 0 || length >= modulePath.size()) return {};
+        modulePath.resize(length);
+
+        const std::filesystem::path appDirectory =
+            std::filesystem::path(modulePath).parent_path();
+        const std::filesystem::path installRoot = appDirectory.parent_path();
+        if (_wcsicmp(appDirectory.filename().c_str(), L"app") != 0 ||
+            _wcsicmp(installRoot.filename().c_str(), L"Codex-Quota-Bar") != 0) {
+            return {};
+        }
+        return installRoot / L"data";
+    }
+
     std::filesystem::path ConfigDirectory() {
+        const std::filesystem::path installedData = InstalledDataDirectory();
+        if (!installedData.empty()) return installedData;
+
         PWSTR localAppData = nullptr;
         if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData))) {
-            return std::filesystem::current_path() / L"Codex-Quota-Bar";
+            return std::filesystem::current_path() / L"Codex-Quota-Bar" / L"data";
         }
         const std::filesystem::path directory =
-            std::filesystem::path(localAppData) / L"Codex-Quota-Bar";
+            std::filesystem::path(localAppData) / L"Codex-Quota-Bar" / L"data";
         CoTaskMemFree(localAppData);
         return directory;
     }

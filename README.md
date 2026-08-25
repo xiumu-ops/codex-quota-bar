@@ -62,7 +62,7 @@
 - **官方账户接口**：临时启动 `codex app-server`，通过 stdio JSON-RPC 调用 `account/rateLimits/read` 与 `account/usage/read`，无需额外常驻服务或开放本地端口
 - **官方生命周期 Hook**：安装器注册 `SessionStart`、`Stop`、`SessionEnd`，新会话、每轮对话完成和会话结束时自动同步
 - **伴随模式**：可从右键菜单启用；Codex 桌面端启动时自动显示，桌面端退出后防抖隐藏，并通过当前用户启动项在登录后后台等待
-- **原生安装与卸载**：单文件安装包以管理员权限写入 `C:\Program Files (x86)\Codex-Quota-Bar`，并注册公共开始菜单和 Windows“已安装的应用”卸载入口
+- **当前用户安装与卸载**：单文件安装包默认写入 `%LOCALAPPDATA%\Codex-Quota-Bar\app`，程序、配置、开始菜单和“已安装的应用”入口全部限定在当前用户
 - **Win32 命名管道 IPC**：单实例守护进程，CLI / IDE / Git Hook 毫秒级通信（命令表见下）
 - **零第三方运行库**：程序只使用 Windows 系统组件；额度同步需要已安装并登录的官方 Codex
 
@@ -119,13 +119,22 @@ dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.4.2.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 子目录；默认位置为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.4.2.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
-C:\Program Files (x86)\Codex-Quota-Bar
+%LOCALAPPDATA%\Codex-Quota-Bar\
+├─ app\
+│  ├─ Codex-Quota-Bar.exe
+│  └─ Uninstall.exe
+└─ data\
+   └─ config.json
 ```
 
-安装器和卸载器会请求管理员权限；应用与卸载入口注册为系统级，公共开始菜单对本机用户可见。自定义路径必须使用名为 `Codex-Quota-Bar` 的独立目录，卸载器会通过注册的 `InstallLocation` 精确校验后才删除，避免误删用户选择位置中的其他文件。静默安装使用默认路径；重新安装沿用已注册的安装位置。应用本身仍是 Windows 11 x64 原生程序，默认放入 `Program Files (x86)` 并不表示生成 32 位程序。
+安装器以当前用户权限运行，不再请求 UAC；卸载入口写入 `HKCU`，快捷方式只创建在当前用户开始菜单中。自定义路径必须使用名为 `Codex-Quota-Bar` 的独立根目录，卸载器通过注册的 `InstallLocation` 精确校验 `app` 子目录后才删除，避免误删用户选择位置中的其他文件。静默安装使用默认路径；重新安装沿用已注册的位置。
+
+本项目尚未发布，因此不保留旧系统级布局的迁移逻辑。安装器检测到旧版 HKLM 卸载项时会停止安装，并要求先从 Windows“已安装的应用”卸载旧版，避免 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 同时残留两份程序。
+
+卸载器仍会请求一次管理员权限，但只用于在 Windows 锁定正在运行的 `Uninstall.exe` 时调用系统原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 完成最终删除；Hook、伴随启动项、HKCU 卸载项、当前用户快捷方式和配置本身都不需要管理员权限。项目不复制临时卸载器，也不使用 `cmd.exe` 或脚本自删除。
 
 窗口设置、伴随模式启动项以及 Codex Hook 均保持当前用户范围。安装器通过当前用户的 `~/.codex/hooks.json` 注册会话同步 Hook，不读取或修改高敏感的 `config.toml`；`hooks.json` 使用临时文件原子替换，若其中已有其他 Hook 或元数据，会结构化合并并精确保留整数等 JSON 数值。重新安装时会备份现有程序、卸载器和快捷方式，任何关键步骤失败都会恢复原安装。
 
@@ -155,7 +164,7 @@ dist\Release\Codex-Quota-Bar_version_2.4.2.exe
 dist\Release\Codex-Quota-Bar_version_2.4.2.sha256
 ```
 
-安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `Uninstall.exe /quiet` 可执行静默卸载并默认保留本地设置。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除程序文件与依赖。卸载器不会复制到临时目录，也不会启动 `cmd.exe` 自删除；正在运行的卸载器映像使用 Windows 原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 登记在下次系统启动时删除，并明确提示需要重启。
+安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
 
 ### Defender 与代码签名
 
@@ -196,10 +205,10 @@ dist\Release\Codex-Quota-Bar_version_2.4.2.sha256
 窗口位置、界面缩放、刷新间隔和伴随模式偏好统一保存在：
 
 ```text
-%LOCALAPPDATA%\Codex-Quota-Bar\config.json
+%LOCALAPPDATA%\Codex-Quota-Bar\data\config.json
 ```
 
-配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。卸载时选择删除本地设置，会删除整个 `%LOCALAPPDATA%\Codex-Quota-Bar` 文件夹；选择保留则不会删除。
+配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。卸载时选择删除本地设置会删除 `data`，并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
 
 ### Codex App Server
 

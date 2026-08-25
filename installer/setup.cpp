@@ -24,6 +24,8 @@
 namespace {
 
 constexpr wchar_t kProductName[] = L"Codex-Quota-Bar";
+constexpr wchar_t kAppDirectoryName[] = L"app";
+constexpr wchar_t kDataDirectoryName[] = L"data";
 constexpr wchar_t kAppFilename[] = L"Codex-Quota-Bar.exe";
 constexpr wchar_t kUninstallFilename[] = L"Uninstall.exe";
 constexpr wchar_t kUninstallKey[] =
@@ -147,7 +149,7 @@ FolderSelectionResult ChooseInstallParent(
     }
     if (SUCCEEDED(hr)) {
         hr = dialog->SetTitle(
-            L"选择安装位置（将自动创建 Codex-Quota-Bar 子目录）");
+            L"选择安装位置（将自动创建 Codex-Quota-Bar\\app 与 data）");
     }
 
     IShellItem* suggestedItem = nullptr;
@@ -322,7 +324,7 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
                          const std::filesystem::path& hookFilePath,
                          const std::filesystem::path& userDataDir) {
     HKEY key = nullptr;
-    if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, kUninstallKey, 0, nullptr, 0,
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kUninstallKey, 0, nullptr, 0,
                         KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
         return false;
     }
@@ -363,7 +365,15 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
     return ok;
 }
 
-bool HasSystemUninstallRegistration() {
+bool HasUserUninstallRegistration() {
+    HKEY key = nullptr;
+    const LSTATUS status = RegOpenKeyExW(
+        HKEY_CURRENT_USER, kUninstallKey, 0, KEY_QUERY_VALUE, &key);
+    if (status == ERROR_SUCCESS) RegCloseKey(key);
+    return status == ERROR_SUCCESS;
+}
+
+bool HasLegacySystemInstallation() {
     HKEY key = nullptr;
     const LSTATUS status = RegOpenKeyExW(
         HKEY_LOCAL_MACHINE, kUninstallKey, 0, KEY_QUERY_VALUE, &key);
@@ -373,7 +383,7 @@ bool HasSystemUninstallRegistration() {
 
 std::filesystem::path RegisteredInstallDirectory() {
     HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kUninstallKey, 0,
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kUninstallKey, 0,
                       KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
         return {};
     }
@@ -413,22 +423,28 @@ void UpdateExistingCompanionStartup(const std::filesystem::path& appPath) {
 void RollBackInstall(const FileRollback& appRollback,
                      const FileRollback& uninstallRollback,
                      const FileRollback& shortcutRollback,
-                     bool existingSystemInstall,
+                     bool existingUserInstall,
                      const std::filesystem::path& installDir,
                      const std::filesystem::path& appPath,
                      const std::filesystem::path& uninstallPath,
                      const std::filesystem::path& hookFilePath,
                      const std::filesystem::path& userDataDir) {
-    RegDeleteTreeW(HKEY_LOCAL_MACHINE, kUninstallKey);
+    RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
     RestoreFileRollback(shortcutRollback);
     RestoreFileRollback(uninstallRollback);
     RestoreFileRollback(appRollback);
-    if (existingSystemInstall) {
+    if (existingUserInstall) {
         RegisterUninstaller(installDir, appPath, uninstallPath, hookFilePath, userDataDir);
     } else {
         std::error_code error;
         if (std::filesystem::is_empty(installDir, error) && !error) {
             std::filesystem::remove(installDir, error);
+        }
+        const std::filesystem::path installRoot = installDir.parent_path();
+        error.clear();
+        if (_wcsicmp(installRoot.filename().c_str(), kProductName) == 0 &&
+            std::filesystem::is_empty(installRoot, error) && !error) {
+            std::filesystem::remove(installRoot, error);
         }
     }
 }
@@ -446,19 +462,26 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     const bool quiet = IsQuietInstall();
     const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
-    const std::wstring programFilesX86 = KnownFolder(FOLDERID_ProgramFilesX86);
-    const std::wstring commonPrograms = KnownFolder(FOLDERID_CommonPrograms);
     const std::wstring localAppData = KnownFolder(FOLDERID_LocalAppData);
-    if (programFilesX86.empty() || commonPrograms.empty() ||
-        localAppData.empty()) {
-        ReportFailure(L"无法定位 Windows 系统安装目录。", quiet);
+    const std::wstring programs = KnownFolder(FOLDERID_Programs);
+    if (localAppData.empty() || programs.empty()) {
+        ReportFailure(L"无法定位当前用户的应用目录。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 1;
     }
 
+    if (HasLegacySystemInstallation()) {
+        ReportFailure(
+            L"检测到旧的系统级安装。请先从 Windows“已安装的应用”中卸载旧版，"
+            L"然后重新运行本安装包。\n\n新版本不会静默保留旧目录、Hook 或启动项。",
+            quiet);
+        if (SUCCEEDED(comResult)) CoUninitialize();
+        return 7;
+    }
+
     std::filesystem::path installDir = RegisteredInstallDirectory();
     if (installDir.empty()) {
-        std::filesystem::path installParent = programFilesX86;
+        std::filesystem::path installParent = localAppData;
         if (!quiet) {
             const FolderSelectionResult selection =
                 ChooseInstallParent(installParent, installParent);
@@ -472,22 +495,25 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
                 return 2;
             }
         }
-        installDir = _wcsicmp(installParent.filename().c_str(), kProductName) == 0
+        const std::filesystem::path installRoot =
+            _wcsicmp(installParent.filename().c_str(), kProductName) == 0
             ? installParent
             : installParent / kProductName;
+        installDir = installRoot / kAppDirectoryName;
     }
-    if (_wcsicmp(installDir.filename().c_str(), kProductName) != 0 ||
-        installDir.parent_path().empty()) {
-        ReportFailure(L"安装目录必须是名为 Codex-Quota-Bar 的独立文件夹。", quiet);
+    const std::filesystem::path installRoot = installDir.parent_path();
+    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
+        _wcsicmp(installRoot.filename().c_str(), kProductName) != 0 ||
+        installRoot.parent_path().empty()) {
+        ReportFailure(L"安装目录必须使用 Codex-Quota-Bar\\app 的独立结构。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 2;
     }
     const std::filesystem::path appPath = installDir / kAppFilename;
     const std::filesystem::path uninstallPath = installDir / kUninstallFilename;
     const std::filesystem::path shortcut =
-        std::filesystem::path(commonPrograms) / L"Codex-Quota-Bar.lnk";
-    const std::filesystem::path userDataDir =
-        std::filesystem::path(localAppData) / L"Codex-Quota-Bar";
+        std::filesystem::path(programs) / L"Codex-Quota-Bar.lnk";
+    const std::filesystem::path userDataDir = installRoot / kDataDirectoryName;
 
     std::error_code error;
     if (std::filesystem::exists(installDir, error) && !error &&
@@ -508,16 +534,16 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
     RequestExistingAppExit(installDir, appPath);
 
-    bool existingSystemInstall = std::filesystem::exists(appPath, error);
-    if (!error && !existingSystemInstall) {
-        existingSystemInstall = std::filesystem::exists(uninstallPath, error);
+    bool existingUserInstall = std::filesystem::exists(appPath, error);
+    if (!error && !existingUserInstall) {
+        existingUserInstall = std::filesystem::exists(uninstallPath, error);
     }
     if (error) {
         ReportFailure(L"无法检查现有安装状态。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 3;
     }
-    existingSystemInstall = existingSystemInstall || HasSystemUninstallRegistration();
+    existingUserInstall = existingUserInstall || HasUserUninstallRegistration();
 
     FileRollback appRollback;
     FileRollback uninstallRollback;
@@ -538,7 +564,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     if (!ReplacePayload(IDR_APP_PAYLOAD, appPath) ||
         !ReplacePayload(IDR_UNINSTALL_PAYLOAD, uninstallPath)) {
         RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
-                        existingSystemInstall, installDir, appPath,
+                        existingUserInstall, installDir, appPath,
                         uninstallPath, hookFilePath, userDataDir);
         ReportFailure(L"无法写入程序文件。请退出正在运行的旧版本后重试。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
@@ -547,18 +573,18 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
     if (!CreateStartMenuShortcut(shortcut, appPath)) {
         RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
-                        existingSystemInstall, installDir, appPath,
+                        existingUserInstall, installDir, appPath,
                         uninstallPath, hookFilePath, userDataDir);
-        ReportFailure(L"无法创建公共开始菜单快捷方式，安装已回滚。", quiet);
+        ReportFailure(L"无法创建当前用户的开始菜单快捷方式，安装已回滚。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 4;
     }
 
     if (!RegisterUninstaller(installDir, appPath, uninstallPath, hookFilePath, userDataDir)) {
         RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
-                        existingSystemInstall, installDir, appPath,
+                        existingUserInstall, installDir, appPath,
                         uninstallPath, hookFilePath, userDataDir);
-        ReportFailure(L"无法注册系统卸载入口，安装已回滚。", quiet);
+        ReportFailure(L"无法注册当前用户的卸载入口，安装已回滚。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 5;
     }
@@ -569,7 +595,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         CodexQuotaBarInstaller::HookConfig::Install(hookFilePath, appPath);
     if (!hookResult.success) {
         RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
-                        existingSystemInstall, installDir, appPath,
+                        existingUserInstall, installDir, appPath,
                         uninstallPath, hookFilePath, userDataDir);
         ReportFailure(L"无法注册 Codex 会话同步 Hook，安装已回滚：\n\n" +
                       hookResult.error, quiet);
