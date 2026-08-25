@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2011%20x64-0078d4.svg)](https://github.com/xiumu-ops/codex-quota-bar)
 [![C++20](https://img.shields.io/badge/Language-C%2B%2B20-00599C.svg)](https://en.cppreference.com/w/cpp/20)
 [![Direct2D](https://img.shields.io/badge/Graphics-Direct2D%20%2F%20DirectWrite-success.svg)](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-portal)
-[![Windows CI](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/windows-ci.yml)
+[![Remote Build](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml/badge.svg)](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml)
 
 基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：常驻工作区顶部，通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态。
 
@@ -92,7 +92,7 @@
 
 ### GitHub Actions 远程构建
 
-仓库内置 `.github/workflows/windows-ci.yml`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2022` 执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Windows CI > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并上传保留 30 天的构建产物。
+仓库内置 `.github/workflows/remote-build.yml`，工作流显示名称为 `Codex-Quota-Bar Remote Build`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2022` 执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Codex-Quota-Bar Remote Build > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并上传保留 30 天的构建产物。
 
 构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar-Windows-x64-<运行编号>`。压缩包中只包含带版本号的安装器和 SHA256 文件；工作流产物不是 GitHub Release，不会自动公开发布。
 

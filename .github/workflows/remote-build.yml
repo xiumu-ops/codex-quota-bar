@@ -1,4 +1,4 @@
-name: Windows CI
+name: Codex-Quota-Bar Remote Build
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  group: remote-build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Show build environment
         run: |
@@ -118,7 +118,7 @@ jobs:
           Write-Host "Signature: $($signature.Status)"
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Codex-Quota-Bar-Windows-x64-${{ github.run_number }}
           path: |
