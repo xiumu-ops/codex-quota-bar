@@ -423,6 +423,18 @@ try {
         } elseif (-not $ConfigExisted -and (Test-Path -LiteralPath $ConfigFile)) {
             Remove-Item -LiteralPath $ConfigFile -Force
         }
+        if (-not $ConfigExisted) {
+            $testDataDirectory = Split-Path -Parent $ConfigFile
+            $testInstallRoot = Split-Path -Parent $testDataDirectory
+            if ((Test-Path -LiteralPath $testDataDirectory) -and
+                @(Get-ChildItem -LiteralPath $testDataDirectory -Force).Count -eq 0) {
+                Remove-Item -LiteralPath $testDataDirectory -Force
+            }
+            if ((Test-Path -LiteralPath $testInstallRoot) -and
+                @(Get-ChildItem -LiteralPath $testInstallRoot -Force).Count -eq 0) {
+                Remove-Item -LiteralPath $testInstallRoot -Force
+            }
+        }
     }
     foreach ($externalPath in @($ExternalInstances.Path | Sort-Object -Unique)) {
         if (Test-Path -LiteralPath $externalPath) {

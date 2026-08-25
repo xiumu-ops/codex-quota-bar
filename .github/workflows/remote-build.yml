@@ -117,6 +117,9 @@ jobs:
           Write-Host "SHA256:   $actualHash"
           Write-Host "Signature: $($signature.Status)"
 
+      - name: Test current-user install and uninstall
+        run: .\scripts\test-installer.ps1 -Ci
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v7
         with:
