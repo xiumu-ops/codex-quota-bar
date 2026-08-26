@@ -2,6 +2,7 @@
 #include "Core/Logger.h"
 
 #include <sddl.h>
+#include <algorithm>
 #include <exception>
 #include <system_error>
 
@@ -236,8 +237,12 @@ namespace CodexQuotaBar {
 
     std::wstring PipeServer::SendCommand(const std::wstring& pipeName, const std::wstring& command, DWORD timeoutMs) {
         wchar_t replyBuf[2048] = { 0 };
+        const ULONGLONG deadline = GetTickCount64() + (std::max)(timeoutMs, 1UL);
 
-        for (int attempt = 0;; ++attempt) {
+        for (;;) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline) break;
+            const DWORD remaining = static_cast<DWORD>(deadline - now);
             DWORD bytesRead = 0;
             BOOL ok = CallNamedPipeW(
                 pipeName.c_str(),
@@ -246,18 +251,26 @@ namespace CodexQuotaBar {
                 replyBuf,
                 sizeof(replyBuf),
                 &bytesRead,
-                timeoutMs);
+                remaining);
 
             if (ok && bytesRead >= sizeof(wchar_t)) {
                 size_t charCount = bytesRead / sizeof(wchar_t);
                 if (charCount > 0 && replyBuf[charCount - 1] == L'\0') --charCount;
                 return std::wstring(replyBuf, charCount);
             }
-            if (attempt < 2 && !ok && GetLastError() == ERROR_PIPE_BUSY &&
-                WaitNamedPipeW(pipeName.c_str(), timeoutMs)) {
-                continue;
+            const DWORD error = ok ? ERROR_INVALID_DATA : GetLastError();
+            const ULONGLONG afterCall = GetTickCount64();
+            if (afterCall >= deadline ||
+                (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND)) break;
+
+            const DWORD waitRemaining = static_cast<DWORD>(deadline - afterCall);
+            if (error == ERROR_PIPE_BUSY) {
+                WaitNamedPipeW(pipeName.c_str(), waitRemaining);
+            } else {
+                // 服务端处理完上一位客户端后会短暂关闭并重建实例。
+                // ERROR_FILE_NOT_FOUND 在这个窗口内是可恢复状态。
+                Sleep((std::min)(waitRemaining, 10UL));
             }
-            break;
         }
         return L"ERROR";
     }
