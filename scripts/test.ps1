@@ -35,6 +35,8 @@ $ExternalInstances = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Objec
         }
     } catch {}
 })
+$PreviousDisableLog = $env:CODEX_QUOTA_DISABLE_LOG
+$env:CODEX_QUOTA_DISABLE_LOG = "1"
 
 try {
 foreach ($externalPath in @($ExternalInstances.Path | Sort-Object -Unique)) {
@@ -436,6 +438,11 @@ try {
                 Remove-Item -LiteralPath $testInstallRoot -Force
             }
         }
+    }
+    if ($null -eq $PreviousDisableLog) {
+        Remove-Item Env:CODEX_QUOTA_DISABLE_LOG -ErrorAction SilentlyContinue
+    } else {
+        $env:CODEX_QUOTA_DISABLE_LOG = $PreviousDisableLog
     }
     foreach ($externalPath in @($ExternalInstances.Path | Sort-Object -Unique)) {
         if (Test-Path -LiteralPath $externalPath) {

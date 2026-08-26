@@ -29,10 +29,11 @@ if ($installers.Count -ne 1) {
     throw "Expected exactly one release installer, found $($installers.Count)."
 }
 
-if ((Test-Path -LiteralPath $installRoot) -or
-    (Test-Path -LiteralPath $uninstallRegistry) -or
-    (Test-Path -LiteralPath $shortcut)) {
-    throw "The GitHub runner is not clean enough for the installer integration test."
+$preexistingState = @(@($installRoot, $uninstallRegistry, $shortcut) | Where-Object {
+    Test-Path -LiteralPath $_
+})
+if ($preexistingState.Count -gt 0) {
+    throw "The GitHub runner contains pre-existing installer state: $($preexistingState -join ', ')"
 }
 
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
