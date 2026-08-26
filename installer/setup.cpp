@@ -263,7 +263,7 @@ void RequestExistingAppExit(const std::filesystem::path& installDir, const std::
         std::wstring command = Quote(appPath.wstring()) + L" --exit";
         STARTUPINFOW startup = { sizeof(startup) };
         PROCESS_INFORMATION process = {};
-        if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
+        if (CreateProcessW(appPath.c_str(), command.data(), nullptr, nullptr, FALSE,
                            CREATE_NO_WINDOW, nullptr, appPath.parent_path().c_str(),
                            &startup, &process)) {
             WaitForSingleObject(process.hProcess, 3000);
@@ -333,7 +333,7 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
     const std::wstring quietCommand = uninstallCommand + L" /quiet";
     bool ok =
         SetRegistryString(key, L"DisplayName", kProductName) &&
-        SetRegistryString(key, L"DisplayVersion", L"2.4.2") &&
+        SetRegistryString(key, L"DisplayVersion", L"2.5.0") &&
         SetRegistryString(key, L"Publisher", L"xiumu-ops") &&
         SetRegistryString(key, L"InstallLocation", installDir.wstring()) &&
         SetRegistryString(key, L"HookFilePath", hookFilePath.wstring()) &&

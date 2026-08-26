@@ -198,4 +198,8 @@ namespace {
         WriteConfig(ConfigDirectory() / L"config.json", data);
     }
 
+    std::wstring ConfigStore::DataDirectory() {
+        return ConfigDirectory().wstring();
+    }
+
 } // namespace CodexQuotaBar

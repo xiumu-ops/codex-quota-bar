@@ -8,5 +8,5 @@ if (-not (Test-Path $ExePath)) {
     & (Join-Path $ScriptDir "build.ps1")
 }
 
-Write-Host "Starting Codex-Quota-Bar 2.4.2 (Direct2D Native)..." -ForegroundColor Green
+Write-Host "Starting Codex-Quota-Bar 2.5.0 (Direct2D Native)..." -ForegroundColor Green
 Start-Process -FilePath $ExePath

@@ -1,6 +1,8 @@
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -43,7 +45,8 @@ int main(int argc, char** argv) {
         if (step == 0) {
             if (!Contains(line, "\"method\":\"initialize\"") ||
                 !Contains(line, "\"id\":1") ||
-                !Contains(line, "\"name\":\"codex_quota_bar\"")) {
+                !Contains(line, "\"name\":\"codex_quota_bar\"") ||
+                !Contains(line, "\"version\":\"2.5.0\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
             // 非 JSON 诊断行用于覆盖客户端的输出降噪路径。
@@ -58,6 +61,15 @@ int main(int argc, char** argv) {
                 !Contains(line, "\"id\":2")) {
                 return ProtocolFailure(2, "invalid rate-limits request");
             }
+            if (scenario == "malformed_rate_limits") {
+                std::cout << "{not-json" << std::endl;
+                return 0;
+            }
+            if (scenario == "oversized_output") {
+                std::cout << std::string(1024 * 1024 + 4096, 'x') << std::flush;
+                return 0;
+            }
+
             // 无关通知应被客户端忽略，随后再读取 id=2 的真正响应。
             std::cout << "{\"method\":\"account/rateLimits/updated\",\"params\":{}}" << std::endl;
             std::cout
@@ -101,6 +113,9 @@ int main(int argc, char** argv) {
                        "\"longestRunningTurnSec\":5400,\"currentStreakDays\":12"
                        "}}}"
                     << std::endl;
+            }
+            if (scenario == "hang_after_response") {
+                std::this_thread::sleep_for(std::chrono::seconds(10));
             }
             return 0;
         } else {

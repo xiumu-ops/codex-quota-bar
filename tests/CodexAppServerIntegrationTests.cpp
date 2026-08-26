@@ -2,6 +2,7 @@
 #include "Services/CompanionMode.h"
 
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <string>
 
@@ -38,6 +39,8 @@ int wmain(int argc, wchar_t** argv) {
         std::cerr << "usage: CodexAppServerIntegrationTests <fake-codex-path>\n";
         return 64;
     }
+
+    _wputenv_s(L"CODEX_QUOTA_DISABLE_LOG", L"1");
 
     // 显式覆盖是受信任的自定义安装/测试入口。
     _wputenv_s(L"CODEX_QUOTA_CODEX_PATH", argv[1]);
@@ -102,8 +105,23 @@ int wmain(int argc, wchar_t** argv) {
     Expect(usageError.errorMessage.find(L"usage unavailable") != std::wstring::npos,
            "server usage error is preserved");
 
+    std::cout << "Malformed and oversized App Server output\n";
+    QuotaSnapshot malformed = Fetch(L"malformed_rate_limits");
+    Expect(!malformed.success, "malformed response fails without crashing");
+    QuotaSnapshot oversized = Fetch(L"oversized_output");
+    Expect(!oversized.success, "output above the safety limit is rejected");
+
+    std::cout << "Hung App Server cleanup\n";
+    const auto hangStarted = std::chrono::steady_clock::now();
+    QuotaSnapshot hung = Fetch(L"hang_after_response");
+    const auto hangElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - hangStarted);
+    Expect(hung.success, "response is preserved when App Server does not exit after EOF");
+    Expect(hangElapsed.count() < 5000, "hung App Server is cleaned up within a bounded time");
+
     _wputenv_s(L"CODEX_QUOTA_FAKE_SCENARIO", L"");
     _wputenv_s(L"CODEX_QUOTA_CODEX_PATH", L"");
+    _wputenv_s(L"CODEX_QUOTA_DISABLE_LOG", L"");
 
     if (g_failures == 0) {
         std::cout << "All App Server integration tests passed.\n";

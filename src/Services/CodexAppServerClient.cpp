@@ -1,4 +1,6 @@
 #include "Services/CodexAppServerClient.h"
+#include "Core/Constants.h"
+#include "Core/Logger.h"
 #include "Core/SimpleJson.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -8,8 +10,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <sddl.h>
 
 #include <algorithm>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,6 +70,18 @@ namespace {
 
     private:
         HANDLE m_handle = INVALID_HANDLE_VALUE;
+    };
+
+    class UniqueLocalMemory {
+    public:
+        explicit UniqueLocalMemory(HLOCAL memory = nullptr) : m_memory(memory) {}
+        ~UniqueLocalMemory() { if (m_memory) LocalFree(m_memory); }
+        UniqueLocalMemory(const UniqueLocalMemory&) = delete;
+        UniqueLocalMemory& operator=(const UniqueLocalMemory&) = delete;
+        void* Get() const { return m_memory; }
+
+    private:
+        HLOCAL m_memory = nullptr;
     };
 
     std::wstring ReadEnvironment(const wchar_t* name) {
@@ -176,9 +192,19 @@ namespace {
         ~AppServerProcess() { Stop(); }
 
         bool Start(const std::wstring& executable, std::wstring& error) {
+            PSECURITY_DESCRIPTOR descriptorRaw = nullptr;
+            constexpr wchar_t kChildPipeSddl[] =
+                L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)S:(ML;;NW;;;ME)";
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    kChildPipeSddl, SDDL_REVISION_1, &descriptorRaw, nullptr)) {
+                error = L"创建 Codex 管道安全描述符失败：" + FormatWindowsError(GetLastError());
+                return false;
+            }
+            UniqueLocalMemory descriptor(static_cast<HLOCAL>(descriptorRaw));
             SECURITY_ATTRIBUTES attributes = {};
             attributes.nLength = sizeof(attributes);
             attributes.bInheritHandle = TRUE;
+            attributes.lpSecurityDescriptor = descriptor.Get();
 
             HANDLE stdoutReadRaw = nullptr;
             HANDLE stdoutWriteRaw = nullptr;
@@ -193,13 +219,19 @@ namespace {
                 return false;
             }
 
+            GUID pipeGuid = {};
+            wchar_t pipeGuidText[40] = {};
+            const bool hasGuid = SUCCEEDED(CoCreateGuid(&pipeGuid)) &&
+                StringFromGUID2(pipeGuid, pipeGuidText, static_cast<int>(std::size(pipeGuidText))) > 0;
+            const std::wstring pipeSuffix = hasGuid
+                ? std::wstring(pipeGuidText)
+                : std::to_wstring(GetTickCount64());
             const std::wstring stdinPipeName = L"\\\\.\\pipe\\codex_quota_bar_stdin_"
-                + std::to_wstring(GetCurrentProcessId()) + L"_"
-                + std::to_wstring(GetTickCount64());
+                + std::to_wstring(GetCurrentProcessId()) + L"_" + pipeSuffix;
             HANDLE stdinReadRaw = CreateNamedPipeW(
                 stdinPipeName.c_str(),
-                PIPE_ACCESS_INBOUND,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 1, 4096, 4096, 0, &attributes);
             if (stdinReadRaw == INVALID_HANDLE_VALUE) {
                 error = L"创建 Codex 输入管道失败：" + FormatWindowsError(GetLastError());
@@ -223,12 +255,51 @@ namespace {
             }
             m_writeEvent.Reset(writeEventRaw);
 
-            STARTUPINFOW startup = {};
-            startup.cb = sizeof(startup);
-            startup.dwFlags = STARTF_USESTDHANDLES;
-            startup.hStdInput = stdinRead.Get();
-            startup.hStdOutput = stdoutWrite.Get();
-            startup.hStdError = stdoutWrite.Get();
+            STARTUPINFOEXW startupEx = {};
+            startupEx.StartupInfo.cb = sizeof(startupEx);
+            startupEx.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startupEx.StartupInfo.hStdInput = stdinRead.Get();
+            startupEx.StartupInfo.hStdOutput = stdoutWrite.Get();
+            startupEx.StartupInfo.hStdError = stdoutWrite.Get();
+
+            SIZE_T attributeBytes = 0;
+            InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+            if (attributeBytes == 0) {
+                error = L"初始化 Codex 句柄白名单失败：" + FormatWindowsError(GetLastError());
+                return false;
+            }
+            std::vector<BYTE> attributeStorage(attributeBytes);
+            startupEx.lpAttributeList = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(
+                attributeStorage.data());
+            if (!InitializeProcThreadAttributeList(
+                    startupEx.lpAttributeList, 1, 0, &attributeBytes)) {
+                error = L"创建 Codex 句柄白名单失败：" + FormatWindowsError(GetLastError());
+                return false;
+            }
+
+            HANDLE inheritedHandles[] = { stdinRead.Get(), stdoutWrite.Get() };
+            if (!UpdateProcThreadAttribute(
+                    startupEx.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                    inheritedHandles, sizeof(inheritedHandles), nullptr, nullptr)) {
+                error = L"限制 Codex 继承句柄失败：" + FormatWindowsError(GetLastError());
+                DeleteProcThreadAttributeList(startupEx.lpAttributeList);
+                return false;
+            }
+
+            HANDLE jobRaw = CreateJobObjectW(nullptr, nullptr);
+            if (jobRaw) {
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if (SetInformationJobObject(
+                        jobRaw, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+                    m_job.Reset(jobRaw);
+                } else {
+                    CloseHandle(jobRaw);
+                    WriteLog(LogLevel::Warning, L"无法配置 App Server 作业对象，将使用进程级清理。");
+                }
+            } else {
+                WriteLog(LogLevel::Warning, L"无法创建 App Server 作业对象，将使用进程级清理。");
+            }
 
             PROCESS_INFORMATION processInfo = {};
             std::wstring command = L"\"" + executable + L"\" app-server";
@@ -238,16 +309,30 @@ namespace {
             std::wstring workingDirectory = ReadEnvironment(L"USERPROFILE");
             BOOL created = CreateProcessW(
                 executable.c_str(), commandBuffer.data(), nullptr, nullptr, TRUE,
-                CREATE_NO_WINDOW, nullptr,
+                CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr,
                 workingDirectory.empty() ? nullptr : workingDirectory.c_str(),
-                &startup, &processInfo);
+                &startupEx.StartupInfo, &processInfo);
+            DeleteProcThreadAttributeList(startupEx.lpAttributeList);
             if (!created) {
                 error = L"无法启动 codex app-server：" + FormatWindowsError(GetLastError());
+                m_job.Reset();
                 return false;
             }
 
             UniqueHandle thread(processInfo.hThread);
             m_process.Reset(processInfo.hProcess);
+            if (m_job.IsValid() && !AssignProcessToJobObject(m_job.Get(), m_process.Get())) {
+                WriteLog(LogLevel::Warning, L"无法将 App Server 加入作业对象，将使用进程级清理。");
+                m_job.Reset();
+            }
+            if (ResumeThread(thread.Get()) == static_cast<DWORD>(-1)) {
+                error = L"恢复 codex app-server 失败：" + FormatWindowsError(GetLastError());
+                TerminateProcess(m_process.Get(), 1);
+                WaitForSingleObject(m_process.Get(), 1000);
+                m_process.Reset();
+                m_job.Reset();
+                return false;
+            }
             m_stdoutRead = std::move(stdoutRead);
             m_stdinWrite = std::move(stdinWrite);
             return true;
@@ -353,17 +438,24 @@ namespace {
 
         void Stop() {
             m_stdinWrite.Reset();
-            if (m_process.IsValid() && WaitForSingleObject(m_process.Get(), 500) == WAIT_TIMEOUT) {
-                TerminateProcess(m_process.Get(), 0);
+            if (m_process.IsValid() && WaitForSingleObject(m_process.Get(), 1500) == WAIT_TIMEOUT) {
+                WriteLog(LogLevel::Warning, L"App Server 未在输入关闭后退出，正在执行有界强制清理。");
+                if (m_job.IsValid()) {
+                    TerminateJobObject(m_job.Get(), 0);
+                } else {
+                    TerminateProcess(m_process.Get(), 0);
+                }
                 WaitForSingleObject(m_process.Get(), 1000);
             }
             m_stdoutRead.Reset();
             m_process.Reset();
             m_writeEvent.Reset();
+            m_job.Reset();
         }
 
     private:
         UniqueHandle m_process;
+        UniqueHandle m_job;
         UniqueHandle m_stdinWrite;
         UniqueHandle m_stdoutRead;
         UniqueHandle m_writeEvent;
@@ -397,34 +489,50 @@ namespace {
         const std::wstring executable = ResolveCodexExecutable();
         if (executable.empty()) {
             errorMessage = L"未找到 codex.exe；请启动 Codex 或设置 CODEX_QUOTA_CODEX_PATH。";
+            WriteLog(LogLevel::Warning, L"同步失败：未找到可用的 Codex App Server 可执行文件。");
             return false;
         }
 
         AppServerProcess server;
-        if (!server.Start(executable, errorMessage)) return false;
+        if (!server.Start(executable, errorMessage)) {
+            WriteLog(LogLevel::Error, L"同步失败：Codex App Server 子进程未能启动。");
+            return false;
+        }
 
         const ULONGLONG deadline = GetTickCount64() + kRequestTimeoutMs;
         std::string pending;
         JsonValue response;
         std::wstring line;
 
+        const std::string initializeRequest =
+            "{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex_quota_bar\",\"title\":\"Codex-Quota-Bar\",\"version\":\"" +
+            std::string(APP_VERSION_UTF8) + "\"}}}";
         if (!server.Send(
-                "{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex_quota_bar\",\"title\":\"Codex-Quota-Bar\",\"version\":\"2.4.2\"}}}",
+                initializeRequest.c_str(),
                 deadline, errorMessage) ||
             !server.ReadResponse(1, deadline, pending, line, response, errorMessage)) {
+            WriteLog(LogLevel::Warning, L"同步失败：App Server initialize 阶段未完成。");
             return false;
         }
-        if (GetResponseError(response, errorMessage)) return false;
+        if (GetResponseError(response, errorMessage)) {
+            WriteLog(LogLevel::Warning, L"同步失败：App Server 拒绝 initialize 请求。");
+            return false;
+        }
 
         if (!server.Send("{\"method\":\"initialized\",\"params\":{}}", deadline, errorMessage) ||
             !server.Send("{\"method\":\"account/rateLimits/read\",\"id\":2}", deadline, errorMessage) ||
             !server.ReadResponse(2, deadline, pending, line, response, errorMessage)) {
+            WriteLog(LogLevel::Warning, L"同步失败：额度读取请求未完成。");
             return false;
         }
-        if (GetResponseError(response, errorMessage)) return false;
+        if (GetResponseError(response, errorMessage)) {
+            WriteLog(LogLevel::Warning, L"同步失败：App Server 返回额度读取错误。");
+            return false;
+        }
 
         if (!response[L"result"].is_object()) {
             errorMessage = L"额度响应中缺少 result。";
+            WriteLog(LogLevel::Warning, L"同步失败：额度响应结构无效。");
             return false;
         }
 
@@ -434,12 +542,17 @@ namespace {
                 "{\"method\":\"account/usage/read\",\"id\":3,\"params\":{}}",
                 deadline, usageErrorMessage) ||
             !server.ReadResponse(3, deadline, pending, line, response, usageErrorMessage)) {
+            WriteLog(LogLevel::Warning, L"部分同步：Token 统计读取未完成。");
             return true;
         }
-        if (GetResponseError(response, usageErrorMessage)) return true;
+        if (GetResponseError(response, usageErrorMessage)) {
+            WriteLog(LogLevel::Warning, L"部分同步：App Server 返回 Token 统计错误。");
+            return true;
+        }
 
         if (!response[L"result"].is_object() || !response[L"result"][L"summary"].is_object()) {
             usageErrorMessage = L"Token 统计响应中缺少 summary。";
+            WriteLog(LogLevel::Warning, L"部分同步：Token 统计响应结构无效。");
             return true;
         }
 

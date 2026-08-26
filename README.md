@@ -119,7 +119,7 @@ dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.4.2.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.0.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -127,7 +127,9 @@ dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 │  ├─ Codex-Quota-Bar.exe
 │  └─ Uninstall.exe
 └─ data\
-   └─ config.json
+   ├─ config.json
+   ├─ diagnostic.log
+   └─ diagnostic.previous.log
 ```
 
 安装器以当前用户权限运行，不再请求 UAC；卸载入口写入 `HKCU`，快捷方式只创建在当前用户开始菜单中。自定义路径必须使用名为 `Codex-Quota-Bar` 的独立根目录，卸载器通过注册的 `InstallLocation` 精确校验 `app` 子目录后才删除，避免误删用户选择位置中的其他文件。静默安装使用默认路径；重新安装沿用已注册的位置。
@@ -160,8 +162,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.4.2.exe
-dist\Release\Codex-Quota-Bar_version_2.4.2.sha256
+dist\Release\Codex-Quota-Bar_version_2.5.0.exe
+dist\Release\Codex-Quota-Bar_version_2.5.0.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -208,7 +210,7 @@ dist\Release\Codex-Quota-Bar_version_2.4.2.sha256
 %LOCALAPPDATA%\Codex-Quota-Bar\data\config.json
 ```
 
-配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。卸载时选择删除本地设置会删除 `data`，并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
+配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。诊断日志同样位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括诊断日志），并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
 
 ### Codex App Server
 

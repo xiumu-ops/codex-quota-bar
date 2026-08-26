@@ -116,7 +116,7 @@ bool StopInstalledApp(const std::filesystem::path& installDir,
         std::wstring command = Quote(appPath.wstring()) + L" --exit";
         STARTUPINFOW startup = { sizeof(startup) };
         PROCESS_INFORMATION process = {};
-        if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
+        if (CreateProcessW(appPath.c_str(), command.data(), nullptr, nullptr, FALSE,
                            CREATE_NO_WINDOW, nullptr, appPath.parent_path().c_str(),
                            &startup, &process)) {
             WaitForSingleObject(process.hProcess, 3000);

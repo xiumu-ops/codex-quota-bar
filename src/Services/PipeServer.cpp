@@ -1,4 +1,9 @@
 #include "Services/PipeServer.h"
+#include "Core/Logger.h"
+
+#include <sddl.h>
+#include <exception>
+#include <system_error>
 
 namespace CodexQuotaBar {
 
@@ -27,9 +32,17 @@ namespace CodexQuotaBar {
             return false;
         }
         ResetEvent(m_stopEvent);
+        HANDLE initialPipe = CreateServerPipe();
+        if (initialPipe == INVALID_HANDLE_VALUE) {
+            WriteLog(LogLevel::Error, L"IPC 管道创建失败；拒绝降级为默认权限。");
+            m_running = false;
+            return false;
+        }
         try {
-            m_serverThread = std::thread(&PipeServer::ServerThreadLoop, this);
-        } catch (...) {
+            m_serverThread = std::thread(&PipeServer::ServerThreadLoop, this, initialPipe);
+        } catch (const std::system_error&) {
+            CloseHandle(initialPipe);
+            WriteLog(LogLevel::Error, L"IPC 服务线程创建失败。");
             m_running = false;
             return false;
         }
@@ -37,8 +50,8 @@ namespace CodexQuotaBar {
     }
 
     void PipeServer::Stop() {
-        if (!m_running.exchange(false)) return;
-        SetEvent(m_stopEvent);
+        const bool wasRunning = m_running.exchange(false);
+        if (wasRunning && m_stopEvent) SetEvent(m_stopEvent);
         if (m_serverThread.joinable()) {
             m_serverThread.join();
         }
@@ -53,26 +66,43 @@ namespace CodexQuotaBar {
         }
 
         void CancelAndDrainIo(HANDLE pipe, OVERLAPPED& ovl) {
-            CancelIoEx(pipe, &ovl);
+            if (!CancelIoEx(pipe, &ovl) && GetLastError() != ERROR_NOT_FOUND) return;
             DWORD transferred = 0;
             GetOverlappedResult(pipe, &ovl, &transferred, TRUE);
         }
     }
 
-    void PipeServer::ServerThreadLoop() {
-        while (m_running) {
-            HANDLE hPipe = CreateNamedPipeW(
-                m_pipeName.c_str(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                PIPE_UNLIMITED_INSTANCES,
-                4096, 4096, 0, NULL);
+    HANDLE PipeServer::CreateServerPipe() const {
+        // 显式限定为对象所有者、SYSTEM 与管理员，并阻止低完整性进程写入。
+        // OW 会在对象访问检查时匹配创建该管道的当前用户。
+        PSECURITY_DESCRIPTOR descriptor = nullptr;
+        constexpr wchar_t kPipeSddl[] =
+            L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)S:(ML;;NW;;;ME)";
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                kPipeSddl, SDDL_REVISION_1, &descriptor, nullptr)) {
+            return INVALID_HANDLE_VALUE;
+        }
 
+        SECURITY_ATTRIBUTES attributes = {};
+        attributes.nLength = sizeof(attributes);
+        attributes.lpSecurityDescriptor = descriptor;
+        attributes.bInheritHandle = FALSE;
+        HANDLE pipe = CreateNamedPipeW(
+            m_pipeName.c_str(),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_UNLIMITED_INSTANCES,
+            4096, 4096, 0, &attributes);
+        LocalFree(descriptor);
+        return pipe;
+    }
+
+    void PipeServer::ServerThreadLoop(HANDLE initialPipe) {
+        HANDLE hPipe = initialPipe;
+        while (m_running) {
             if (hPipe == INVALID_HANDLE_VALUE) {
-                if (WaitForSingleObject(m_stopEvent, 100) == WAIT_OBJECT_0) {
-                    break;
-                }
-                continue;
+                WriteLog(LogLevel::Error, L"IPC 管道被占用或无法安全重建，服务已停止。");
+                break;
             }
 
             OVERLAPPED ovl = {};
@@ -87,21 +117,25 @@ namespace CodexQuotaBar {
                     if (wait == WAIT_OBJECT_0 + 1) {
                         CancelAndDrainIo(hPipe, ovl);
                         CloseHandle(hPipe);
+                        hPipe = INVALID_HANDLE_VALUE;
                         break;
                     }
                     if (wait != WAIT_OBJECT_0) {
                         CancelAndDrainIo(hPipe, ovl);
                         CloseHandle(hPipe);
+                        hPipe = INVALID_HANDLE_VALUE;
                         break;
                     }
                     DWORD transferred = 0;
                     connected = GetOverlappedResult(hPipe, &ovl, &transferred, FALSE);
                     if (!connected) {
                         CloseHandle(hPipe);
+                        hPipe = m_running ? CreateServerPipe() : INVALID_HANDLE_VALUE;
                         continue;
                     }
                 } else if (err != ERROR_PIPE_CONNECTED) {
                     CloseHandle(hPipe);
+                    hPipe = m_running ? CreateServerPipe() : INVALID_HANDLE_VALUE;
                     continue;
                 } else {
                     connected = TRUE;
@@ -176,13 +210,28 @@ namespace CodexQuotaBar {
                     writeReply(L"TOO_LONG");
                 } else if (readOk && !cmd.empty()) {
                     while (!cmd.empty() && cmd.back() == L'\0') cmd.pop_back();
-                    writeReply(m_handler ? m_handler(cmd) : L"OK");
+                    std::wstring reply = L"OK";
+                    if (m_handler) {
+                        try {
+                            reply = m_handler(cmd);
+                        } catch (const std::exception&) {
+                            WriteLog(LogLevel::Error, L"IPC 命令处理发生标准异常。");
+                            reply = L"ERROR";
+                        } catch (...) {
+                            WriteLog(LogLevel::Error, L"IPC 命令处理发生未知异常。");
+                            reply = L"ERROR";
+                        }
+                    }
+                    writeReply(reply);
                 }
             }
 
             DisconnectNamedPipe(hPipe);
             CloseHandle(hPipe);
+            hPipe = m_running ? CreateServerPipe() : INVALID_HANDLE_VALUE;
         }
+        if (hPipe != INVALID_HANDLE_VALUE) CloseHandle(hPipe);
+        m_running = false;
     }
 
     std::wstring PipeServer::SendCommand(const std::wstring& pipeName, const std::wstring& command, DWORD timeoutMs) {

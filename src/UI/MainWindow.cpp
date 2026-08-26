@@ -1,4 +1,5 @@
 #include "UI/MainWindow.h"
+#include "Core/Logger.h"
 #include "UI/CustomMenu.h"
 #include "Services/CodexClient.h"
 #include "Services/CompanionMode.h"
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <system_error>
 #include <limits>
 #include <thread>
 
@@ -157,7 +159,7 @@ namespace CodexQuotaBar {
         m_userScaleLevel = ClosestScaleLevel(settings.userScale);
         m_refreshIntervalLevel = ClosestRefreshIntervalLevel(settings.refreshIntervalMinutes);
         m_companionMode = settings.companionMode;
-        m_codexDesktopRunning = CompanionMode::IsDesktopRunning();
+        m_codexDesktopRunning = false;
         if (m_companionMode) {
             CompanionMode::ConfigureAutoStart(true);
         }
@@ -191,6 +193,7 @@ namespace CodexQuotaBar {
                  static_cast<UINT>(kRefreshIntervalMinutes[m_refreshIntervalLevel] * 60 * 1000), NULL);
         if (m_companionMode) {
             SetTimer(m_hwnd, TIMER_COMPANION_ID, kCompanionPollMs, NULL);
+            PollCompanionMode();
         }
 
         if (forceInitialRefresh || !m_companionMode || m_codexDesktopRunning) {
@@ -277,9 +280,10 @@ namespace CodexQuotaBar {
         m_codexMissingPolls = 0;
 
         if (m_companionMode) {
-            m_codexDesktopRunning = CompanionMode::IsDesktopRunning();
+            m_codexDesktopRunning = false;
             SetTimer(m_hwnd, TIMER_COMPANION_ID, kCompanionPollMs, NULL);
-            if (!m_codexDesktopRunning) Hide();
+            Hide();
+            PollCompanionMode();
         } else {
             KillTimer(m_hwnd, TIMER_COMPANION_ID);
             m_codexDesktopRunning = false;
@@ -291,7 +295,28 @@ namespace CodexQuotaBar {
     void MainWindow::PollCompanionMode() {
         if (!m_companionMode || !m_hwnd) return;
 
-        if (CompanionMode::IsDesktopRunning()) {
+        const auto state = m_companionPollState;
+        if (state->canceled.load() || state->inFlight.exchange(true)) return;
+        const HWND hwnd = m_hwnd.load();
+        try {
+            std::thread([state, hwnd]() {
+                const bool running = CompanionMode::IsDesktopRunning();
+                if (state->canceled.load() ||
+                    !PostMessageW(hwnd, WM_CQB_COMPANION_RESULT, running ? 1 : 0, 0)) {
+                    state->inFlight = false;
+                }
+            }).detach();
+        } catch (const std::system_error&) {
+            state->inFlight = false;
+            WriteLog(LogLevel::Warning, L"伴随模式检测线程创建失败。");
+        }
+    }
+
+    void MainWindow::HandleCompanionResult(bool running) {
+        m_companionPollState->inFlight = false;
+        if (!m_companionMode || m_shuttingDown.load()) return;
+
+        if (running) {
             const bool wasRunning = m_codexDesktopRunning;
             m_codexDesktopRunning = true;
             m_codexMissingPolls = 0;
@@ -408,10 +433,34 @@ namespace CodexQuotaBar {
         }
     }
 
+    bool MainWindow::PostStats(TokenStats stats) {
+        if (m_shuttingDown.load()) return false;
+        const HWND hwnd = m_hwnd.load();
+        if (!hwnd) return false;
+        {
+            const std::lock_guard<std::mutex> lock(m_statsMutex);
+            if (m_shuttingDown.load()) return false;
+            m_pendingStats = std::move(stats);
+        }
+        if (PostMessageW(hwnd, WM_CQB_STATS, 0, 0)) return true;
+        const std::lock_guard<std::mutex> lock(m_statsMutex);
+        m_pendingStats.reset();
+        return false;
+    }
+
     void MainWindow::BeginShutdown() {
         m_shuttingDown = true;
-        if (m_cancelFetch) {
-            m_cancelFetch->store(true);
+        if (m_fetchState) {
+            m_fetchState->canceled = true;
+            const std::lock_guard<std::mutex> lock(m_fetchState->mutex);
+            m_fetchState->pending.reset();
+        }
+        if (m_companionPollState) {
+            m_companionPollState->canceled = true;
+        }
+        {
+            const std::lock_guard<std::mutex> lock(m_statsMutex);
+            m_pendingStats.reset();
         }
         if (m_fetchThread.joinable()) {
             m_fetchThread.detach();
@@ -420,7 +469,7 @@ namespace CodexQuotaBar {
 
     void MainWindow::RefreshQuota() {
         if (!m_hwnd || m_shuttingDown.load()) return;
-        if (m_fetchInFlight.exchange(true)) {
+        if (m_fetchState->inFlight.exchange(true)) {
             m_refreshQueued = true;
             return;
         }
@@ -433,20 +482,28 @@ namespace CodexQuotaBar {
         }
 
         HWND hwnd = m_hwnd;
-        auto cancelFlag = m_cancelFetch;
+        auto fetchState = m_fetchState;
 
-        m_fetchThread = std::thread([hwnd, cancelFlag]() {
-            QuotaSnapshot snap = CodexClient::FetchSnapshot();
-            if (cancelFlag->load()) {
-                PostMessageW(hwnd, WM_CQB_QUOTA_RESULT, 0, 0);
-                return;
-            }
-
-            auto* payload = new QuotaSnapshot(std::move(snap));
-            if (!PostMessageW(hwnd, WM_CQB_QUOTA_RESULT, 0, reinterpret_cast<LPARAM>(payload))) {
-                delete payload;
-            }
-        });
+        try {
+            m_fetchThread = std::thread([hwnd, fetchState]() {
+                QuotaSnapshot snap = CodexClient::FetchSnapshot();
+                {
+                    const std::lock_guard<std::mutex> lock(fetchState->mutex);
+                    if (fetchState->canceled.load()) return;
+                    fetchState->pending = std::move(snap);
+                }
+                if (!PostMessageW(hwnd, WM_CQB_QUOTA_RESULT, 0, 0)) {
+                    const std::lock_guard<std::mutex> lock(fetchState->mutex);
+                    fetchState->pending.reset();
+                    fetchState->inFlight = false;
+                }
+            });
+        } catch (const std::system_error&) {
+            m_fetchState->inFlight = false;
+            m_syncState = SyncState::Failed;
+            WriteLog(LogLevel::Error, L"额度同步线程创建失败。");
+            InvalidateRect(m_hwnd, NULL, FALSE);
+        }
     }
 
     bool MainWindow::IsHeaderArea(POINT pt) const {
@@ -508,7 +565,7 @@ namespace CodexQuotaBar {
         } else if (cmd == IDM_COMPANION_MODE) {
             ToggleCompanionMode();
         } else if (cmd == IDM_EXIT) {
-            PostQuitMessage(0);
+            PostMessageW(m_hwnd, WM_CLOSE, 0, 0);
         }
     }
 
@@ -607,7 +664,11 @@ namespace CodexQuotaBar {
             return 0;
 
         case WM_CQB_STATS: {
-            std::unique_ptr<TokenStats> stats(reinterpret_cast<TokenStats*>(lParam));
+            std::optional<TokenStats> stats;
+            {
+                const std::lock_guard<std::mutex> lock(m_statsMutex);
+                stats.swap(m_pendingStats);
+            }
             if (stats) SetStats(*stats);
             return 0;
         }
@@ -625,19 +686,27 @@ namespace CodexQuotaBar {
             return 0;
 
         case WM_CQB_QUOTA_RESULT: {
-            std::unique_ptr<QuotaSnapshot> snap(reinterpret_cast<QuotaSnapshot*>(lParam));
+            std::optional<QuotaSnapshot> snap;
+            {
+                const std::lock_guard<std::mutex> lock(m_fetchState->mutex);
+                snap.swap(m_fetchState->pending);
+            }
             if (snap) {
                 if (!snap->statsSynchronized) snap->stats = m_snapshot.stats;
                 m_snapshot = std::move(*snap);
                 m_syncState = m_snapshot.success ? SyncState::Synced : SyncState::Failed;
                 InvalidateRect(m_hwnd, NULL, FALSE);
             }
-            m_fetchInFlight = false;
+            m_fetchState->inFlight = false;
             if (m_refreshQueued.exchange(false)) {
                 RefreshQuota();
             }
             return 0;
         }
+
+        case WM_CQB_COMPANION_RESULT:
+            HandleCompanionResult(wParam != 0);
+            return 0;
 
         case 0x02E0: // WM_DPICHANGED
             OnDpiChanged(LOWORD(wParam), reinterpret_cast<const RECT*>(lParam));
@@ -663,6 +732,14 @@ namespace CodexQuotaBar {
             }
             PostQuitMessage(0);
             return 0;
+
+        case WM_NCDESTROY: {
+            const HWND hwnd = m_hwnd.load();
+            const LRESULT result = DefWindowProcW(hwnd, msg, wParam, lParam);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            m_hwnd = NULL;
+            return result;
+        }
         }
 
         return DefWindowProcW(m_hwnd, msg, wParam, lParam);

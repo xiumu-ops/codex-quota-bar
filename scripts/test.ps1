@@ -22,6 +22,7 @@ $backupId = [Guid]::NewGuid().ToString("N")
 $ConfigBackup = "$ConfigFile.$backupId.cqbbak"
 $ConfigExisted = Test-Path -LiteralPath $ConfigFile
 $ConfigBackupPrepared = $false
+$PipeName = "Codex-Quota-Bar_Pipe_$((Get-Process -Id $PID).SessionId)"
 $targetFullPath = [IO.Path]::GetFullPath($ExePath)
 $ExternalInstances = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
     try {
@@ -103,7 +104,7 @@ if ($LASTEXITCODE -ne 0) {
     $protocolTestsBuilt = $false
 }
 if ($protocolTestsBuilt) {
-    & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests HookConfigTests
+    & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests HookConfigTests SimpleJsonTests PipeServerTests
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [FAIL] App Server 测试程序构建失败" -ForegroundColor Red
         $script:Failures++
@@ -112,9 +113,9 @@ if ($protocolTestsBuilt) {
 }
 if ($protocolTestsBuilt) {
     & ctest --test-dir $CMakeBuildDir -C Release --output-on-failure `
-        -R "^(CodexAppServerIntegration|HookConfig)$"
+        -R "^(CodexAppServerIntegration|HookConfig|SimpleJson|PipeServer)$"
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  [PASS] App Server 协议、Hook JSON 与异常兼容路径" -ForegroundColor Green
+        Write-Host "  [PASS] App Server、IPC 安全、JSON 边界、Hook 与异常兼容路径" -ForegroundColor Green
     } else {
         Write-Host "  [FAIL] App Server 协议集成测试失败" -ForegroundColor Red
         $script:Failures++
@@ -289,7 +290,7 @@ Expect-ExitCode "长 STATUS 消息 (6016 字节)" ('"--worker" "STATUS" "' + $lo
 # 7. 客户端发送命令后不读取回复，不得占住唯一服务线程。
 Write-Host "[7/10] 管道客户端不读取回复..." -ForegroundColor Yellow
 $stalledClient = New-Object System.IO.Pipes.NamedPipeClientStream(
-    ".", "Codex-Quota-Bar_Pipe", [System.IO.Pipes.PipeDirection]::InOut)
+    ".", $PipeName, [System.IO.Pipes.PipeDirection]::InOut)
 try {
     $stalledClient.Connect(1000)
     $commandBytes = [Text.Encoding]::Unicode.GetBytes("REFRESH`0")
@@ -303,7 +304,7 @@ try {
 
 # 完全不写入数据的连接也必须在服务端 I/O 超时后释放，避免阻塞后续 Hook。
 $silentClient = New-Object System.IO.Pipes.NamedPipeClientStream(
-    ".", "Codex-Quota-Bar_Pipe", [System.IO.Pipes.PipeDirection]::InOut)
+    ".", $PipeName, [System.IO.Pipes.PipeDirection]::InOut)
 try {
     $silentClient.Connect(1000)
     $timer = [Diagnostics.Stopwatch]::StartNew()

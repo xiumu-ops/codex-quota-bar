@@ -7,8 +7,8 @@ IDR_UNINSTALL_PAYLOAD RCDATA ".build/installer/Uninstall.exe"
 1 24 "installer/setup.manifest"
 
 1 VERSIONINFO
- FILEVERSION 2,4,2,0
- PRODUCTVERSION 2,4,2,0
+ FILEVERSION 2,5,0,0
+ PRODUCTVERSION 2,5,0,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -21,10 +21,10 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "xiumu-ops\0"
             VALUE "FileDescription", "Codex-Quota-Bar Installer\0"
-            VALUE "FileVersion", "2.4.2\0"
-            VALUE "OriginalFilename", "Codex-Quota-Bar_version_2.4.2.exe\0"
+            VALUE "FileVersion", "2.5.0\0"
+            VALUE "OriginalFilename", "Codex-Quota-Bar_version_2.5.0.exe\0"
             VALUE "ProductName", "Codex-Quota-Bar\0"
-            VALUE "ProductVersion", "2.4.2\0"
+            VALUE "ProductVersion", "2.5.0\0"
         END
     END
     BLOCK "VarFileInfo"

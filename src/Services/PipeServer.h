@@ -28,7 +28,8 @@ namespace CodexQuotaBar {
         static std::wstring SendCommand(const std::wstring& pipeName, const std::wstring& command, DWORD timeoutMs = 2000);
 
     private:
-        void ServerThreadLoop();
+        HANDLE CreateServerPipe() const;
+        void ServerThreadLoop(HANDLE initialPipe);
 
         std::wstring m_pipeName;
         CommandHandler m_handler;

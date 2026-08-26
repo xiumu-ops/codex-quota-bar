@@ -399,7 +399,10 @@ namespace CodexQuotaBar {
                     return {};
                 }
                 val.numberText = token;
-            } catch (...) {
+            } catch (const std::invalid_argument&) {
+                ok = false;
+                return {};
+            } catch (const std::out_of_range&) {
                 ok = false;
                 return {};
             }

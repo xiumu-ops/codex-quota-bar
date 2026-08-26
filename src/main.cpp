@@ -1,4 +1,5 @@
 #include "Core/Constants.h"
+#include "Core/Logger.h"
 #include "Core/Models.h"
 #include "UI/MainWindow.h"
 #include "Services/PipeServer.h"
@@ -8,10 +9,13 @@
 
 using namespace CodexQuotaBar;
 
-const std::wstring PIPE_NAME = L"\\\\.\\pipe\\Codex-Quota-Bar_Pipe";
-const wchar_t* MUTEX_NAME = L"Codex-Quota-Bar_Mutex_Session";
-
 namespace {
+
+std::wstring CurrentPipeName() {
+    DWORD sessionId = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) sessionId = 0;
+    return std::wstring(PIPE_NAME_PREFIX) + std::to_wstring(sessionId);
+}
 
 bool ResolveHookEvent(const std::wstring& event, std::wstring& wakeCommand) {
     if (event == L"SessionStart") {
@@ -51,6 +55,7 @@ bool StartHookHost(const std::wstring& event) {
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    const std::wstring pipeName = CurrentPipeName();
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -72,27 +77,27 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 command += argv[i];
             }
             if (command.empty()) command = L"REFRESH";
-            std::wstring reply = PipeServer::SendCommand(PIPE_NAME, command, 3000);
+            std::wstring reply = PipeServer::SendCommand(pipeName, command, 3000);
             LocalFree(argv);
             return (reply == L"OK") ? 0 : 1;
         } else if (arg1 == L"--refresh" || arg1 == L"-r") {
-            std::wstring reply = PipeServer::SendCommand(PIPE_NAME, L"REFRESH", 2000);
+            std::wstring reply = PipeServer::SendCommand(pipeName, L"REFRESH", 2000);
             LocalFree(argv);
             return (reply == L"OK") ? 0 : 1;
         } else if (arg1 == L"--toggle" || arg1 == L"-t") {
-            std::wstring reply = PipeServer::SendCommand(PIPE_NAME, L"TOGGLE", 2000);
+            std::wstring reply = PipeServer::SendCommand(pipeName, L"TOGGLE", 2000);
             LocalFree(argv);
             return (reply == L"OK") ? 0 : 1;
         } else if (arg1 == L"--show") {
-            std::wstring reply = PipeServer::SendCommand(PIPE_NAME, L"SHOW", 2000);
+            std::wstring reply = PipeServer::SendCommand(pipeName, L"SHOW", 2000);
             LocalFree(argv);
             return (reply == L"OK") ? 0 : 1;
         } else if (arg1 == L"--hide") {
-            std::wstring reply = PipeServer::SendCommand(PIPE_NAME, L"HIDE", 2000);
+            std::wstring reply = PipeServer::SendCommand(pipeName, L"HIDE", 2000);
             LocalFree(argv);
             return (reply == L"OK") ? 0 : 1;
         } else if (arg1 == L"--exit" || arg1 == L"-x") {
-            std::wstring reply = PipeServer::SendCommand(PIPE_NAME, L"EXIT", 2000);
+            std::wstring reply = PipeServer::SendCommand(pipeName, L"EXIT", 2000);
             LocalFree(argv);
             return (reply == L"OK") ? 0 : 1;
         } else if (arg1 == L"--hook" || arg1 == L"--hook-host") {
@@ -106,7 +111,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             // 外部 Hook 入口只负责快速通知。实例尚未运行时派生后台主进程，
             // 防止同步 SessionEnd Hook 被长驻消息循环卡到超时。
             if (arg1 == L"--hook") {
-                if (PipeServer::SendCommand(PIPE_NAME, hookWakeCommand, 1000) == L"OK") {
+                if (PipeServer::SendCommand(pipeName, hookWakeCommand, 1000) == L"OK") {
                     LocalFree(argv);
                     return 0;
                 }
@@ -145,7 +150,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         // 已有实例在运行：短时重试唤醒，避免对刚启动（尚未建好管道）的实例发命令失败
         const std::wstring wakeCommand = launchedFromHook ? hookWakeCommand : L"SHOW";
         for (int attempt = 0; attempt < 10; ++attempt) {
-            if (PipeServer::SendCommand(PIPE_NAME, wakeCommand, 300) == L"OK") break;
+            if (PipeServer::SendCommand(pipeName, wakeCommand, 300) == L"OK") break;
             Sleep(100);
         }
         CloseHandle(hMutex);
@@ -161,12 +166,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     HRESULT hrCom = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hrCom)) {
         if (hrCom == RPC_E_CHANGED_MODE) {
-            // 线程 COM 并发模型已被其他组件占用：跳过初始化，Direct2D 在
-            // 多线程套间下同样可用，仅打印警告
+            // 线程已经属于另一种 COM 套间；保留现有初始化且不调用 CoUninitialize。
+            // Direct2D/DirectWrite 工厂不要求 STA，因此可安全继续。
             fwprintf(stderr, L"Codex-Quota-Bar: 警告：COM 并发模型已被占用，跳过 COM 初始化\n");
+            WriteLog(LogLevel::Warning, L"主线程已使用其他 COM 套间模型，沿用现有初始化。");
         } else {
             fwprintf(stderr, L"Codex-Quota-Bar: 初始化 COM 失败 (0x%08X)\n", static_cast<unsigned>(hrCom));
             if (hMutex) CloseHandle(hMutex);
+            WriteLog(LogLevel::Error, L"COM 初始化失败，应用终止。");
             return 1;
         }
     } else {
@@ -176,6 +183,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     // 4. 创建主窗体
     auto mainWindow = std::make_unique<MainWindow>();
     if (!mainWindow->Create(launchedFromHook)) {
+        WriteLog(LogLevel::Error, L"主窗口或图形资源初始化失败。");
         // DirectWrite/Direct2D 对象必须在线程 COM 套间关闭前释放。
         mainWindow.reset();
         if (hMutex) CloseHandle(hMutex);
@@ -184,7 +192,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     // 5. 启动命名管道 IPC 守护线程
-    PipeServer pipeServer(PIPE_NAME, [&mainWindow](const std::wstring& cmd) -> std::wstring {
+    PipeServer pipeServer(pipeName, [&mainWindow](const std::wstring& cmd) -> std::wstring {
         HWND hwnd = mainWindow ? mainWindow->GetHwnd() : NULL;
         if (!hwnd) return L"ERROR";
 
@@ -197,23 +205,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         } else if (cmd == L"DONE") {
             return PostMessageW(hwnd, WM_CQB_REFRESH, 0, 0) ? L"OK" : L"ERROR";
         } else if (cmd.rfind(L"STATS ", 0) == 0) {
-            auto* stats = new TokenStats();
+            TokenStats stats;
             std::wistringstream ss(cmd.substr(6));
             std::vector<std::wstring> tokens;
             std::wstring tok;
             while (ss >> tok) {
                 tokens.push_back(tok);
             }
-            if (tokens.size() > 0) stats->totalTokens = tokens[0];
-            if (tokens.size() > 1) stats->peakTokens = tokens[1];
-            if (tokens.size() > 2) stats->longestTask = tokens[2];
-            if (tokens.size() > 3) stats->streakDays = tokens[3];
-
-            if (!PostMessageW(hwnd, WM_CQB_STATS, 0, reinterpret_cast<LPARAM>(stats))) {
-                delete stats;
-                return L"ERROR";
-            }
-            return L"OK";
+            if (tokens.size() > 0) stats.totalTokens = tokens[0];
+            if (tokens.size() > 1) stats.peakTokens = tokens[1];
+            if (tokens.size() > 2) stats.longestTask = tokens[2];
+            if (tokens.size() > 3) stats.streakDays = tokens[3];
+            return mainWindow->PostStats(std::move(stats)) ? L"OK" : L"ERROR";
         } else if (cmd == L"SHOW") {
             return PostMessageW(hwnd, WM_CQB_SHOW, 0, 0) ? L"OK" : L"ERROR";
         } else if (cmd == L"HIDE") {
@@ -226,7 +229,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         return L"UNKNOWN";
     });
     if (!pipeServer.Start()) {
-        fwprintf(stderr, L"Codex-Quota-Bar: IPC 管道启动失败（事件对象创建失败），退出\n");
+        fwprintf(stderr, L"Codex-Quota-Bar: IPC 管道安全初始化或服务线程启动失败，退出\n");
         mainWindow->BeginShutdown();
         mainWindow.reset();
         if (comInitialized) CoUninitialize();
@@ -235,6 +238,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         return 1;
     }
+    WriteLog(LogLevel::Info, std::wstring(L"Codex-Quota-Bar ") + APP_VERSION + L" 已启动。");
 
     // 6. 显示主窗口
     mainWindow->Show();
@@ -251,9 +255,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     // 8. 退出清理
-    mainWindow->BeginShutdown();
     pipeServer.Stop();
+    mainWindow->BeginShutdown();
     mainWindow.reset();
+    WriteLog(LogLevel::Info, L"Codex-Quota-Bar 已正常退出。");
     if (comInitialized) CoUninitialize();
 
     if (hMutex) {

@@ -8,6 +8,8 @@
 #endif
 #include <windows.h>
 
+#include <string>
+
 namespace CodexQuotaBar {
 
     struct StoredState {
@@ -29,6 +31,7 @@ namespace CodexQuotaBar {
         static StoredState LoadState();
         static void SaveSettings(const AppSettings& settings);
         static void SavePosition(POINT position);
+        static std::wstring DataDirectory();
     };
 
 } // namespace CodexQuotaBar

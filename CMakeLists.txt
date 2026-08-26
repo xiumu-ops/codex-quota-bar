@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
-project(Codex-Quota-Bar VERSION 2.4.2 LANGUAGES CXX)
+project(Codex-Quota-Bar VERSION 2.5.0 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Codex-Quota-Bar supports Windows 11 x64 with MSVC only.")
@@ -21,10 +21,12 @@ set(CORE_HEADERS
     src/Core/Models.h
     src/Core/ConfigStore.h
     src/Core/SimpleJson.h
+    src/Core/Logger.h
 )
 
 set(CORE_SOURCES
     src/Core/ConfigStore.cpp
+    src/Core/Logger.cpp
 )
 
 set(GRAPHICS_HEADERS
@@ -142,9 +144,11 @@ if(BUILD_TESTING)
         src/Services/CodexClient.cpp
         src/Services/CodexAppServerClient.cpp
         src/Services/CompanionMode.cpp
+        src/Core/ConfigStore.cpp
+        src/Core/Logger.cpp
     )
     cqb_configure_target(CodexAppServerIntegrationTests)
-    target_link_libraries(CodexAppServerIntegrationTests advapi32)
+    target_link_libraries(CodexAppServerIntegrationTests advapi32 shell32 ole32)
 
     add_executable(HookConfigTests
         tests/HookConfigTests.cpp
@@ -159,13 +163,29 @@ if(BUILD_TESTING)
         ole32
     )
 
+    add_executable(SimpleJsonTests tests/SimpleJsonTests.cpp)
+    cqb_configure_target(SimpleJsonTests)
+
+    add_executable(PipeServerTests
+        tests/PipeServerTests.cpp
+        src/Services/PipeServer.cpp
+        src/Core/ConfigStore.cpp
+        src/Core/Logger.cpp
+    )
+    cqb_configure_target(PipeServerTests)
+    target_link_libraries(PipeServerTests advapi32 shell32 ole32)
+
     add_test(
         NAME CodexAppServerIntegration
         COMMAND CodexAppServerIntegrationTests $<TARGET_FILE:FakeCodexAppServer>
     )
     add_test(NAME HookConfig COMMAND HookConfigTests)
+    add_test(NAME SimpleJson COMMAND SimpleJsonTests)
+    add_test(NAME PipeServer COMMAND PipeServerTests)
     set_tests_properties(CodexAppServerIntegration PROPERTIES TIMEOUT 30)
     set_tests_properties(HookConfig PROPERTIES TIMEOUT 10)
+    set_tests_properties(SimpleJson PROPERTIES TIMEOUT 10)
+    set_tests_properties(PipeServer PROPERTIES TIMEOUT 10)
 endif()
 
 set_target_properties(CodexQuotaBarApp PROPERTIES
