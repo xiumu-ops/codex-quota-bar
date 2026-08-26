@@ -77,9 +77,19 @@ int wmain(int argc, wchar_t** argv) {
     Expect(happy.resetCredits.earliestExpiresAt == 1789946796,
            "earliest reset-credit expiresAt is parsed independently from resetsAt");
     Expect(happy.stats.totalTokens == L"1.23 M", "lifetimeTokens is formatted");
-    Expect(happy.stats.peakTokens == L"98.8 K", "peakDailyTokens is formatted");
+    Expect(happy.stats.peakTokens == L"98.77 K", "peakDailyTokens uses two decimals");
     Expect(happy.stats.longestTask == L"1.5 小时", "longestRunningTurnSec is formatted");
     Expect(happy.stats.streakDays == L"12天", "currentStreakDays is formatted");
+
+    std::cout << "Token unit precision\n";
+    QuotaSnapshot smallUnits = Fetch(L"token_units_small");
+    Expect(smallUnits.success && smallUnits.stats.totalTokens == L"2.30 M" &&
+           smallUnits.stats.peakTokens == L"1.20 K",
+           "K and M units keep two decimals including trailing zeroes");
+    QuotaSnapshot largeUnits = Fetch(L"token_units_large");
+    Expect(largeUnits.success && largeUnits.stats.totalTokens == L"4.50 T" &&
+           largeUnits.stats.peakTokens == L"3.40 B",
+           "B and T units keep two decimals including trailing zeroes");
 
     std::cout << "Nullable official usage fields\n";
     QuotaSnapshot nullable = Fetch(L"nullable");

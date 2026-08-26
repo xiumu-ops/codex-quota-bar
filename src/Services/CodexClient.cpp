@@ -24,14 +24,6 @@ namespace CodexQuotaBar {
         return std::wstring(buf);
     }
 
-    static std::wstring TrimFixedNumber(std::wstring value) {
-        const size_t dot = value.find(L'.');
-        if (dot == std::wstring::npos) return value;
-        while (!value.empty() && value.back() == L'0') value.pop_back();
-        if (!value.empty() && value.back() == L'.') value.pop_back();
-        return value;
-    }
-
     static std::wstring FormatTokenCount(int64_t tokens) {
         if (tokens < 0) return L"";
         if (tokens < 1000) return std::to_wstring(tokens);
@@ -50,10 +42,9 @@ namespace CodexQuotaBar {
         for (const Unit& unit : units) {
             if (tokens < unit.divisor) continue;
             const double scaled = static_cast<double>(tokens) / static_cast<double>(unit.divisor);
-            const int decimals = scaled < 10.0 ? 2 : 1;
             wchar_t number[32] = {};
-            swprintf_s(number, decimals == 2 ? L"%.2f" : L"%.1f", scaled);
-            return TrimFixedNumber(number) + L' ' + unit.suffix;
+            swprintf_s(number, L"%.2f", scaled);
+            return std::wstring(number) + L' ' + unit.suffix;
         }
         return std::to_wstring(tokens);
     }

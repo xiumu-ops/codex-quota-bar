@@ -98,14 +98,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.1：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.2：
 
 ```powershell
-git tag -a v2.5.1 -m "Codex-Quota-Bar 2.5.1"
-git push origin v2.5.1
+git tag -a v2.5.2 -m "Codex-Quota-Bar 2.5.2"
+git push origin v2.5.2
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.1.exe` 与 `Codex-Quota-Bar_version_2.5.1.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.2.exe` 与 `Codex-Quota-Bar_version_2.5.2.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -114,7 +114,7 @@ git push origin v2.5.1
 
 签名证书只在非 Pull Request 构建中临时导入当前 Runner 的用户证书库，构建后立即移除。没有配置这两个 Secret 时工作流仍会生成未签名安装包并报告其签名状态；云端编译本身不会消除 Defender 对未签名程序的信誉检查。
 
-2.5.1 是用于 SignPath Foundation 申请审核的未签名准备版本。获批后将按[代码签名政策](CODE_SIGNING_POLICY.md)接入 SignPath 的受信构建与人工批准流程；在此之前不会把任何产物表述为 SignPath 签名版本。
+2.5.2 是用于 SignPath Foundation 申请审核的未签名准备版本。获批后将按[代码签名政策](CODE_SIGNING_POLICY.md)接入 SignPath 的受信构建与人工批准流程；在此之前不会把任何产物表述为 SignPath 签名版本。
 
 ### 项目目录
 
@@ -133,7 +133,7 @@ dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.1.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.2.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -176,8 +176,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.5.1.exe
-dist\Release\Codex-Quota-Bar_version_2.5.1.sha256
+dist\Release\Codex-Quota-Bar_version_2.5.2.exe
+dist\Release\Codex-Quota-Bar_version_2.5.2.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -242,7 +242,7 @@ codex app-server
   → 关闭临时 App Server 进程
 ```
 
-统计卡片展示账户累计 Token、单日 Token 峰值与最长聊天时长。Token 数值自动缩写为 `K` / `M` / `B` / `T`（数字与单位之间带空格，如 `24.5 B`）；聊天时长不足一小时按分钟显示，其余统一折算为总小时（如 `129 小时`）。
+统计卡片展示账户累计 Token、单日 Token 峰值与最长聊天时长。Token 数值自动缩写为 `K` / `M` / `B` / `T`，所有缩写单位固定保留两位小数（数字与单位之间带空格，如 `24.50 B`）；聊天时长不足一小时按分钟显示，其余统一折算为总小时（如 `129 小时`）。
 
 展开态第二张「重置」子卡片为三列官方指标：**重置次数**取 `rateLimitResetCredits.availableCount`；**过期时间**取可用重置额度详情中最早的 `credits[].expiresAt`（本地时间 `MM月DD日 HH:MM`）；**剩余天数**为距该到期时间还剩的天数（不足一天按一天计）。服务只返回次数而未返回详情时，到期时间与剩余天数显示 `--`，不会再用额度窗口的 `resetsAt` 冒充。
 
