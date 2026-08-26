@@ -11,10 +11,10 @@ $BuildDir = Join-Path $ProjectRoot ".build\installer"
 $ReleaseDir = Join-Path $ProjectRoot "dist\Release"
 $AppPath = Join-Path $ProjectRoot ".build\output\Release\Codex-Quota-Bar.exe"
 $UninstallPath = Join-Path $BuildDir "Uninstall.exe"
-$SetupPath = Join-Path $ReleaseDir "Codex-Quota-Bar_version_2.5.0.exe"
-$HashPath = Join-Path $ReleaseDir "Codex-Quota-Bar_version_2.5.0.sha256"
+$SetupPath = Join-Path $ReleaseDir "Codex-Quota-Bar_version_2.5.1.exe"
+$HashPath = Join-Path $ReleaseDir "Codex-Quota-Bar_version_2.5.1.sha256"
 
-Write-Host "Building Codex-Quota-Bar 2.5.0 application..." -ForegroundColor Cyan
+Write-Host "Building Codex-Quota-Bar 2.5.1 application..." -ForegroundColor Cyan
 & (Join-Path $ScriptDir "build.ps1") -Configuration $Configuration
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $AppPath)) {
     throw "Application build failed."
@@ -116,11 +116,11 @@ if (-not (Test-Path $SetupPath)) {
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SetupPath).Hash
 Set-Content -LiteralPath $HashPath `
-    -Value "$hash  Codex-Quota-Bar_version_2.5.0.exe" -Encoding ascii
+    -Value "$hash  Codex-Quota-Bar_version_2.5.1.exe" -Encoding ascii
 
 $allowedReleaseFiles = @(
-    "Codex-Quota-Bar_version_2.5.0.exe",
-    "Codex-Quota-Bar_version_2.5.0.sha256"
+    "Codex-Quota-Bar_version_2.5.1.exe",
+    "Codex-Quota-Bar_version_2.5.1.sha256"
 )
 Get-ChildItem -LiteralPath $ReleaseDir -File -ErrorAction SilentlyContinue |
     Where-Object {

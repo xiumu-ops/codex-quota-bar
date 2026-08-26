@@ -2,8 +2,8 @@
 
 namespace CodexQuotaBar {
 
-    inline constexpr wchar_t APP_VERSION[] = L"2.5.0";
-    inline constexpr char APP_VERSION_UTF8[] = "2.5.0";
+    inline constexpr wchar_t APP_VERSION[] = L"2.5.1";
+    inline constexpr char APP_VERSION_UTF8[] = "2.5.1";
     inline constexpr wchar_t PIPE_NAME_PREFIX[] = L"\\\\.\\pipe\\Codex-Quota-Bar_Pipe_";
     inline constexpr wchar_t MUTEX_NAME[] = L"Local\\Codex-Quota-Bar_Mutex_Session";
 

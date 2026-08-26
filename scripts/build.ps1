@@ -56,7 +56,7 @@ $ResFile = Join-Path $BuildDir "app.res"
 $ObjectPrefix = "$BuildDir\\"
 $CompileFlags = if ($Configuration -eq "Debug") { "/Od /Zi /MTd" } else { "/O2 /MT" }
 
-Write-Host "Building Codex-Quota-Bar 2.5.0 ($Configuration, Windows 11 x64/MSVC)..." -ForegroundColor Cyan
+Write-Host "Building Codex-Quota-Bar 2.5.1 ($Configuration, Windows 11 x64/MSVC)..." -ForegroundColor Cyan
 $command = @"
 call "$vcvars" &&
 cd /d "$ProjectRoot" &&

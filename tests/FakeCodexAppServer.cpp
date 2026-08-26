@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
             if (!Contains(line, "\"method\":\"initialize\"") ||
                 !Contains(line, "\"id\":1") ||
                 !Contains(line, "\"name\":\"codex_quota_bar\"") ||
-                !Contains(line, "\"version\":\"2.5.0\"")) {
+                !Contains(line, "\"version\":\"2.5.1\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
             // 非 JSON 诊断行用于覆盖客户端的输出降噪路径。

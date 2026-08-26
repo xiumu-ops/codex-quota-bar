@@ -8,6 +8,8 @@
 
 基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：常驻工作区顶部，通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态。
 
+本项目是独立的第三方开源工具，与 OpenAI 不存在隶属或背书关系。参阅[隐私政策](PRIVACY.md)和[代码签名政策](CODE_SIGNING_POLICY.md)。
+
 ## 📸 界面预览与功能使用
 
 ### 1. 折叠状态（紧凑常驻栏）
@@ -96,14 +98,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.0：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.1：
 
 ```powershell
-git tag -a v2.5.0 -m "Codex-Quota-Bar 2.5.0"
-git push origin v2.5.0
+git tag -a v2.5.1 -m "Codex-Quota-Bar 2.5.1"
+git push origin v2.5.1
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.0.exe` 与 `Codex-Quota-Bar_version_2.5.0.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.1.exe` 与 `Codex-Quota-Bar_version_2.5.1.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -111,6 +113,8 @@ git push origin v2.5.0
 - `WINDOWS_SIGNING_PFX_PASSWORD`：PFX 证书密码
 
 签名证书只在非 Pull Request 构建中临时导入当前 Runner 的用户证书库，构建后立即移除。没有配置这两个 Secret 时工作流仍会生成未签名安装包并报告其签名状态；云端编译本身不会消除 Defender 对未签名程序的信誉检查。
+
+2.5.1 是用于 SignPath Foundation 申请审核的未签名准备版本。获批后将按[代码签名政策](CODE_SIGNING_POLICY.md)接入 SignPath 的受信构建与人工批准流程；在此之前不会把任何产物表述为 SignPath 签名版本。
 
 ### 项目目录
 
@@ -122,13 +126,14 @@ tests/        App Server、Hook 与异常路径测试
 scripts/      构建、运行、测试、安装包与清理脚本
 dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 .build/       隐藏的编译缓存；不纳入版本控制
+.github/      GitHub Actions 远程构建与正式发布流程
 ```
 
-项目采用单体 Win32 EXE 的共置布局，模块头文件与实现文件放在同一 `src/<Module>` 目录，不再维护内容重复的 `include/` 镜像目录。仓库根目录只保留 `CMakeLists.txt`、`README.md` 和版本控制文件。
+项目采用单体 Win32 EXE 的共置布局，模块头文件与实现文件放在同一 `src/<Module>` 目录，不再维护内容重复的 `include/` 镜像目录。仓库根目录保留构建入口、README、许可证、隐私政策和代码签名政策等项目级文件。
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.0.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.1.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -143,7 +148,7 @@ dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 
 安装器以当前用户权限运行，不再请求 UAC；卸载入口写入 `HKCU`，快捷方式只创建在当前用户开始菜单中。自定义路径必须使用名为 `Codex-Quota-Bar` 的独立根目录，卸载器通过注册的 `InstallLocation` 精确校验 `app` 子目录后才删除，避免误删用户选择位置中的其他文件。静默安装使用默认路径；重新安装沿用已注册的位置。
 
-本项目尚未发布，因此不保留旧系统级布局的迁移逻辑。安装器检测到旧版 HKLM 卸载项时会停止安装，并要求先从 Windows“已安装的应用”卸载旧版，避免 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 同时残留两份程序。
+2.5.x 不再保留早期系统级安装布局的迁移逻辑。安装器检测到旧版 HKLM 卸载项时会停止安装，并要求先从 Windows“已安装的应用”卸载旧版，避免 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 同时残留两份程序。
 
 卸载器仍会请求一次管理员权限，但只用于在 Windows 锁定正在运行的 `Uninstall.exe` 时调用系统原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 完成最终删除；Hook、伴随启动项、HKCU 卸载项、当前用户快捷方式和配置本身都不需要管理员权限。项目不复制临时卸载器，也不使用 `cmd.exe` 或脚本自删除。
 
@@ -171,8 +176,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.5.0.exe
-dist\Release\Codex-Quota-Bar_version_2.5.0.sha256
+dist\Release\Codex-Quota-Bar_version_2.5.1.exe
+dist\Release\Codex-Quota-Bar_version_2.5.1.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -268,7 +273,7 @@ $env:CODEX_QUOTA_CODEX_PATH = "D:\path\to\codex.exe"
 
 ## ⚠️ 已知限制与安全说明
 
-- **管道访问控制**：命名管道 `\\.\pipe\Codex-Quota-Bar_Pipe` 使用默认安全描述符——同一用户登录会话下的任何进程都可以连接并发送命令（包括 `EXIT`）。这是单用户桌面工具的常见取舍；如需更强隔离，可在 `PipeServer` 中为 `CreateNamedPipeW` 指定专用 DACL。
+- **管道访问控制**：命名管道使用登录会话专属名称、受保护的显式 DACL 和中完整性写入限制，仅允许对象所有者、SYSTEM 与管理员访问，并拒绝远程客户端。与应用运行在同一用户和同一会话、且满足完整性要求的本地进程仍可发送受支持命令（包括 `EXIT`）；这是当前用户桌面 IPC 的权限边界。
 - **Codex 路径信任**：额度同步自动发现仅检查官方桌面端常用安装目录；显式设置 `CODEX_QUOTA_CODEX_PATH` 表示用户信任该可执行文件。伴随进程检测另行校验官方 Codex 桌面安装路径，并排除 CLI/App Server 路径。
 - **工作状态命令零 UI 影响**：`BUSY` / `IDLE` / `DONE` / `OFFLINE` / `STATUS` 仅为兼容 Hook 保留——服务端接受命令并回执 `OK`，但不存储、不显示任何工作状态；底部文字和指示灯只反映额度同步状态。安装器注册的官方 `Stop` Hook 会在每轮对话完成时调用 `DONE` 并触发刷新。
 - **`STATS` 字段分隔**：该命令只用于兼容手动 Hook；四个字段以空格分隔且字段内容不可包含空格。正常运行时统计卡片由 `account/usage/read` 自动更新；接口未返回过有效值时才显示 `--`。
@@ -278,5 +283,5 @@ $env:CODEX_QUOTA_CODEX_PATH = "D:\path\to\codex.exe"
 
 ## 📄 开源许可证 (License)
 
-本项目基于 [MIT License](LICENSE) 开源。
+本项目基于 [MIT License](LICENSE) 开源。正式发布遵循[代码签名政策](CODE_SIGNING_POLICY.md)，本地数据处理参阅[隐私政策](PRIVACY.md)。
 
