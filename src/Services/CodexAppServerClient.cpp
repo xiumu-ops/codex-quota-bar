@@ -10,6 +10,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <objbase.h>
 #include <sddl.h>
 
 #include <algorithm>
