@@ -18,8 +18,8 @@ concurrency:
 
 jobs:
   build-test-package:
-    name: Build, test and package (Windows 11 x64)
-    runs-on: windows-2022
+    name: Build, test and package (Windows Server 2025 x64)
+    runs-on: windows-2025
     timeout-minutes: 25
     env:
       HAS_WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 != '' }}

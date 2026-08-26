@@ -92,7 +92,7 @@
 
 ### GitHub Actions 远程构建
 
-仓库内置 `.github/workflows/remote-build.yml`，工作流显示名称为 `Codex-Quota-Bar Remote Build`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2022` 执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Codex-Quota-Bar Remote Build > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并在临时 Runner 中实际验证当前用户安装、HKCU 注册、Hook、快捷方式和卸载清理，最后上传保留 30 天的构建产物。
+仓库内置 `.github/workflows/remote-build.yml`，工作流显示名称为 `Codex-Quota-Bar Remote Build`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2025`（Windows Server 2025 x64）执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Codex-Quota-Bar Remote Build > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并在临时 Runner 中实际验证当前用户安装、HKCU 注册、Hook、快捷方式和卸载清理，最后上传保留 30 天的构建产物。
 
 构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar-Windows-x64-<运行编号>`。压缩包中只包含带版本号的安装器和 SHA256 文件；工作流产物不是 GitHub Release，不会自动公开发布。
 
