@@ -94,7 +94,16 @@
 
 仓库内置 `.github/workflows/remote-build.yml`，工作流显示名称为 `Codex-Quota-Bar Remote Build`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2025`（Windows Server 2025 x64）执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Codex-Quota-Bar Remote Build > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并在临时 Runner 中实际验证当前用户安装、HKCU 注册、Hook、快捷方式和卸载清理，最后上传保留 30 天的构建产物。
 
-构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar-Windows-x64-<运行编号>`。压缩包中只包含带版本号的安装器和 SHA256 文件；工作流产物不是 GitHub Release，不会自动公开发布。
+普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
+
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.0：
+
+```powershell
+git tag -a v2.5.0 -m "Codex-Quota-Bar 2.5.0"
+git push origin v2.5.0
+```
+
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.0.exe` 与 `Codex-Quota-Bar_version_2.5.0.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 

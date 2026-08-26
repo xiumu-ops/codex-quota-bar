@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*.*.*"
   pull_request:
     branches:
       - main
@@ -21,6 +23,8 @@ jobs:
     name: Build, test and package (Windows Server 2025 x64)
     runs-on: windows-2025
     timeout-minutes: 25
+    outputs:
+      version: ${{ steps.project_version.outputs.version }}
     env:
       HAS_WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 != '' }}
 
@@ -31,6 +35,27 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+
+      - name: Read and validate project version
+        id: project_version
+        run: |
+          $cmake = Get-Content -LiteralPath "CMakeLists.txt" -Raw
+          $match = [regex]::Match(
+              $cmake,
+              'project\s*\(\s*Codex-Quota-Bar\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)',
+              [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+          if (-not $match.Success) {
+              throw "Unable to read the project version from CMakeLists.txt."
+          }
+
+          $version = $match.Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and
+              $env:GITHUB_REF_NAME -ne "v$version") {
+              throw "Release tag $env:GITHUB_REF_NAME does not match project version v$version."
+          }
+          "version=$version" | Out-File `
+              -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Project version: $version"
 
       - name: Show build environment
         run: |
@@ -123,7 +148,7 @@ jobs:
       - name: Upload Windows installer
         uses: actions/upload-artifact@v7
         with:
-          name: Codex-Quota-Bar-Windows-x64-${{ github.run_number }}
+          name: Codex-Quota-Bar_version_${{ steps.project_version.outputs.version }}
           path: |
             dist/Release/Codex-Quota-Bar_version_*.exe
             dist/Release/Codex-Quota-Bar_version_*.sha256
@@ -142,3 +167,41 @@ jobs:
               Remove-Item -LiteralPath $env:SIGNING_PFX_PATH `
                   -Force -ErrorAction SilentlyContinue
           }
+
+  publish-release:
+    name: Publish stable GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-test-package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified Windows installer
+        uses: actions/download-artifact@v8
+        with:
+          name: Codex-Quota-Bar_version_${{ needs.build-test-package.outputs.version }}
+          path: release-assets
+
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.build-test-package.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(
+            release-assets/Codex-Quota-Bar_version_*.exe
+            release-assets/Codex-Quota-Bar_version_*.sha256
+          )
+          if [[ ${#assets[@]} -ne 2 ]]; then
+            echo "Expected one installer and one SHA256 file; found ${#assets[@]}." >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --verify-tag \
+            --title "Codex-Quota-Bar ${RELEASE_VERSION}" \
+            --generate-notes \
+            --latest
