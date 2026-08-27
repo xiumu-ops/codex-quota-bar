@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
-project(Codex-Quota-Bar VERSION 2.5.2 LANGUAGES CXX)
+project(Codex-Quota-Bar VERSION 2.5.3 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Codex-Quota-Bar supports Windows 11 x64 with MSVC only.")
