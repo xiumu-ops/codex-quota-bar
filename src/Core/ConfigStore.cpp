@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -21,6 +22,12 @@ namespace {
     struct ConfigData {
         AppSettings settings;
         StoredState state;
+    };
+
+    enum class ReadStatus {
+        Missing,
+        Valid,
+        Invalid
     };
 
     std::mutex g_configMutex;
@@ -56,39 +63,106 @@ namespace {
         return directory;
     }
 
-    bool ReadJson(const std::filesystem::path& path, JsonValue& root, bool& exists) {
+    void AppendValidationError(std::wstring& errors, const std::wstring& message) {
+        if (!errors.empty()) errors += L"\n";
+        errors += L"- " + message;
+    }
+
+    ReadStatus ReadJson(const std::filesystem::path& path, JsonValue& root) {
         std::error_code error;
-        exists = std::filesystem::exists(path, error);
-        if (error || !exists) return false;
+        const bool exists = std::filesystem::exists(path, error);
+        if (error) return ReadStatus::Invalid;
+        if (!exists) return ReadStatus::Missing;
 
         std::ifstream file(path, std::ios::binary);
-        if (!file.is_open()) return false;
+        if (!file.is_open()) return ReadStatus::Invalid;
         file.seekg(0, std::ios::end);
         const std::streamoff size = file.tellg();
-        if (size <= 0 || size > kMaxConfigBytes) return false;
+        if (size <= 0 || size > kMaxConfigBytes) return ReadStatus::Invalid;
         file.seekg(0, std::ios::beg);
 
         std::stringstream stream;
         stream << file.rdbuf();
         const std::string utf8 = stream.str();
         if (utf8.empty() || utf8.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
-            return false;
+            return ReadStatus::Invalid;
         }
 
         const int length = MultiByteToWideChar(
             CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()),
             nullptr, 0);
-        if (length <= 0) return false;
+        if (length <= 0) return ReadStatus::Invalid;
         std::wstring wide(static_cast<size_t>(length), L'\0');
         if (MultiByteToWideChar(
                 CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()),
                 wide.data(), length) != length) {
-            return false;
+            return ReadStatus::Invalid;
         }
-        return JsonParser::TryParse(wide, root) && root.is_object();
+        return JsonParser::TryParse(wide, root) && root.is_object()
+            ? ReadStatus::Valid
+            : ReadStatus::Invalid;
     }
 
-    void ReadSettingsObject(const JsonValue& object, AppSettings& settings) {
+    void ReadAppearanceObject(
+        const JsonValue& object,
+        AppearanceSettings& appearance,
+        std::wstring& errors)
+    {
+        if (object.is_null()) return;
+        if (!object.is_object()) {
+            AppendValidationError(errors, L"Settings.Appearance 必须是对象");
+            return;
+        }
+
+        if (object.has_key(L"Mode")) {
+            if (!object[L"Mode"].is_string()) {
+                AppendValidationError(errors, L"Settings.Appearance.Mode 必须是字符串");
+            } else {
+                const std::wstring mode = object[L"Mode"].as_string();
+                if (mode == L"Default") appearance.mode = AppearanceMode::Default;
+                else if (mode == L"Custom") appearance.mode = AppearanceMode::Custom;
+                else AppendValidationError(
+                    errors, L"Settings.Appearance.Mode 只能是 Default 或 Custom");
+            }
+        }
+
+        if (object.has_key(L"FontFamily")) {
+            if (!object[L"FontFamily"].is_string() ||
+                !IsValidFontFamilyName(object[L"FontFamily"].as_string())) {
+                AppendValidationError(
+                    errors, L"Settings.Appearance.FontFamily 必须是 1 至 128 个有效字符");
+            } else {
+                appearance.fontFamily = object[L"FontFamily"].as_string();
+            }
+        }
+
+        if (!object.has_key(L"Colors")) return;
+        const JsonValue& colors = object[L"Colors"];
+        if (!colors.is_object()) {
+            AppendValidationError(errors, L"Settings.Appearance.Colors 必须是对象");
+            return;
+        }
+        for (const auto& [name, value] : colors.objVal) {
+            const std::wstring path = L"Settings.Appearance.Colors." + name;
+            if (!IsSupportedAppearanceColor(name)) {
+                AppendValidationError(errors, path + L" 不是支持的颜色字段");
+                continue;
+            }
+            uint32_t rgb = 0;
+            if (!value.is_string() ||
+                !TryParseAppearanceColor(value.as_string(), rgb)) {
+                AppendValidationError(errors, path + L" 必须使用 #RRGGBB 格式");
+                continue;
+            }
+            appearance.colors[name] = value.as_string();
+        }
+    }
+
+    void ReadSettingsObject(
+        const JsonValue& object,
+        AppSettings& settings,
+        std::wstring& errors)
+    {
         if (!object.is_object()) return;
         if (object.has_key(L"UserScale") && object[L"UserScale"].is_number()) {
             const double value = object[L"UserScale"].as_double(1.0);
@@ -104,6 +178,7 @@ namespace {
             const int value = object[L"RefreshIntervalMinutes"].as_int(1);
             if (value >= 1 && value <= 1440) settings.refreshIntervalMinutes = value;
         }
+        ReadAppearanceObject(object[L"Appearance"], settings.appearance, errors);
     }
 
     void ReadWindowObject(const JsonValue& object, StoredState& state) {
@@ -116,6 +191,73 @@ namespace {
         state.hasPosition = true;
     }
 
+    bool WideToUtf8(const std::wstring& value, std::string& utf8) {
+        if (value.empty()) {
+            utf8.clear();
+            return true;
+        }
+        if (value.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+            return false;
+        }
+        const int length = WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
+            nullptr, 0, nullptr, nullptr);
+        if (length <= 0) return false;
+        utf8.resize(static_cast<size_t>(length));
+        return WideCharToMultiByte(
+                   CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
+                   utf8.data(), length, nullptr, nullptr) == length;
+    }
+
+    bool JsonString(const std::wstring& value, std::string& quoted) {
+        std::wstring escaped;
+        escaped.reserve(value.size() + 2);
+        escaped += L'"';
+        constexpr wchar_t hex[] = L"0123456789ABCDEF";
+        for (const wchar_t ch : value) {
+            switch (ch) {
+            case L'"': escaped += L"\\\""; break;
+            case L'\\': escaped += L"\\\\"; break;
+            case L'\b': escaped += L"\\b"; break;
+            case L'\f': escaped += L"\\f"; break;
+            case L'\n': escaped += L"\\n"; break;
+            case L'\r': escaped += L"\\r"; break;
+            case L'\t': escaped += L"\\t"; break;
+            default:
+                if (ch < 0x20) {
+                    escaped += L"\\u00";
+                    escaped += hex[(ch >> 4) & 0xF];
+                    escaped += hex[ch & 0xF];
+                } else {
+                    escaped += ch;
+                }
+                break;
+            }
+        }
+        escaped += L'"';
+        return WideToUtf8(escaped, quoted);
+    }
+
+    bool ValidateAppearanceSettings(
+        const AppearanceSettings& appearance,
+        std::wstring& errors)
+    {
+        if (!IsValidFontFamilyName(appearance.fontFamily)) {
+            AppendValidationError(
+                errors, L"Settings.Appearance.FontFamily 必须是 1 至 128 个有效字符");
+        }
+        for (const auto& [name, value] : appearance.colors) {
+            const std::wstring path = L"Settings.Appearance.Colors." + name;
+            uint32_t rgb = 0;
+            if (!IsSupportedAppearanceColor(name)) {
+                AppendValidationError(errors, path + L" 不是支持的颜色字段");
+            } else if (!TryParseAppearanceColor(value, rgb)) {
+                AppendValidationError(errors, path + L" 必须使用 #RRGGBB 格式");
+            }
+        }
+        return errors.empty();
+    }
+
     bool WriteConfig(const std::filesystem::path& path, const ConfigData& data) {
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
@@ -124,16 +266,46 @@ namespace {
         const std::filesystem::path temporary = path.wstring() + L".tmp";
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file.is_open()) return false;
+        std::string fontFamily;
+        if (!JsonString(data.settings.appearance.fontFamily, fontFamily)) {
+            file.close();
+            DeleteFileW(temporary.c_str());
+            return false;
+        }
         file.imbue(std::locale::classic());
         file << std::setprecision(9);
         file << "{\n";
-        file << "  \"Version\": 1,\n";
+        file << "  \"Version\": 2,\n";
         file << "  \"Settings\": {\n";
         file << "    \"UserScale\": " << data.settings.userScale << ",\n";
         file << "    \"CompanionMode\": "
              << (data.settings.companionMode ? "true" : "false") << ",\n";
         file << "    \"RefreshIntervalMinutes\": "
-             << data.settings.refreshIntervalMinutes << "\n";
+             << data.settings.refreshIntervalMinutes << ",\n";
+        file << "    \"Appearance\": {\n";
+        file << "      \"Mode\": \""
+             << (data.settings.appearance.mode == AppearanceMode::Custom
+                     ? "Custom" : "Default")
+             << "\",\n";
+        file << "      \"FontFamily\": " << fontFamily << ",\n";
+        file << "      \"Colors\": {";
+        if (!data.settings.appearance.colors.empty()) file << "\n";
+        size_t colorIndex = 0;
+        for (const auto& [name, value] : data.settings.appearance.colors) {
+            std::string key;
+            std::string color;
+            if (!JsonString(name, key) || !JsonString(value, color)) {
+                file.close();
+                DeleteFileW(temporary.c_str());
+                return false;
+            }
+            file << "        " << key << ": " << color;
+            if (++colorIndex < data.settings.appearance.colors.size()) file << ",";
+            file << "\n";
+        }
+        if (!data.settings.appearance.colors.empty()) file << "      ";
+        file << "}\n";
+        file << "    }\n";
         file << "  },\n";
         if (data.state.hasPosition) {
             file << "  \"Window\": { \"X\": " << data.state.position.x
@@ -154,28 +326,42 @@ namespace {
         return true;
     }
 
-    ConfigData LoadData() {
+    ConfigData LoadData(
+        ReadStatus* readStatus = nullptr,
+        std::wstring* validationErrors = nullptr)
+    {
+        if (validationErrors) validationErrors->clear();
         ConfigData data;
         const std::filesystem::path directory = ConfigDirectory();
         const std::filesystem::path configPath = directory / L"config.json";
 
         JsonValue root;
-        bool configExists = false;
-        if (ReadJson(configPath, root, configExists)) {
-            ReadSettingsObject(root[L"Settings"], data.settings);
+        const ReadStatus status = ReadJson(configPath, root);
+        if (readStatus) *readStatus = status;
+        std::wstring errors;
+        if (status == ReadStatus::Valid) {
+            ReadSettingsObject(root[L"Settings"], data.settings, errors);
             ReadWindowObject(root[L"Window"], data.state);
+            if (validationErrors) *validationErrors = errors;
             return data;
         }
-        // 已存在但无效的统一配置绝不被默认值覆盖。
-        (void)configExists;
+        if (status == ReadStatus::Invalid && validationErrors) {
+            *validationErrors = L"- config.json 不是有效的 UTF-8 JSON，或文件不可读取";
+        }
         return data;
     }
 
 } // namespace
 
-    AppSettings ConfigStore::LoadSettings() {
+    AppSettings ConfigStore::LoadSettings(
+        std::wstring* validationError,
+        bool* configReadable)
+    {
         const std::lock_guard<std::mutex> lock(g_configMutex);
-        return LoadData().settings;
+        ReadStatus status = ReadStatus::Missing;
+        AppSettings settings = LoadData(&status, validationError).settings;
+        if (configReadable) *configReadable = status != ReadStatus::Invalid;
+        return settings;
     }
 
     StoredState ConfigStore::LoadState() {
@@ -183,16 +369,34 @@ namespace {
         return LoadData().state;
     }
 
-    void ConfigStore::SaveSettings(const AppSettings& settings) {
+    bool ConfigStore::SaveSettings(
+        const AppSettings& settings,
+        std::wstring* validationError)
+    {
         const std::lock_guard<std::mutex> lock(g_configMutex);
-        ConfigData data = LoadData();
+        if (validationError) validationError->clear();
+        ReadStatus status = ReadStatus::Missing;
+        std::wstring errors;
+        ConfigData data = LoadData(&status, &errors);
+        ValidateAppearanceSettings(settings.appearance, errors);
+        if (status == ReadStatus::Invalid || !errors.empty()) {
+            if (validationError) *validationError = errors;
+            return false;
+        }
         data.settings = settings;
-        WriteConfig(ConfigDirectory() / L"config.json", data);
+        const bool saved = WriteConfig(ConfigDirectory() / L"config.json", data);
+        if (!saved && validationError) {
+            *validationError = L"- config.json 写入失败";
+        }
+        return saved;
     }
 
     void ConfigStore::SavePosition(POINT position) {
         const std::lock_guard<std::mutex> lock(g_configMutex);
-        ConfigData data = LoadData();
+        ReadStatus status = ReadStatus::Missing;
+        std::wstring errors;
+        ConfigData data = LoadData(&status, &errors);
+        if (status == ReadStatus::Invalid || !errors.empty()) return;
         data.state.position = position;
         data.state.hasPosition = true;
         WriteConfig(ConfigDirectory() / L"config.json", data);
@@ -200,6 +404,10 @@ namespace {
 
     std::wstring ConfigStore::DataDirectory() {
         return ConfigDirectory().wstring();
+    }
+
+    std::wstring ConfigStore::ConfigFilePath() {
+        return (ConfigDirectory() / L"config.json").wstring();
     }
 
 } // namespace CodexQuotaBar

@@ -50,6 +50,7 @@
   - **立即刷新**：手动唤起临时 Codex App Server 进行即时额度与 Token 统计同步。
   - **刷新间隔**：支持切换自动刷新周期（1分钟 / 3分钟 / 5分钟 / 10分钟 / 15分钟 / 30分钟 / 60分钟）。
   - **缩放大小**：支持切换 UI 缩放比例（80% / 90% / 100% / 110% / 125% / 150%）。
+  - **外观**：在默认外观与 `config.json` 自定义外观之间切换，可直接打开配置文件并在保存后重新加载。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
   - **退出**：彻底关闭常驻进程并释放所有系统与图形资源。
 
@@ -225,6 +226,51 @@ dist\Release\Codex-Quota-Bar_version_2.5.2.sha256
 ```
 
 配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。诊断日志同样位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括诊断日志），并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
+
+### 自定义外观
+
+右键额度条，选择 **外观 > 打开配置文件**。将 `Settings.Appearance.Mode` 改为 `Custom`，编辑完成并保存后，选择 **外观 > 重新加载外观**。也可以通过菜单在 `Default` 与 `Custom` 间切换；`Default` 始终使用程序内置颜色和 `Microsoft YaHei UI`，但不会删除已经填写的自定义值。
+
+`config.json` 是标准 JSON，不支持注释。字体必须是 Windows 已安装的字体族名称，颜色只接受严格的 `#RRGGBB` 格式。所有颜色字段均可省略，省略时继承默认颜色。完整外观格式如下：
+
+```json
+{
+  "Version": 2,
+  "Settings": {
+    "UserScale": 1.0,
+    "CompanionMode": false,
+    "RefreshIntervalMinutes": 1,
+    "Appearance": {
+      "Mode": "Custom",
+      "FontFamily": "Microsoft YaHei UI",
+      "Colors": {
+        "Surface": "#FFFFFF",
+        "StatsCardBackground": "#FAFAFA",
+        "StatsCardBorder": "#E0E0E0",
+        "Text": "#404040",
+        "MutedText": "#757575",
+        "TrackBackground": "#F7F7F7",
+        "Unavailable": "#757575",
+        "ProgressHigh": "#159957",
+        "ProgressMedium": "#D9A900",
+        "ProgressLow": "#D76B26",
+        "ProgressCritical": "#C00000",
+        "OuterBorder": "#FFFFFF",
+        "Divider": "#E0E0E0",
+        "Chevron": "#5F5F5F",
+        "SyncSuccess": "#159957",
+        "SyncIdle": "#A8A8A8",
+        "SyncBusy": "#D9A900",
+        "MenuHover": "#F0F0F0",
+        "MenuDivider": "#EAEAEA"
+      }
+    }
+  },
+  "Window": null
+}
+```
+
+程序逐字段校验自定义外观：未知颜色名、错误类型、非法色值和无效字体名称会显示具体配置路径；有效字段仍会应用，错误字段回退到默认值。若 JSON 本身损坏或存在未修正的外观字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到默认字体并给出提示。
 
 ### Codex App Server
 

@@ -44,6 +44,11 @@ namespace CodexQuotaBar {
         void ApplyUiScale();
         void ApplyUserScale(int level);
         void ApplyRefreshInterval(int level);
+        void ApplyAppearance(const std::wstring& validationErrors = L"");
+        void SetAppearanceMode(AppearanceMode mode);
+        void ReloadAppearance();
+        void OpenConfigFile();
+        bool SaveSettingsWithFeedback(bool preserveDiskAppearance = true);
         void Hide();
         void ToggleVisible();
         void ToggleExpanded();
@@ -76,6 +81,7 @@ namespace CodexQuotaBar {
         int m_userScaleLevel = 2; // 用户缩放档位索引（0.75/0.875/1.0/1.125/1.25）
         int m_refreshIntervalLevel = 0; // 自动刷新档位索引（1/5/10/30/60 分钟）
         int m_currentDpi = 96;
+        AppSettings m_settings;
         bool m_companionMode = false;
         bool m_codexDesktopRunning = false;
         int m_codexMissingPolls = 0;

@@ -58,6 +58,42 @@ namespace CodexQuotaBar {
         CreateTextFormats();
     }
 
+    bool Direct2DRenderer::FontFamilyExists(const std::wstring& fontFamily) const {
+        if (!m_pDWriteFactory || fontFamily.empty()) return false;
+        ComPtr<IDWriteFontCollection> collection;
+        if (FAILED(m_pDWriteFactory->GetSystemFontCollection(&collection)) || !collection) {
+            return false;
+        }
+        UINT32 index = 0;
+        BOOL exists = FALSE;
+        return SUCCEEDED(collection->FindFamilyName(fontFamily.c_str(), &index, &exists)) &&
+               exists;
+    }
+
+    bool Direct2DRenderer::SetAppearance(
+        const ThemePalette& palette,
+        const std::wstring& fontFamily,
+        std::wstring* validationError)
+    {
+        m_palette = palette;
+        bool validFont = FontFamilyExists(fontFamily);
+        if (validFont) {
+            m_fontFamily = fontFamily;
+        } else {
+            m_fontFamily = FontFamilyExists(L"Microsoft YaHei UI")
+                ? L"Microsoft YaHei UI" : L"Segoe UI";
+            if (validationError) {
+                *validationError = L"- 系统中未找到字体族 \"" + fontFamily +
+                    L"\"，已回退为 \"" + m_fontFamily + L"\"";
+            }
+        }
+
+        DiscardDeviceResources();
+        DiscardTextFormats();
+        CreateTextFormats();
+        return validFont;
+    }
+
     void Direct2DRenderer::DiscardTextFormats() {
         m_pFontRowTitle.Reset();
         m_pFontRowValue.Reset();
@@ -70,7 +106,7 @@ namespace CodexQuotaBar {
     void Direct2DRenderer::CreateTextFormats() {
         if (!m_pDWriteFactory) return;
 
-        const wchar_t* fontFamily = L"Microsoft YaHei UI";
+        const wchar_t* fontFamily = m_fontFamily.c_str();
         float s = m_dpiScale;
 
         // 全卡片统一 16px，字号层级仅靠字重区分

@@ -21,7 +21,8 @@ namespace CodexQuotaBar {
             int screenX,
             int screenY,
             const std::vector<MenuItem>& items,
-            const ThemePalette& palette = ThemePalette::Light());
+            const ThemePalette& palette,
+            const std::wstring& fontFamily);
     };
 
 } // namespace CodexQuotaBar

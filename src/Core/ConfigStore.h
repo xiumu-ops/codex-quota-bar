@@ -8,6 +8,8 @@
 #endif
 #include <windows.h>
 
+#include "Core/Appearance.h"
+
 #include <string>
 
 namespace CodexQuotaBar {
@@ -21,17 +23,23 @@ namespace CodexQuotaBar {
         float userScale = 1.0f;
         bool companionMode = false;
         int refreshIntervalMinutes = 1;
+        AppearanceSettings appearance;
     };
 
     // 安装版设置位于安装根目录的 data\config.json；默认路径为
     // %LOCALAPPDATA%\Codex-Quota-Bar\data\config.json。
     class ConfigStore {
     public:
-        static AppSettings LoadSettings();
+        static AppSettings LoadSettings(
+            std::wstring* validationError = nullptr,
+            bool* configReadable = nullptr);
         static StoredState LoadState();
-        static void SaveSettings(const AppSettings& settings);
+        static bool SaveSettings(
+            const AppSettings& settings,
+            std::wstring* validationError = nullptr);
         static void SavePosition(POINT position);
         static std::wstring DataDirectory();
+        static std::wstring ConfigFilePath();
     };
 
 } // namespace CodexQuotaBar

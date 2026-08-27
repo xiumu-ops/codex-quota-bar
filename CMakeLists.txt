@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CORE_HEADERS
+    src/Core/Appearance.h
     src/Core/Constants.h
     src/Core/DpiHelper.h
     src/Core/Models.h
@@ -25,6 +26,7 @@ set(CORE_HEADERS
 )
 
 set(CORE_SOURCES
+    src/Core/Appearance.cpp
     src/Core/ConfigStore.cpp
     src/Core/Logger.cpp
 )
@@ -144,6 +146,7 @@ if(BUILD_TESTING)
         src/Services/CodexClient.cpp
         src/Services/CodexAppServerClient.cpp
         src/Services/CompanionMode.cpp
+        src/Core/Appearance.cpp
         src/Core/ConfigStore.cpp
         src/Core/Logger.cpp
     )
@@ -166,9 +169,16 @@ if(BUILD_TESTING)
     add_executable(SimpleJsonTests tests/SimpleJsonTests.cpp)
     cqb_configure_target(SimpleJsonTests)
 
+    add_executable(AppearanceTests
+        tests/AppearanceTests.cpp
+        src/Core/Appearance.cpp
+    )
+    cqb_configure_target(AppearanceTests)
+
     add_executable(PipeServerTests
         tests/PipeServerTests.cpp
         src/Services/PipeServer.cpp
+        src/Core/Appearance.cpp
         src/Core/ConfigStore.cpp
         src/Core/Logger.cpp
     )
@@ -181,10 +191,12 @@ if(BUILD_TESTING)
     )
     add_test(NAME HookConfig COMMAND HookConfigTests)
     add_test(NAME SimpleJson COMMAND SimpleJsonTests)
+    add_test(NAME Appearance COMMAND AppearanceTests)
     add_test(NAME PipeServer COMMAND PipeServerTests)
     set_tests_properties(CodexAppServerIntegration PROPERTIES TIMEOUT 30)
     set_tests_properties(HookConfig PROPERTIES TIMEOUT 10)
     set_tests_properties(SimpleJson PROPERTIES TIMEOUT 10)
+    set_tests_properties(Appearance PROPERTIES TIMEOUT 10)
     set_tests_properties(PipeServer PROPERTIES TIMEOUT 10)
 endif()
 
