@@ -19,10 +19,10 @@ official signed releases.
 
 ## Signing provider and current status
 
-Version 2.5.2 is the unsigned application release prepared for SignPath Foundation
-review. Until enrollment and CI integration are complete, no project release is
-represented as SignPath-signed. Users can confirm the current state through the
-Windows signature properties or `Get-AuthenticodeSignature`.
+The project is preparing for SignPath Foundation review. Until enrollment and CI
+integration are complete, no project release is represented as SignPath-signed. Users
+can confirm the current state through the Windows signature properties or
+`Get-AuthenticodeSignature`.
 
 After approval, signed release pages will carry this disclosure:
 

@@ -8,7 +8,7 @@
 
 基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：常驻工作区顶部，通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态。
 
-本项目是独立的第三方开源工具，与 OpenAI 不存在隶属或背书关系。参阅[隐私政策](PRIVACY.md)和[代码签名政策](CODE_SIGNING_POLICY.md)。
+本项目是独立的第三方开源工具，与 OpenAI 不存在隶属或背书关系。参阅[修改日志](CHANGELOG.md)、[隐私政策](PRIVACY.md)和[代码签名政策](CODE_SIGNING_POLICY.md)。
 
 ## 📸 界面预览与功能使用
 
@@ -50,6 +50,7 @@
   - **立即刷新**：手动唤起临时 Codex App Server 进行即时额度与 Token 统计同步。
   - **刷新间隔**：支持切换自动刷新周期（1分钟 / 3分钟 / 5分钟 / 10分钟 / 15分钟 / 30分钟 / 60分钟）。
   - **缩放大小**：支持切换 UI 缩放比例（80% / 90% / 100% / 110% / 125% / 150%）。
+  - **外观**：在默认外观与 `config.json` 自定义外观之间切换，可直接打开配置文件并在保存后重新加载。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
   - **退出**：彻底关闭常驻进程并释放所有系统与图形资源。
 
@@ -98,14 +99,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.2：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.3：
 
 ```powershell
-git tag -a v2.5.2 -m "Codex-Quota-Bar 2.5.2"
-git push origin v2.5.2
+git tag -a v2.5.3 -m "Codex-Quota-Bar 2.5.3"
+git push origin v2.5.3
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.2.exe` 与 `Codex-Quota-Bar_version_2.5.2.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.3.exe` 与 `Codex-Quota-Bar_version_2.5.3.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -113,8 +114,6 @@ git push origin v2.5.2
 - `WINDOWS_SIGNING_PFX_PASSWORD`：PFX 证书密码
 
 签名证书只在非 Pull Request 构建中临时导入当前 Runner 的用户证书库，构建后立即移除。没有配置这两个 Secret 时工作流仍会生成未签名安装包并报告其签名状态；云端编译本身不会消除 Defender 对未签名程序的信誉检查。
-
-2.5.2 是用于 SignPath Foundation 申请审核的未签名准备版本。获批后将按[代码签名政策](CODE_SIGNING_POLICY.md)接入 SignPath 的受信构建与人工批准流程；在此之前不会把任何产物表述为 SignPath 签名版本。
 
 ### 项目目录
 
@@ -127,13 +126,14 @@ scripts/      构建、运行、测试、安装包与清理脚本
 dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 .build/       隐藏的编译缓存；不纳入版本控制
 .github/      GitHub Actions 远程构建与正式发布流程
+CHANGELOG.md  各版本新增、变更与修复记录
 ```
 
-项目采用单体 Win32 EXE 的共置布局，模块头文件与实现文件放在同一 `src/<Module>` 目录，不再维护内容重复的 `include/` 镜像目录。仓库根目录保留构建入口、README、许可证、隐私政策和代码签名政策等项目级文件。
+项目采用单体 Win32 EXE 的共置布局，模块头文件与实现文件放在同一 `src/<Module>` 目录。仓库根目录保留构建入口、README、修改日志、许可证、隐私政策和代码签名政策等项目级文件。
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.2.exe` 即可安装。这是唯一的发布 EXE；主程序只作为安装器内部载荷构建，不再单独放入 `dist`。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.3.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -146,11 +146,11 @@ dist/         最终单文件安装器与 SHA256；可删除、可重新生成
    └─ diagnostic.previous.log
 ```
 
-安装器以当前用户权限运行，不再请求 UAC；卸载入口写入 `HKCU`，快捷方式只创建在当前用户开始菜单中。自定义路径必须使用名为 `Codex-Quota-Bar` 的独立根目录，卸载器通过注册的 `InstallLocation` 精确校验 `app` 子目录后才删除，避免误删用户选择位置中的其他文件。静默安装使用默认路径；重新安装沿用已注册的位置。
+安装器以当前用户权限运行且不请求 UAC；卸载入口写入 `HKCU`，快捷方式只创建在当前用户开始菜单中。自定义路径必须使用名为 `Codex-Quota-Bar` 的独立根目录，卸载器通过注册的 `InstallLocation` 精确校验 `app` 子目录后才删除，避免误删用户选择位置中的其他文件。静默安装使用默认路径；重新安装沿用已注册的位置。
 
-2.5.x 不再保留早期系统级安装布局的迁移逻辑。安装器检测到旧版 HKLM 卸载项时会停止安装，并要求先从 Windows“已安装的应用”卸载旧版，避免 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 同时残留两份程序。
+安装器检测到早期系统级版本的 HKLM 卸载项时会停止安装，并要求先从 Windows“已安装的应用”卸载旧版，避免 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 同时残留两份程序。
 
-卸载器仍会请求一次管理员权限，但只用于在 Windows 锁定正在运行的 `Uninstall.exe` 时调用系统原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 完成最终删除；Hook、伴随启动项、HKCU 卸载项、当前用户快捷方式和配置本身都不需要管理员权限。项目不复制临时卸载器，也不使用 `cmd.exe` 或脚本自删除。
+卸载器仅在 Windows 锁定正在运行的 `Uninstall.exe`、需要调用系统原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 完成最终删除时请求管理员权限；Hook、伴随启动项、HKCU 卸载项、当前用户快捷方式和配置本身都不需要管理员权限。项目不复制临时卸载器，也不使用 `cmd.exe` 或脚本自删除。
 
 窗口设置、伴随模式启动项以及 Codex Hook 均保持当前用户范围。安装器通过当前用户的 `~/.codex/hooks.json` 注册会话同步 Hook，不读取或修改高敏感的 `config.toml`；`hooks.json` 使用临时文件原子替换，若其中已有其他 Hook 或元数据，会结构化合并并精确保留整数等 JSON 数值。重新安装时会备份现有程序、卸载器和快捷方式，任何关键步骤失败都会恢复原安装。
 
@@ -176,8 +176,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.5.2.exe
-dist\Release\Codex-Quota-Bar_version_2.5.2.sha256
+dist\Release\Codex-Quota-Bar_version_2.5.3.exe
+dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -225,6 +225,51 @@ dist\Release\Codex-Quota-Bar_version_2.5.2.sha256
 ```
 
 配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。诊断日志同样位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括诊断日志），并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
+
+### 自定义外观
+
+右键额度条，选择 **外观 > 打开配置文件**。将 `Settings.Appearance.Mode` 改为 `Custom`，编辑完成并保存后，选择 **外观 > 重新加载外观**。也可以通过菜单在 `Default` 与 `Custom` 间切换；`Default` 始终使用程序内置颜色和 `Microsoft YaHei UI`，但不会删除已经填写的自定义值。
+
+`config.json` 是标准 JSON，不支持注释。字体必须是 Windows 已安装的字体族名称，颜色只接受严格的 `#RRGGBB` 格式。所有颜色字段均可省略，省略时继承默认颜色。完整外观格式如下：
+
+```json
+{
+  "Version": 2,
+  "Settings": {
+    "UserScale": 1.0,
+    "CompanionMode": false,
+    "RefreshIntervalMinutes": 1,
+    "Appearance": {
+      "Mode": "Custom",
+      "FontFamily": "Microsoft YaHei UI",
+      "Colors": {
+        "Surface": "#FFFFFF",
+        "StatsCardBackground": "#FAFAFA",
+        "StatsCardBorder": "#E0E0E0",
+        "Text": "#404040",
+        "MutedText": "#757575",
+        "TrackBackground": "#F7F7F7",
+        "Unavailable": "#757575",
+        "ProgressHigh": "#159957",
+        "ProgressMedium": "#D9A900",
+        "ProgressLow": "#D76B26",
+        "ProgressCritical": "#C00000",
+        "OuterBorder": "#FFFFFF",
+        "Divider": "#E0E0E0",
+        "Chevron": "#5F5F5F",
+        "SyncSuccess": "#159957",
+        "SyncIdle": "#A8A8A8",
+        "SyncBusy": "#D9A900",
+        "MenuHover": "#F0F0F0",
+        "MenuDivider": "#EAEAEA"
+      }
+    }
+  },
+  "Window": null
+}
+```
+
+程序逐字段校验自定义外观：未知颜色名、错误类型、非法色值和无效字体名称会显示具体配置路径；有效字段仍会应用，错误字段回退到默认值。若 JSON 本身损坏或存在未修正的外观字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到默认字体并给出提示。
 
 ### Codex App Server
 

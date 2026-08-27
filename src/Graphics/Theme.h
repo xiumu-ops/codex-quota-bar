@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/Appearance.h"
 #include "Graphics/D2DCommon.h"
 
 namespace CodexQuotaBar {
@@ -22,9 +23,12 @@ namespace CodexQuotaBar {
         D2D1_COLOR_F syncSuccess;
         D2D1_COLOR_F syncIdle;
         D2D1_COLOR_F syncBusy;
+        D2D1_COLOR_F menuHover;
+        D2D1_COLOR_F menuDivider;
 
         // 淡青白主题：纯白卡片底、中性深灰主文字、浅灰辅助文字、红橙黄绿状态梯度
         static ThemePalette Light();
+        static ThemePalette Custom(const AppearanceSettings& settings);
     };
 
 } // namespace CodexQuotaBar

@@ -106,7 +106,7 @@ if ($LASTEXITCODE -ne 0) {
     $protocolTestsBuilt = $false
 }
 if ($protocolTestsBuilt) {
-    & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests HookConfigTests SimpleJsonTests PipeServerTests
+    & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests HookConfigTests SimpleJsonTests AppearanceTests PipeServerTests
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [FAIL] App Server 测试程序构建失败" -ForegroundColor Red
         $script:Failures++
@@ -115,7 +115,7 @@ if ($protocolTestsBuilt) {
 }
 if ($protocolTestsBuilt) {
     & ctest --test-dir $CMakeBuildDir -C Release --output-on-failure `
-        -R "^(CodexAppServerIntegration|HookConfig|SimpleJson|PipeServer)$"
+        -R "^(CodexAppServerIntegration|HookConfig|SimpleJson|Appearance|PipeServer)$"
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [PASS] App Server、IPC 安全、JSON 边界、Hook 与异常兼容路径" -ForegroundColor Green
     } else {

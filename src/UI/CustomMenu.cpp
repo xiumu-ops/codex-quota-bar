@@ -98,7 +98,7 @@ namespace CodexQuotaBar {
                 if (row.text.empty()) {
                     // 分隔线（浅灰，与折叠栏 divider 同色）
                     const float midY = (rc.top + rc.bottom) / 2.0f;
-                    st->pMenuBrush->SetColor(D2D1::ColorF(0xEAEAEA));
+                    st->pMenuBrush->SetColor(st->palette.menuDivider);
                     st->pMenuRenderTarget->DrawLine(
                         D2D1::Point2F(padX, midY), D2D1::Point2F(w - padX, midY),
                         st->pMenuBrush.Get(), 1.0f);
@@ -107,14 +107,14 @@ namespace CodexQuotaBar {
 
                 if (static_cast<int>(i) == st->hover) {
                     // 悬停高亮：圆角药丸（浅灰）
-                    st->pMenuBrush->SetColor(D2D1::ColorF(0xF0F0F0));
+                    st->pMenuBrush->SetColor(st->palette.menuHover);
                     D2D1_ROUNDED_RECT hoverRect =
                         D2D1::RoundedRect(rc, hoverRadius, hoverRadius);
                     st->pMenuRenderTarget->FillRoundedRectangle(hoverRect, st->pMenuBrush.Get());
                 }
 
                 if (st->pFontMenu) {
-                    st->pMenuBrush->SetColor(D2D1::ColorF(0x404040));
+                    st->pMenuBrush->SetColor(st->palette.text);
                     D2D1_RECT_F textRect = D2D1::RectF(rc.left + padX, rc.top, rc.right - padX, rc.bottom);
                     st->pMenuRenderTarget->DrawTextW(
                         row.text.c_str(), static_cast<UINT32>(row.text.size()),
@@ -216,7 +216,8 @@ namespace CodexQuotaBar {
         int screenX,
         int screenY,
         const std::vector<MenuItem>& items,
-        const ThemePalette& palette)
+        const ThemePalette& palette,
+        const std::wstring& fontFamily)
     {
         MenuPopupState st;
         st.dpiScale = dpiScale;
@@ -231,9 +232,8 @@ namespace CodexQuotaBar {
             return 0;
         }
 
-        const wchar_t* fontFamily = L"Microsoft YaHei UI";
         if (FAILED(st.pDWriteFactory->CreateTextFormat(
-                fontFamily, NULL,
+                fontFamily.c_str(), NULL,
                 DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                 16.0f * dpiScale, L"zh-cn", &st.pFontMenu))) {
             return 0;

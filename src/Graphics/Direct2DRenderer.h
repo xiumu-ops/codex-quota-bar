@@ -13,6 +13,12 @@ namespace CodexQuotaBar {
 
         HRESULT Initialize(HWND hwnd);
         void SetDpiScale(float dpiScale);
+        bool SetAppearance(
+            const ThemePalette& palette,
+            const std::wstring& fontFamily,
+            std::wstring* validationError = nullptr);
+        const ThemePalette& Palette() const { return m_palette; }
+        const std::wstring& FontFamily() const { return m_fontFamily; }
         HRESULT Resize(UINT width, UINT height);
 
         HRESULT Render(
@@ -25,6 +31,7 @@ namespace CodexQuotaBar {
         void DiscardDeviceResources();
         void CreateTextFormats();
         void DiscardTextFormats();
+        bool FontFamilyExists(const std::wstring& fontFamily) const;
 
         void DrawCollapsedBar(
             float topY,
@@ -52,6 +59,7 @@ namespace CodexQuotaBar {
         UINT m_height = 0;
 
         ThemePalette m_palette;
+        std::wstring m_fontFamily = L"Microsoft YaHei UI";
 
         // 设备无关资源 (Device-Independent Resources)
         ComPtr<ID2D1Factory> m_pD2DFactory;
