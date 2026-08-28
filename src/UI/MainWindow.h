@@ -49,6 +49,7 @@ namespace CodexQuotaBar {
         void ConfigureBackgroundTransparency();
         void ReloadAppearance();
         void OpenConfigFile();
+        void OpenDefaultConfigFile();
         bool SaveSettingsWithFeedback(bool preserveDiskAppearance = true);
         void Hide();
         void ToggleVisible();

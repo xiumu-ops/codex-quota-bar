@@ -9,6 +9,8 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 $BuildDir = Join-Path $ProjectRoot ".build\app\$Configuration"
 $OutputDir = Join-Path $ProjectRoot ".build\output\$Configuration"
 $OutputFile = Join-Path $OutputDir "Codex-Quota-Bar.exe"
+$DefaultConfigSource = Join-Path $ProjectRoot "config-default.json"
+$DefaultConfigOutput = Join-Path $OutputDir "config-default.json"
 
 New-Item -ItemType Directory -Path $BuildDir, $OutputDir -Force | Out-Null
 
@@ -68,5 +70,6 @@ cmd.exe /d /c $command
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputFile)) {
     throw "Application build failed."
 }
+Copy-Item -LiteralPath $DefaultConfigSource -Destination $DefaultConfigOutput -Force
 
 Write-Host "Build successful: $OutputFile" -ForegroundColor Green

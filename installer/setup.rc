@@ -4,6 +4,7 @@
 IDI_INSTALLER_ICON ICON "assets/icons/app-icon.ico"
 IDR_APP_PAYLOAD RCDATA ".build/output/Release/Codex-Quota-Bar.exe"
 IDR_UNINSTALL_PAYLOAD RCDATA ".build/installer/Uninstall.exe"
+IDR_DEFAULT_CONFIG_PAYLOAD RCDATA "config-default.json"
 1 24 "installer/setup.manifest"
 
 1 VERSIONINFO

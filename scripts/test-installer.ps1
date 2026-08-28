@@ -15,6 +15,7 @@ $appDir = Join-Path $installRoot "app"
 $dataDir = Join-Path $installRoot "data"
 $appPath = Join-Path $appDir "Codex-Quota-Bar.exe"
 $uninstallPath = Join-Path $appDir "Uninstall.exe"
+$defaultConfigPath = Join-Path $appDir "config-default.json"
 $uninstallRegistry =
     "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Codex-Quota-Bar"
 $programs = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
@@ -48,13 +49,18 @@ try {
         throw "Installer exited with code $($setup.ExitCode)."
     }
 
-    foreach ($requiredFile in $appPath, $uninstallPath, $shortcut, $hooksFile) {
+    foreach ($requiredFile in $appPath, $uninstallPath, $defaultConfigPath, $shortcut, $hooksFile) {
         if (-not (Test-Path -LiteralPath $requiredFile)) {
             throw "Installer did not create: $requiredFile"
         }
     }
     if (Test-Path -LiteralPath $dataDir) {
         throw "The installer created mutable data before the application needed it."
+    }
+    $defaultConfig = Get-Content -LiteralPath $defaultConfigPath -Raw | ConvertFrom-Json
+    if ($defaultConfig.Settings.Appearance.Mode -ne "Default" -or
+        $defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF") {
+        throw "The installed default configuration is invalid."
     }
     if (-not (Test-Path -LiteralPath $uninstallRegistry)) {
         throw "The current-user uninstall registration was not created."

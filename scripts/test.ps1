@@ -17,10 +17,14 @@ function Get-TargetProcesses {
 }
 
 $script:Failures = 0
-$ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config.json"
+$ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config-users.json"
+$LegacyConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config.json"
+$DefaultConfigFile = Join-Path (Split-Path -Parent $ExePath) "config-default.json"
 $backupId = [Guid]::NewGuid().ToString("N")
 $ConfigBackup = "$ConfigFile.$backupId.cqbbak"
+$LegacyConfigBackup = "$LegacyConfigFile.$backupId.cqbbak"
 $ConfigExisted = Test-Path -LiteralPath $ConfigFile
+$LegacyConfigExisted = Test-Path -LiteralPath $LegacyConfigFile
 $ConfigBackupPrepared = $false
 $PipeName = "Codex-Quota-Bar_Pipe_$((Get-Process -Id $PID).SessionId)"
 $targetFullPath = [IO.Path]::GetFullPath($ExePath)
@@ -55,6 +59,13 @@ Write-Host "Building executable from current sources..." -ForegroundColor Yellow
 & (Join-Path $ScriptDir "build.ps1")
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $ExePath)) {
     throw "Build failed; aborting tests."
+}
+if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
+    throw "Default configuration was not copied beside the application."
+}
+$defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
+if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF") {
+    throw "Default configuration content is incomplete."
 }
 
 # 清理上次运行可能残留的实例（避免单实例互斥体干扰本套件）
@@ -128,12 +139,16 @@ if ($protocolTestsBuilt) {
 # 先备份用户配置，结束后原样恢复，避免测试数据污染真实状态。
 if ($ConfigExisted) {
     Copy-Item $ConfigFile $ConfigBackup -Force
+    Remove-Item -LiteralPath $ConfigFile -Force
+}
+if ($LegacyConfigExisted) {
+    Copy-Item $LegacyConfigFile $LegacyConfigBackup -Force
 }
 $ConfigBackupPrepared = $true
-# 写入当前格式配置，验证统一配置可被读取并保持。
+# 写入旧版文件，验证启动后迁移到用户配置并与默认基线组合读取。
 $ConfigDirectory = Split-Path -Parent $ConfigFile
 New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
-Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
+Set-Content -LiteralPath $LegacyConfigFile -Encoding utf8NoBOM -Value @'
 {
   "Version": 1,
   "Settings": {
@@ -161,10 +176,10 @@ try {
                 $config.Settings.CompanionMode -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
                 $config.Window.X -eq 120 -and $config.Window.Y -eq 80
-    if ($configOk) {
-        Write-Host "  [PASS] 统一配置读取正常" -ForegroundColor Green
+    if ($configOk -and -not (Test-Path -LiteralPath $LegacyConfigFile)) {
+        Write-Host "  [PASS] 旧配置迁移与双配置读取正常" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 统一配置读取内容不完整" -ForegroundColor Red
+        Write-Host "  [FAIL] 旧配置迁移或双配置读取不完整" -ForegroundColor Red
         $script:Failures++
     }
 } catch {
@@ -421,12 +436,15 @@ try {
     @(Get-TargetProcesses) | Stop-Process -Force -ErrorAction SilentlyContinue
 
     if ($ConfigBackupPrepared) {
+        Remove-Item -LiteralPath $ConfigFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $LegacyConfigFile -Force -ErrorAction SilentlyContinue
         if ($ConfigExisted -and (Test-Path -LiteralPath $ConfigBackup)) {
             Move-Item -LiteralPath $ConfigBackup -Destination $ConfigFile -Force
-        } elseif (-not $ConfigExisted -and (Test-Path -LiteralPath $ConfigFile)) {
-            Remove-Item -LiteralPath $ConfigFile -Force
         }
-        if (-not $ConfigExisted) {
+        if ($LegacyConfigExisted -and (Test-Path -LiteralPath $LegacyConfigBackup)) {
+            Move-Item -LiteralPath $LegacyConfigBackup -Destination $LegacyConfigFile -Force
+        }
+        if (-not $ConfigExisted -and -not $LegacyConfigExisted) {
             $testDataDirectory = Split-Path -Parent $ConfigFile
             $testInstallRoot = Split-Path -Parent $testDataDirectory
             if ((Test-Path -LiteralPath $testDataDirectory) -and

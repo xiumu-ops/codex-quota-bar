@@ -99,6 +99,13 @@ source_group("Resource Files" FILES ${RESOURCE_HEADERS} src/resources/app.rc src
 
 add_executable(CodexQuotaBarApp WIN32 ${SOURCES})
 
+add_custom_command(TARGET CodexQuotaBarApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config-default.json"
+        "$<TARGET_FILE_DIR:CodexQuotaBarApp>/config-default.json"
+    VERBATIM
+)
+
 function(cqb_configure_target target)
     target_compile_features(${target} PRIVATE cxx_std_20)
     target_compile_definitions(${target} PRIVATE

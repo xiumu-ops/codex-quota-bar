@@ -1,0 +1,35 @@
+{
+  "Version": 2,
+  "Settings": {
+    "UserScale": 1.0,
+    "CompanionMode": false,
+    "RefreshIntervalMinutes": 1,
+    "Appearance": {
+      "Mode": "Default",
+      "FontFamily": "Microsoft YaHei UI",
+      "BackgroundTransparency": 0,
+      "Colors": {
+        "Surface": "#FFFFFF",
+        "StatsCardBackground": "#FAFAFA",
+        "StatsCardBorder": "#E0E0E0",
+        "Text": "#404040",
+        "MutedText": "#757575",
+        "TrackBackground": "#F7F7F7",
+        "Unavailable": "#757575",
+        "ProgressHigh": "#159957",
+        "ProgressMedium": "#D9A900",
+        "ProgressLow": "#D76B26",
+        "ProgressCritical": "#C00000",
+        "OuterBorder": "#FFFFFF",
+        "Divider": "#E0E0E0",
+        "Chevron": "#5F5F5F",
+        "SyncSuccess": "#159957",
+        "SyncIdle": "#A8A8A8",
+        "SyncBusy": "#D9A900",
+        "MenuHover": "#F0F0F0",
+        "MenuDivider": "#EAEAEA"
+      }
+    }
+  },
+  "Window": null
+}

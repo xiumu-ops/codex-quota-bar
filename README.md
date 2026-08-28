@@ -22,7 +22,7 @@
   - **状态指示灯与文字**：实时反馈同步健康状态（🟢 成功 / 🟡 同步中 / 🔴 失败 / ⚪ 等待）。
 - **交互方式**：
   - **左键单击右下角箭头（Chevron）**：展开或收起详细统计面板。
-  - **左键按住主体拖动**：自由拖放至屏幕任意位置（跨多显示器、DPI 切换均保持清晰且自动持久化保存位置到 `config.json`）。
+  - **左键按住主体拖动**：自由拖放至屏幕任意位置（跨多显示器、DPI 切换均保持清晰且自动持久化保存位置到 `config-users.json`）。
   - **左键双击主体区域**：立即向 Codex 发起即时额度与使用数据刷新。
 
 ---
@@ -50,7 +50,7 @@
   - **立即刷新**：手动唤起临时 Codex App Server 进行即时额度与 Token 统计同步。
   - **刷新间隔**：支持切换自动刷新周期（1分钟 / 3分钟 / 5分钟 / 10分钟 / 15分钟 / 30分钟 / 60分钟）。
   - **缩放大小**：支持切换 UI 缩放比例（80% / 90% / 100% / 110% / 125% / 150%）。
-  - **外观配置**：在默认外观与 `config.json` 个性外观之间切换，可直接打开配置文件并在保存后重新加载。
+  - **外观配置**：在 `config-default.json` 默认外观与 `config-users.json` 个性外观之间切换，可分别打开配置文件并在保存后重新加载。
   - **透明背景**：手动输入 0–90 的整数调整卡片背景透明度，文字、进度条、状态灯、边框和右键菜单保持不透明。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
   - **退出**：彻底关闭常驻进程并释放所有系统与图形资源。
@@ -127,6 +127,7 @@ scripts/      构建、运行、测试、安装包与清理脚本
 dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 .build/       隐藏的编译缓存；不纳入版本控制
 .github/      GitHub Actions 远程构建与正式发布流程
+config-default.json  程序默认设置、字体与完整颜色基线
 CHANGELOG.md  各版本新增、变更与修复记录
 ```
 
@@ -140,9 +141,10 @@ CHANGELOG.md  各版本新增、变更与修复记录
 %LOCALAPPDATA%\Codex-Quota-Bar\
 ├─ app\
 │  ├─ Codex-Quota-Bar.exe
+│  ├─ config-default.json
 │  └─ Uninstall.exe
 └─ data\
-   ├─ config.json
+   ├─ config-users.json
    ├─ diagnostic.log
    └─ diagnostic.previous.log
 ```
@@ -219,21 +221,22 @@ dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
 
 ### 统一应用配置
 
-窗口位置、界面缩放、刷新间隔和伴随模式偏好统一保存在：
+默认基线与用户设置分开保存：
 
 ```text
-%LOCALAPPDATA%\Codex-Quota-Bar\data\config.json
+%LOCALAPPDATA%\Codex-Quota-Bar\app\config-default.json
+%LOCALAPPDATA%\Codex-Quota-Bar\data\config-users.json
 ```
 
-配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。诊断日志同样位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括诊断日志），并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
+`config-default.json` 随程序安装，保存完整默认设置、字体和颜色基线；`config-users.json` 保存用户设置、个性外观和窗口位置。加载时先读取默认基线，再按字段叠加用户配置。旧版 `data\config.json` 会在内容有效且新用户配置不存在时原位迁移为 `config-users.json`；损坏文件不会被覆盖或改名。自定义安装位置时，两份文件仍分别位于安装根目录的 `app` 与 `data`。诊断日志位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括用户配置和诊断日志），选择保留则只移除 `app`；重新安装会恢复新的默认配置。
 
 ### 个性外观与透明背景
 
-右键额度条，选择 **外观配置 > 打开配置文件**。将 `Settings.Appearance.Mode` 改为 `Custom`，编辑完成并保存后，选择 **外观配置 > 重新加载外观**。也可以通过“使用默认外观 / 使用个性外观”在 `Default` 与 `Custom` 间切换；`Default` 始终使用程序内置颜色和 `Microsoft YaHei UI`，但不会删除已经填写的个性值。
+右键额度条，选择 **外观配置 > 打开用户配置**。将 `Settings.Appearance.Mode` 改为 `Custom`，编辑完成并保存后，选择 **外观配置 > 重新加载外观**。也可以通过“使用默认外观 / 使用个性外观”在 `Default` 与 `Custom` 间切换；`Default` 使用 `config-default.json` 的完整基线，但不会删除已经填写的个性值。菜单中的 **打开默认配置** 可直接查看或维护默认基线。
 
 右键选择 **透明背景** 可手动输入 0–90 的整数：`0` 表示背景完全不透明，`90` 表示最大透明度。该值独立于默认 / 个性外观模式，仅改变主卡片与展开态子卡片的背景；文字、进度条、状态灯、边框和右键菜单保持不透明。也可以直接编辑 `Settings.Appearance.BackgroundTransparency`，保存后通过 **外观配置 > 重新加载外观** 应用。
 
-`config.json` 是标准 JSON，不支持注释。字体必须是 Windows 已安装的字体族名称，颜色只接受严格的 `#RRGGBB` 格式。所有颜色字段均可省略，省略时继承默认颜色。完整外观格式如下：
+两份配置都是标准 JSON，不支持注释。字体必须是 Windows 已安装的字体族名称，颜色只接受严格的 `#RRGGBB` 格式。`config-default.json` 必须包含完整颜色字段；`config-users.json` 中的颜色字段可以省略，省略时继承默认基线。完整用户配置格式如下：
 
 ```json
 {
@@ -273,7 +276,7 @@ dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
 }
 ```
 
-程序逐字段校验个性外观：未知颜色名、错误类型、非法色值、无效字体名称，以及不是 0–90 整数的背景透明度，都会显示具体配置路径；有效字段仍会应用，错误字段回退到默认值。若 JSON 本身损坏或存在未修正的外观字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到默认字体并给出提示。
+程序分别校验默认配置和用户配置：默认文件必须包含完整外观基线；用户文件中的未知颜色名、错误类型、非法色值、无效字体名称，以及不是 0–90 整数的背景透明度，都会显示具体配置路径。若 JSON 本身损坏或存在未修正的字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到可用字体并给出提示。
 
 ### Codex App Server
 
@@ -304,7 +307,7 @@ $env:CODEX_QUOTA_CODEX_PATH = "D:\path\to\codex.exe"
 
 ### 应用清单
 
-`src\resources\app.rc` 会把同目录的 `app.manifest`（Windows 11、PerMonitorV2 DPI 感知）编译并嵌入主程序。安装后文件名为 `Codex-Quota-Bar.exe`，发布安装器使用带版本号的文件名。项目只保留 MSVC x64 构建路径；如需修改 DPI 或兼容性声明，直接编辑该清单后重新构建即可。
+`src\resources\app.rc` 会把同目录的 `app.manifest`（Windows 11、PerMonitorV2 DPI 感知）编译并嵌入主程序；构建流程同时将仓库根目录的 `config-default.json` 复制到主程序旁。安装后主程序名为 `Codex-Quota-Bar.exe`，发布安装器使用带版本号的文件名。项目只保留 MSVC x64 构建路径；如需修改 DPI、兼容性声明或默认主题，分别编辑清单或默认配置后重新构建即可。
 
 ### 伴随模式
 

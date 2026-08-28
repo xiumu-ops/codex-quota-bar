@@ -24,10 +24,12 @@ namespace CodexQuotaBar {
         bool companionMode = false;
         int refreshIntervalMinutes = 1;
         AppearanceSettings appearance;
+        // config-default.json 中的只读外观基线，不写入用户配置。
+        AppearanceSettings defaultAppearance;
     };
 
-    // 安装版设置位于安装根目录的 data\config.json；默认路径为
-    // %LOCALAPPDATA%\Codex-Quota-Bar\data\config.json。
+    // 安装版默认配置位于 app\config-default.json；用户设置位于
+    // data\config-users.json。旧 data\config.json 会在首次有效读取后迁移。
     class ConfigStore {
     public:
         static AppSettings LoadSettings(
@@ -40,6 +42,7 @@ namespace CodexQuotaBar {
         static void SavePosition(POINT position);
         static std::wstring DataDirectory();
         static std::wstring ConfigFilePath();
+        static std::wstring DefaultConfigFilePath();
     };
 
 } // namespace CodexQuotaBar
