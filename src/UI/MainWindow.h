@@ -46,6 +46,7 @@ namespace CodexQuotaBar {
         void ApplyRefreshInterval(int level);
         void ApplyAppearance(const std::wstring& validationErrors = L"");
         void SetAppearanceMode(AppearanceMode mode);
+        void ConfigureBackgroundTransparency();
         void ReloadAppearance();
         void OpenConfigFile();
         bool SaveSettingsWithFeedback(bool preserveDiskAppearance = true);

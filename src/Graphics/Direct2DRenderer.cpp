@@ -73,9 +73,11 @@ namespace CodexQuotaBar {
     bool Direct2DRenderer::SetAppearance(
         const ThemePalette& palette,
         const std::wstring& fontFamily,
+        int backgroundTransparency,
         std::wstring* validationError)
     {
         m_palette = palette;
+        m_backgroundTransparency = std::clamp(backgroundTransparency, 0, 90);
         bool validFont = FontFamilyExists(fontFamily);
         if (validFont) {
             m_fontFamily = fontFamily;
@@ -148,26 +150,45 @@ namespace CodexQuotaBar {
         if (m_pRenderTarget) return S_OK;
         if (!m_pD2DFactory || !m_hwnd) return E_UNEXPECTED;
 
-        RECT rc;
-        GetClientRect(m_hwnd, &rc);
+        RECT rc = {};
+        if (!GetClientRect(m_hwnd, &rc)) return HRESULT_FROM_WIN32(GetLastError());
         D2D1_SIZE_U size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
+        if (size.width == 0 || size.height == 0) return E_INVALIDARG;
         m_width = size.width;
         m_height = size.height;
 
-        D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
-            96.0f, 96.0f);
-
-        HRESULT hr = m_pD2DFactory->CreateHwndRenderTarget(
-            props,
-            D2D1::HwndRenderTargetProperties(m_hwnd, size, D2D1_PRESENT_OPTIONS_IMMEDIATELY),
-            &m_pRenderTarget);
-
+        HRESULT hr = CreateBackingSurface(size.width, size.height);
         if (FAILED(hr)) return hr;
 
+        D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_PREMULTIPLIED),
+            96.0f, 96.0f);
+
+        hr = m_pD2DFactory->CreateDCRenderTarget(&props, &m_pRenderTarget);
+
+        if (FAILED(hr)) {
+            DiscardDeviceResources();
+            return hr;
+        }
+
+        hr = m_pRenderTarget->BindDC(m_memoryDc, &rc);
+        if (FAILED(hr)) {
+            DiscardDeviceResources();
+            return hr;
+        }
+
         m_pRenderTarget->SetDpi(96.0f, 96.0f);
-        m_pRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+        m_pRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+
+        const float backgroundOpacity =
+            1.0f - static_cast<float>(m_backgroundTransparency) / 100.0f;
+        D2D1_COLOR_F surface = m_palette.surface;
+        surface.a *= backgroundOpacity;
+        D2D1_COLOR_F statsCardBackground = m_palette.statsCardBg;
+        statsCardBackground.a *= backgroundOpacity;
 
         // 创建画刷：任一失败即整体回滚
         struct BrushSpec {
@@ -175,8 +196,8 @@ namespace CodexQuotaBar {
             ID2D1SolidColorBrush** slot;
         };
         const BrushSpec brushSpecs[] = {
-            { m_palette.surface, &m_pBrushSurface },
-            { m_palette.statsCardBg, &m_pBrushStatsCardBg },
+            { surface, &m_pBrushSurface },
+            { statsCardBackground, &m_pBrushStatsCardBg },
             { m_palette.statsCardBorder, &m_pBrushStatsCardBorder },
             { m_palette.text, &m_pBrushText },
             { m_palette.muted, &m_pBrushMuted },
@@ -226,20 +247,99 @@ namespace CodexQuotaBar {
         m_pBrushSyncBusy.Reset();
         m_pBrushHalo.Reset();
         m_pRenderTarget.Reset();
+        DiscardBackingSurface();
+    }
+
+    HRESULT Direct2DRenderer::CreateBackingSurface(UINT width, UINT height) {
+        DiscardBackingSurface();
+
+        HDC screenDc = GetDC(nullptr);
+        if (!screenDc) return HRESULT_FROM_WIN32(GetLastError());
+
+        m_memoryDc = CreateCompatibleDC(screenDc);
+        if (!m_memoryDc) {
+            const DWORD error = GetLastError();
+            ReleaseDC(nullptr, screenDc);
+            return HRESULT_FROM_WIN32(error);
+        }
+
+        BITMAPINFO bitmapInfo = {};
+        bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(width);
+        bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(height);
+        bitmapInfo.bmiHeader.biPlanes = 1;
+        bitmapInfo.bmiHeader.biBitCount = 32;
+        bitmapInfo.bmiHeader.biCompression = BI_RGB;
+        m_dibBitmap = CreateDIBSection(
+            screenDc,
+            &bitmapInfo,
+            DIB_RGB_COLORS,
+            &m_dibBits,
+            nullptr,
+            0);
+        const DWORD createError = GetLastError();
+        ReleaseDC(nullptr, screenDc);
+        if (!m_dibBitmap || !m_dibBits) {
+            DiscardBackingSurface();
+            return HRESULT_FROM_WIN32(createError == ERROR_SUCCESS ? ERROR_NOT_ENOUGH_MEMORY : createError);
+        }
+
+        m_previousBitmap = SelectObject(m_memoryDc, m_dibBitmap);
+        if (!m_previousBitmap || m_previousBitmap == HGDI_ERROR) {
+            const DWORD selectError = GetLastError();
+            m_previousBitmap = nullptr;
+            DiscardBackingSurface();
+            return HRESULT_FROM_WIN32(selectError == ERROR_SUCCESS ? ERROR_INVALID_HANDLE : selectError);
+        }
+        return S_OK;
+    }
+
+    void Direct2DRenderer::DiscardBackingSurface() {
+        if (m_memoryDc && m_previousBitmap) {
+            SelectObject(m_memoryDc, m_previousBitmap);
+        }
+        m_previousBitmap = nullptr;
+        if (m_dibBitmap) DeleteObject(m_dibBitmap);
+        m_dibBitmap = nullptr;
+        m_dibBits = nullptr;
+        if (m_memoryDc) DeleteDC(m_memoryDc);
+        m_memoryDc = nullptr;
+    }
+
+    HRESULT Direct2DRenderer::PresentLayeredWindow() {
+        RECT windowRect = {};
+        if (!GetWindowRect(m_hwnd, &windowRect)) {
+            return HRESULT_FROM_WIN32(GetLastError());
+        }
+
+        POINT destination = { windowRect.left, windowRect.top };
+        POINT source = { 0, 0 };
+        SIZE size = { static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
+        BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        HDC screenDc = GetDC(nullptr);
+        if (!screenDc) return HRESULT_FROM_WIN32(GetLastError());
+        const BOOL presented = UpdateLayeredWindow(
+            m_hwnd,
+            screenDc,
+            &destination,
+            &size,
+            m_memoryDc,
+            &source,
+            0,
+            &blend,
+            ULW_ALPHA);
+        const DWORD error = GetLastError();
+        ReleaseDC(nullptr, screenDc);
+        return presented
+            ? S_OK
+            : HRESULT_FROM_WIN32(error == ERROR_SUCCESS ? ERROR_INVALID_DATA : error);
     }
 
     HRESULT Direct2DRenderer::Resize(UINT width, UINT height) {
+        if (m_width == width && m_height == height) return S_OK;
         m_width = width;
         m_height = height;
-        if (m_pRenderTarget) {
-            HRESULT hr = m_pRenderTarget->Resize(D2D1::SizeU(width, height));
-            if (hr == D2DERR_RECREATE_TARGET) {
-                DiscardDeviceResources();
-            } else if (SUCCEEDED(hr)) {
-                m_pRenderTarget->SetDpi(96.0f, 96.0f);
-            }
-            return hr;
-        }
+        DiscardDeviceResources();
         return S_OK;
     }
 
@@ -253,12 +353,16 @@ namespace CodexQuotaBar {
 
         m_pRenderTarget->BeginDraw();
         m_pRenderTarget->SetDpi(96.0f, 96.0f);
+        m_pRenderTarget->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
         float w = static_cast<float>(m_width);
         float h = static_cast<float>(m_height);
 
-        // 1. 填充整块悬浮卡片背景
-        m_pRenderTarget->FillRectangle(D2D1::RectF(0.0f, 0.0f, w, h), m_pBrushSurface.Get());
+        // 1. 绘制带逐像素 Alpha 的圆角悬浮卡片背景
+        const float outerRadius = ScaleF(static_cast<float>(CORNER_RADIUS), m_dpiScale);
+        const D2D1_ROUNDED_RECT background = D2D1::RoundedRect(
+            D2D1::RectF(0.0f, 0.0f, w, h), outerRadius, outerRadius);
+        m_pRenderTarget->FillRoundedRectangle(background, m_pBrushSurface.Get());
 
         // 2. 折叠态呈现两组额度；展开态追加统计卡片与限额重置卡片
         const float collapsedH = ScaleF(static_cast<float>(COLLAPSED_HEIGHT), m_dpiScale);
@@ -276,7 +380,6 @@ namespace CodexQuotaBar {
         }
 
         // 3. 亮白圆角外描边
-        const float outerRadius = ScaleF(static_cast<float>(CORNER_RADIUS), m_dpiScale);
         D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
             D2D1::RectF(0.5f, 0.5f, w - 0.5f, h - 0.5f), outerRadius, outerRadius);
         m_pRenderTarget->DrawRoundedRectangle(outer, m_pBrushBorder.Get(), 1.0f);
@@ -284,6 +387,8 @@ namespace CodexQuotaBar {
         hr = m_pRenderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
             DiscardDeviceResources();
+        } else if (SUCCEEDED(hr)) {
+            hr = PresentLayeredWindow();
         }
         return hr;
     }

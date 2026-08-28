@@ -40,6 +40,15 @@ int main() {
     Expect(!IsValidFontFamilyName(L"Bad\nFont"), "control character rejected");
     Expect(!IsValidFontFamilyName(std::wstring(129, L'A')), "long font family rejected");
 
+    Expect(IsValidBackgroundTransparency(0), "opaque background accepted");
+    Expect(IsValidBackgroundTransparency(90), "maximum transparency accepted");
+    Expect(!IsValidBackgroundTransparency(-1), "negative transparency rejected");
+    Expect(!IsValidBackgroundTransparency(91), "excessive transparency rejected");
+    int transparency = -1;
+    Expect(TryParseBackgroundTransparency(30.0, transparency), "integer number parsed");
+    Expect(transparency == 30, "parsed transparency value");
+    Expect(!TryParseBackgroundTransparency(30.5, transparency), "fraction rejected");
+
     std::cout << "Appearance tests passed\n";
     return 0;
 }

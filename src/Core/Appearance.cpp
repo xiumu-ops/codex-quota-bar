@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cwctype>
 
 namespace CodexQuotaBar {
@@ -84,6 +85,19 @@ namespace {
         return std::none_of(value.begin(), value.end(), [](wchar_t ch) {
             return ch < 0x20 || ch == 0x7F;
         });
+    }
+
+    bool IsValidBackgroundTransparency(int value) {
+        return value >= 0 && value <= 90;
+    }
+
+    bool TryParseBackgroundTransparency(double value, int& transparency) {
+        if (!std::isfinite(value) || std::floor(value) != value ||
+            value < 0.0 || value > 90.0) {
+            return false;
+        }
+        transparency = static_cast<int>(value);
+        return true;
     }
 
 } // namespace CodexQuotaBar

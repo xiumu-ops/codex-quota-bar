@@ -1,6 +1,7 @@
 #include "UI/MainWindow.h"
 #include "Core/Logger.h"
 #include "UI/CustomMenu.h"
+#include "UI/TransparencyDialog.h"
 #include "Services/CodexClient.h"
 #include "Services/CompanionMode.h"
 #include "Core/Constants.h"
@@ -24,6 +25,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_REFRESH = 2002;
     constexpr int IDM_EXIT = 2003;
     constexpr int IDM_COMPANION_MODE = 2004;
+    constexpr int IDM_BACKGROUND_TRANSPARENCY = 2005;
     constexpr int IDM_SCALE_SUB = 2100;        // 一级菜单：进入缩放子菜单
     constexpr int IDM_SCALE_LEVEL_BASE = 2101; // 二级菜单：档位 id 基址（+0..4）
     constexpr int IDM_REFRESH_INTERVAL_SUB = 2200;
@@ -139,7 +141,7 @@ namespace CodexQuotaBar {
         int initH = Scale(COLLAPSED_HEIGHT, 1.0f);
 
         m_hwnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
             wc.lpszClassName,
             L"Codex-Quota-Bar",
             WS_POPUP,
@@ -307,7 +309,11 @@ namespace CodexQuotaBar {
             : L"Microsoft YaHei UI";
 
         std::wstring fontError;
-        m_renderer->SetAppearance(palette, fontFamily, &fontError);
+        m_renderer->SetAppearance(
+            palette,
+            fontFamily,
+            m_settings.appearance.backgroundTransparency,
+            &fontError);
         std::wstring errors = validationErrors;
         if (!fontError.empty()) {
             if (!errors.empty()) errors += L"\n";
@@ -339,6 +345,38 @@ namespace CodexQuotaBar {
         const AppearanceSettings previous = m_settings.appearance;
         m_settings.appearance = loaded.appearance;
         m_settings.appearance.mode = mode;
+        if (!SaveSettingsWithFeedback(false)) {
+            m_settings.appearance = previous;
+            return;
+        }
+        ApplyAppearance();
+    }
+
+    void MainWindow::ConfigureBackgroundTransparency() {
+        std::wstring loadErrors;
+        bool readable = false;
+        const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
+        if (!readable || !loadErrors.empty()) {
+            MessageBoxW(
+                m_hwnd,
+                (L"无法修改透明背景，请先修正 config.json：\n\n" + loadErrors).c_str(),
+                L"Codex-Quota-Bar 配置错误",
+                MB_OK | MB_ICONWARNING);
+            return;
+        }
+
+        int selectedValue = loaded.appearance.backgroundTransparency;
+        if (!ShowTransparencyDialog(
+                m_hwnd,
+                loaded.appearance.backgroundTransparency,
+                selectedValue)) {
+            return;
+        }
+        if (selectedValue == loaded.appearance.backgroundTransparency) return;
+
+        const AppearanceSettings previous = m_settings.appearance;
+        m_settings.appearance = loaded.appearance;
+        m_settings.appearance.backgroundTransparency = selectedValue;
         if (!SaveSettingsWithFeedback(false)) {
             m_settings.appearance = previous;
             return;
@@ -641,7 +679,10 @@ namespace CodexQuotaBar {
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_SCALE_SUB, L"缩放大小" },
-            { IDM_APPEARANCE_SUB, L"外观" },
+            { IDM_APPEARANCE_SUB, L"外观配置" },
+            { IDM_BACKGROUND_TRANSPARENCY,
+              L"透明背景：" +
+                  std::to_wstring(m_settings.appearance.backgroundTransparency) + L"%" },
             { IDM_COMPANION_MODE, m_companionMode ? L"伴随模式：开" : L"伴随模式：关" },
             { 0, L"" }, // 分隔线
             { IDM_EXIT, L"退出" },
@@ -689,7 +730,7 @@ namespace CodexQuotaBar {
                 m_settings.appearance.mode == AppearanceMode::Custom;
             const std::vector<MenuItem> appearanceItems = {
                 { IDM_APPEARANCE_DEFAULT, custom ? L"使用默认外观" : L"使用默认外观 (当前)" },
-                { IDM_APPEARANCE_CUSTOM, custom ? L"使用自定义外观 (当前)" : L"使用自定义外观" },
+                { IDM_APPEARANCE_CUSTOM, custom ? L"使用个性外观 (当前)" : L"使用个性外观" },
                 { 0, L"" },
                 { IDM_APPEARANCE_OPEN_CONFIG, L"打开配置文件" },
                 { IDM_APPEARANCE_RELOAD, L"重新加载外观" },
@@ -706,6 +747,8 @@ namespace CodexQuotaBar {
             } else if (appearance == IDM_APPEARANCE_RELOAD) {
                 ReloadAppearance();
             }
+        } else if (cmd == IDM_BACKGROUND_TRANSPARENCY) {
+            ConfigureBackgroundTransparency();
         } else if (cmd == IDM_COMPANION_MODE) {
             ToggleCompanionMode();
         } else if (cmd == IDM_EXIT) {

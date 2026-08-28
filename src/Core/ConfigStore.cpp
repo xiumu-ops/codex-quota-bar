@@ -136,6 +136,20 @@ namespace {
             }
         }
 
+        if (object.has_key(L"BackgroundTransparency")) {
+            const JsonValue& transparency = object[L"BackgroundTransparency"];
+            int parsedValue = 0;
+            if (!transparency.is_number() ||
+                !TryParseBackgroundTransparency(
+                    transparency.as_double(-1.0), parsedValue)) {
+                AppendValidationError(
+                    errors,
+                    L"Settings.Appearance.BackgroundTransparency 必须是 0 至 90 的整数");
+            } else {
+                appearance.backgroundTransparency = parsedValue;
+            }
+        }
+
         if (!object.has_key(L"Colors")) return;
         const JsonValue& colors = object[L"Colors"];
         if (!colors.is_object()) {
@@ -246,6 +260,11 @@ namespace {
             AppendValidationError(
                 errors, L"Settings.Appearance.FontFamily 必须是 1 至 128 个有效字符");
         }
+        if (!IsValidBackgroundTransparency(appearance.backgroundTransparency)) {
+            AppendValidationError(
+                errors,
+                L"Settings.Appearance.BackgroundTransparency 必须是 0 至 90 的整数");
+        }
         for (const auto& [name, value] : appearance.colors) {
             const std::wstring path = L"Settings.Appearance.Colors." + name;
             uint32_t rgb = 0;
@@ -288,6 +307,8 @@ namespace {
                      ? "Custom" : "Default")
              << "\",\n";
         file << "      \"FontFamily\": " << fontFamily << ",\n";
+        file << "      \"BackgroundTransparency\": "
+             << data.settings.appearance.backgroundTransparency << ",\n";
         file << "      \"Colors\": {";
         if (!data.settings.appearance.colors.empty()) file << "\n";
         size_t colorIndex = 0;

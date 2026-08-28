@@ -45,11 +45,13 @@ set(GRAPHICS_SOURCES
 set(UI_HEADERS
     src/UI/MainWindow.h
     src/UI/CustomMenu.h
+    src/UI/TransparencyDialog.h
 )
 
 set(UI_SOURCES
     src/UI/MainWindow.cpp
     src/UI/CustomMenu.cpp
+    src/UI/TransparencyDialog.cpp
 )
 
 set(SERVICES_HEADERS
