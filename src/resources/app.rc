@@ -1,21 +1,7 @@
 #include <windows.h>
 #include "resource.h"
 
-#pragma code_page(65001)
-
 IDI_APP_ICON ICON "assets/icons/app-icon.ico"
-
-IDD_TRANSPARENCY_DIALOG DIALOGEX 0, 0, 210, 84
-STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "透明背景"
-FONT 9, "Microsoft YaHei UI", 400, 0, 0x86
-BEGIN
-    LTEXT           "请输入透明度（0–90）：", -1, 12, 13, 116, 12
-    EDITTEXT        IDC_TRANSPARENCY_EDIT, 132, 11, 62, 14, ES_CENTER | ES_NUMBER | ES_AUTOHSCROLL
-    LTEXT           "0 = 不透明，90 = 最大透明度", -1, 12, 34, 182, 12
-    DEFPUSHBUTTON   "确定", IDOK, 88, 59, 50, 15
-    PUSHBUTTON      "取消", IDCANCEL, 144, 59, 50, 15
-END
 
 // 嵌入应用清单（Windows 11、PerMonitorV2 DPI 感知）
 1 24 "src/resources/app.manifest"

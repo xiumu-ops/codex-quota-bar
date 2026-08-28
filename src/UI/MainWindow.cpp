@@ -368,8 +368,11 @@ namespace CodexQuotaBar {
         int selectedValue = loaded.appearance.backgroundTransparency;
         if (!ShowTransparencyDialog(
                 m_hwnd,
+                m_uiScale,
                 loaded.appearance.backgroundTransparency,
-                selectedValue)) {
+                selectedValue,
+                m_renderer->Palette(),
+                m_renderer->FontFamily())) {
             return;
         }
         if (selectedValue == loaded.appearance.backgroundTransparency) return;

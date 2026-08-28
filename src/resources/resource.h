@@ -1,6 +1,3 @@
 #pragma once
 
 #define IDI_APP_ICON 101
-
-#define IDD_TRANSPARENCY_DIALOG 201
-#define IDC_TRANSPARENCY_EDIT 202
