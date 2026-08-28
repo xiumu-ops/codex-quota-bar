@@ -18,13 +18,10 @@ function Get-TargetProcesses {
 
 $script:Failures = 0
 $ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config-users.json"
-$LegacyConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config.json"
 $DefaultConfigFile = Join-Path (Split-Path -Parent $ExePath) "config-default.json"
 $backupId = [Guid]::NewGuid().ToString("N")
 $ConfigBackup = "$ConfigFile.$backupId.cqbbak"
-$LegacyConfigBackup = "$LegacyConfigFile.$backupId.cqbbak"
 $ConfigExisted = Test-Path -LiteralPath $ConfigFile
-$LegacyConfigExisted = Test-Path -LiteralPath $LegacyConfigFile
 $ConfigBackupPrepared = $false
 $PipeName = "Codex-Quota-Bar_Pipe_$((Get-Process -Id $PID).SessionId)"
 $targetFullPath = [IO.Path]::GetFullPath($ExePath)
@@ -141,16 +138,13 @@ if ($ConfigExisted) {
     Copy-Item $ConfigFile $ConfigBackup -Force
     Remove-Item -LiteralPath $ConfigFile -Force
 }
-if ($LegacyConfigExisted) {
-    Copy-Item $LegacyConfigFile $LegacyConfigBackup -Force
-}
 $ConfigBackupPrepared = $true
-# 写入旧版文件，验证启动后迁移到用户配置并与默认基线组合读取。
+# 写入用户配置，验证其与默认基线组合读取。
 $ConfigDirectory = Split-Path -Parent $ConfigFile
 New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
-Set-Content -LiteralPath $LegacyConfigFile -Encoding utf8NoBOM -Value @'
+Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
 {
-  "Version": 1,
+  "Version": 2,
   "Settings": {
     "UserScale": 1.0,
     "CompanionMode": false,
@@ -171,15 +165,15 @@ Write-Host "  Process running (PID: $($proc.Id))" -ForegroundColor Green
 
 try {
     $config = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
-    $configOk = $config.Version -eq 1 -and
+    $configOk = $config.Version -eq 2 -and
                 $config.Settings.UserScale -eq 1.0 -and
                 $config.Settings.CompanionMode -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
                 $config.Window.X -eq 120 -and $config.Window.Y -eq 80
-    if ($configOk -and -not (Test-Path -LiteralPath $LegacyConfigFile)) {
-        Write-Host "  [PASS] 旧配置迁移与双配置读取正常" -ForegroundColor Green
+    if ($configOk) {
+        Write-Host "  [PASS] 用户配置与默认配置组合读取正常" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 旧配置迁移或双配置读取不完整" -ForegroundColor Red
+        Write-Host "  [FAIL] 用户配置与默认配置组合读取不完整" -ForegroundColor Red
         $script:Failures++
     }
 } catch {
@@ -437,14 +431,10 @@ try {
 
     if ($ConfigBackupPrepared) {
         Remove-Item -LiteralPath $ConfigFile -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $LegacyConfigFile -Force -ErrorAction SilentlyContinue
         if ($ConfigExisted -and (Test-Path -LiteralPath $ConfigBackup)) {
             Move-Item -LiteralPath $ConfigBackup -Destination $ConfigFile -Force
         }
-        if ($LegacyConfigExisted -and (Test-Path -LiteralPath $LegacyConfigBackup)) {
-            Move-Item -LiteralPath $LegacyConfigBackup -Destination $LegacyConfigFile -Force
-        }
-        if (-not $ConfigExisted -and -not $LegacyConfigExisted) {
+        if (-not $ConfigExisted) {
             $testDataDirectory = Split-Path -Parent $ConfigFile
             $testInstallRoot = Split-Path -Parent $testDataDirectory
             if ((Test-Path -LiteralPath $testDataDirectory) -and

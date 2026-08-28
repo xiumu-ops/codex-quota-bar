@@ -1,5 +1,6 @@
 #include "UI/MainWindow.h"
 #include "Core/Logger.h"
+#include "UI/AppearanceDialog.h"
 #include "UI/CustomMenu.h"
 #include "UI/TransparencyDialog.h"
 #include "Services/CodexClient.h"
@@ -36,6 +37,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_APPEARANCE_OPEN_CONFIG = 2303;
     constexpr int IDM_APPEARANCE_RELOAD = 2304;
     constexpr int IDM_APPEARANCE_OPEN_DEFAULT_CONFIG = 2305;
+    constexpr int IDM_APPEARANCE_EDIT_COLORS = 2306;
 
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
@@ -385,6 +387,44 @@ namespace CodexQuotaBar {
         m_settings.appearance = loaded.appearance;
         m_settings.defaultAppearance = loaded.defaultAppearance;
         m_settings.appearance.backgroundTransparency = selectedValue;
+        if (!SaveSettingsWithFeedback(false)) {
+            m_settings.appearance = previous;
+            m_settings.defaultAppearance = previousDefault;
+            return;
+        }
+        ApplyAppearance();
+    }
+
+    void MainWindow::ConfigureCustomColors() {
+        std::wstring loadErrors;
+        bool readable = false;
+        const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
+        if (!readable || !loadErrors.empty()) {
+            MessageBoxW(
+                m_hwnd,
+                (L"无法修改个性配色，请先修正配置文件：\n\n" + loadErrors).c_str(),
+                L"Codex-Quota-Bar 配置错误",
+                MB_OK | MB_ICONWARNING);
+            return;
+        }
+
+        std::map<std::wstring, std::wstring> selectedColors;
+        if (!ShowAppearanceColorsDialog(
+                m_hwnd,
+                m_uiScale,
+                loaded.appearance.colors,
+                selectedColors,
+                m_renderer->Palette(),
+                m_renderer->FontFamily())) {
+            return;
+        }
+
+        const AppearanceSettings previous = m_settings.appearance;
+        const AppearanceSettings previousDefault = m_settings.defaultAppearance;
+        m_settings.appearance = loaded.appearance;
+        m_settings.defaultAppearance = loaded.defaultAppearance;
+        m_settings.appearance.colors = std::move(selectedColors);
+        m_settings.appearance.mode = AppearanceMode::Custom;
         if (!SaveSettingsWithFeedback(false)) {
             m_settings.appearance = previous;
             m_settings.defaultAppearance = previousDefault;
@@ -758,9 +798,10 @@ namespace CodexQuotaBar {
             const std::vector<MenuItem> appearanceItems = {
                 { IDM_APPEARANCE_DEFAULT, custom ? L"使用默认外观" : L"使用默认外观 (当前)" },
                 { IDM_APPEARANCE_CUSTOM, custom ? L"使用个性外观 (当前)" : L"使用个性外观" },
+                { IDM_APPEARANCE_EDIT_COLORS, L"编辑个性配色" },
                 { 0, L"" },
-                { IDM_APPEARANCE_OPEN_CONFIG, L"打开用户配置" },
-                { IDM_APPEARANCE_OPEN_DEFAULT_CONFIG, L"打开默认配置" },
+                { IDM_APPEARANCE_OPEN_CONFIG, L"高级配置：用户文件" },
+                { IDM_APPEARANCE_OPEN_DEFAULT_CONFIG, L"高级配置：默认文件" },
                 { IDM_APPEARANCE_RELOAD, L"重新加载外观" },
             };
             const int appearance = CustomMenu::Show(
@@ -770,6 +811,8 @@ namespace CodexQuotaBar {
                 SetAppearanceMode(AppearanceMode::Default);
             } else if (appearance == IDM_APPEARANCE_CUSTOM) {
                 SetAppearanceMode(AppearanceMode::Custom);
+            } else if (appearance == IDM_APPEARANCE_EDIT_COLORS) {
+                ConfigureCustomColors();
             } else if (appearance == IDM_APPEARANCE_OPEN_CONFIG) {
                 OpenConfigFile();
             } else if (appearance == IDM_APPEARANCE_OPEN_DEFAULT_CONFIG) {

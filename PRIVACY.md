@@ -32,7 +32,7 @@ server.
 The application may store the following data in the selected installation root's
 `data` directory, normally `%LOCALAPPDATA%\Codex-Quota-Bar\data`:
 
-- `config.json`: interface scale, refresh interval, companion-mode preference, and
+- `config-users.json`: interface scale, refresh interval, companion-mode preference, appearance, and
   window position;
 - `diagnostic.log`: local timestamps, severity, process/thread identifiers, and bounded
   operational messages; and

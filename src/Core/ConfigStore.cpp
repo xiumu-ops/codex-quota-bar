@@ -248,6 +248,15 @@ namespace {
         }
     }
 
+    void ValidateUserConfigShape(const JsonValue& root, std::wstring& errors) {
+        if (!root.has_key(L"Version") || !root[L"Version"].is_number() ||
+            root[L"Version"].as_int() != 2 ||
+            !root.has_key(L"Settings") || !root[L"Settings"].is_object()) {
+            AppendValidationError(
+                errors, L"config-users.json 必须使用版本 2 配置结构");
+        }
+    }
+
     void ReadWindowObject(const JsonValue& object, StoredState& state) {
         if (!object.is_object() || !object.has_key(L"X") || !object[L"X"].is_number() ||
             !object.has_key(L"Y") || !object[L"Y"].is_number()) {
@@ -422,38 +431,21 @@ namespace {
 
         const std::filesystem::path directory = ConfigDirectory();
         const std::filesystem::path userConfigPath = directory / L"config-users.json";
-        const std::filesystem::path legacyConfigPath = directory / L"config.json";
 
         JsonValue root;
-        ReadStatus userStatus = ReadJson(userConfigPath, root);
-        bool loadedLegacyConfig = false;
-        std::wstring userConfigName = L"config-users.json";
-        if (userStatus == ReadStatus::Missing) {
-            userStatus = ReadJson(legacyConfigPath, root);
-            if (userStatus != ReadStatus::Missing) userConfigName = L"config.json";
-            loadedLegacyConfig = userStatus == ReadStatus::Valid;
-        }
+        const ReadStatus userStatus = ReadJson(userConfigPath, root);
 
         const ReadStatus combinedStatus =
             defaultStatus == ReadStatus::Valid ? userStatus : ReadStatus::Invalid;
         if (readStatus) *readStatus = combinedStatus;
         if (userStatus == ReadStatus::Valid) {
+            ValidateUserConfigShape(root, errors);
             ReadSettingsObject(root[L"Settings"], data.settings, errors);
             ReadWindowObject(root[L"Window"], data.state);
-            if (loadedLegacyConfig && errors.empty()) {
-                std::error_code directoryError;
-                std::filesystem::create_directories(directory, directoryError);
-                if (!directoryError) {
-                    MoveFileExW(
-                        legacyConfigPath.c_str(),
-                        userConfigPath.c_str(),
-                        MOVEFILE_WRITE_THROUGH);
-                }
-            }
         } else if (userStatus == ReadStatus::Invalid) {
             AppendValidationError(
                 errors,
-                userConfigName + L" 不是有效的 UTF-8 JSON，或文件不可读取");
+                L"config-users.json 不是有效的 UTF-8 JSON，或文件不可读取");
         }
         if (validationErrors) *validationErrors = errors;
         return data;
@@ -515,17 +507,7 @@ namespace {
     }
 
     std::wstring ConfigStore::ConfigFilePath() {
-        const std::filesystem::path directory = ConfigDirectory();
-        const std::filesystem::path userConfig = directory / L"config-users.json";
-        std::error_code error;
-        if (std::filesystem::exists(userConfig, error) || error) {
-            return userConfig.wstring();
-        }
-        const std::filesystem::path legacyConfig = directory / L"config.json";
-        error.clear();
-        return std::filesystem::exists(legacyConfig, error) && !error
-            ? legacyConfig.wstring()
-            : userConfig.wstring();
+        return (ConfigDirectory() / L"config-users.json").wstring();
     }
 
     std::wstring ConfigStore::DefaultConfigFilePath() {

@@ -29,7 +29,7 @@ namespace CodexQuotaBar {
     };
 
     // 安装版默认配置位于 app\config-default.json；用户设置位于
-    // data\config-users.json。旧 data\config.json 会在首次有效读取后迁移。
+    // 用户配置固定保存在 data\config-users.json。
     class ConfigStore {
     public:
         static AppSettings LoadSettings(
