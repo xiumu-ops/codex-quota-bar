@@ -130,6 +130,7 @@ endif()
 
 target_link_libraries(CodexQuotaBarApp
     user32
+    gdi32
     shell32
     ole32
     d2d1
