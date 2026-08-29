@@ -9,6 +9,8 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 $BuildDir = Join-Path $ProjectRoot ".build\app\$Configuration"
 $OutputDir = Join-Path $ProjectRoot ".build\output\$Configuration"
 $OutputFile = Join-Path $OutputDir "Codex-Quota-Bar.exe"
+$DefaultConfigSource = Join-Path $ProjectRoot "config-default.json"
+$DefaultConfigOutput = Join-Path $OutputDir "config-default.json"
 
 New-Item -ItemType Directory -Path $BuildDir, $OutputDir -Force | Out-Null
 
@@ -56,17 +58,18 @@ $ResFile = Join-Path $BuildDir "app.res"
 $ObjectPrefix = "$BuildDir\\"
 $CompileFlags = if ($Configuration -eq "Debug") { "/Od /Zi /MTd" } else { "/O2 /MT" }
 
-Write-Host "Building Codex-Quota-Bar 2.5.3 ($Configuration, Windows 11 x64/MSVC)..." -ForegroundColor Cyan
+Write-Host "Building Codex-Quota-Bar 2.5.8 ($Configuration, Windows 11 x64/MSVC)..." -ForegroundColor Cyan
 $command = @"
 call "$vcvars" &&
 cd /d "$ProjectRoot" &&
 rc.exe /nologo /fo "$ResFile" "src\resources\app.rc" &&
-cl.exe /nologo $CompileFlags /EHsc /std:c++20 /utf-8 /W4 /WX /permissive- /Zc:preprocessor /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /I"$ProjectRoot\src" /Fo:"$ObjectPrefix" /Fe:"$OutputFile" $SourceArgs "$ResFile" /link user32.lib shell32.lib ole32.lib d2d1.lib dwrite.lib dwmapi.lib advapi32.lib /SUBSYSTEM:WINDOWS /MANIFEST:NO
+cl.exe /nologo $CompileFlags /EHsc /std:c++20 /utf-8 /W4 /WX /permissive- /Zc:preprocessor /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /I"$ProjectRoot\src" /Fo:"$ObjectPrefix" /Fe:"$OutputFile" $SourceArgs "$ResFile" /link user32.lib gdi32.lib shell32.lib ole32.lib d2d1.lib dwrite.lib dwmapi.lib advapi32.lib /SUBSYSTEM:WINDOWS /MANIFEST:NO
 "@
 $command = $command -replace "`r?`n", " "
 cmd.exe /d /c $command
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputFile)) {
     throw "Application build failed."
 }
+Copy-Item -LiteralPath $DefaultConfigSource -Destination $DefaultConfigOutput -Force
 
 Write-Host "Build successful: $OutputFile" -ForegroundColor Green

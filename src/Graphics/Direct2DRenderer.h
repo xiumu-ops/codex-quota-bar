@@ -16,6 +16,7 @@ namespace CodexQuotaBar {
         bool SetAppearance(
             const ThemePalette& palette,
             const std::wstring& fontFamily,
+            int backgroundTransparency,
             std::wstring* validationError = nullptr);
         const ThemePalette& Palette() const { return m_palette; }
         const std::wstring& FontFamily() const { return m_fontFamily; }
@@ -29,6 +30,9 @@ namespace CodexQuotaBar {
     private:
         HRESULT CreateDeviceResources();
         void DiscardDeviceResources();
+        HRESULT CreateBackingSurface(UINT width, UINT height);
+        void DiscardBackingSurface();
+        HRESULT PresentLayeredWindow();
         void CreateTextFormats();
         void DiscardTextFormats();
         bool FontFamilyExists(const std::wstring& fontFamily) const;
@@ -60,6 +64,7 @@ namespace CodexQuotaBar {
 
         ThemePalette m_palette;
         std::wstring m_fontFamily = L"Microsoft YaHei UI";
+        int m_backgroundTransparency = 0;
 
         // 设备无关资源 (Device-Independent Resources)
         ComPtr<ID2D1Factory> m_pD2DFactory;
@@ -72,7 +77,11 @@ namespace CodexQuotaBar {
         ComPtr<IDWriteTextFormat> m_pFontStatsLabel;
 
         // 设备相关资源 (Device-Dependent Resources)
-        ComPtr<ID2D1HwndRenderTarget> m_pRenderTarget;
+        ComPtr<ID2D1DCRenderTarget> m_pRenderTarget;
+        HDC m_memoryDc = nullptr;
+        HBITMAP m_dibBitmap = nullptr;
+        HGDIOBJ m_previousBitmap = nullptr;
+        void* m_dibBits = nullptr;
         ComPtr<ID2D1SolidColorBrush> m_pBrushSurface;
         ComPtr<ID2D1SolidColorBrush> m_pBrushStatsCardBg;
         ComPtr<ID2D1SolidColorBrush> m_pBrushStatsCardBorder;

@@ -22,7 +22,7 @@
   - **状态指示灯与文字**：实时反馈同步健康状态（🟢 成功 / 🟡 同步中 / 🔴 失败 / ⚪ 等待）。
 - **交互方式**：
   - **左键单击右下角箭头（Chevron）**：展开或收起详细统计面板。
-  - **左键按住主体拖动**：自由拖放至屏幕任意位置（跨多显示器、DPI 切换均保持清晰且自动持久化保存位置到 `config.json`）。
+  - **左键按住主体拖动**：自由拖放至屏幕任意位置（跨多显示器、DPI 切换均保持清晰且自动持久化保存位置到 `config-users.json`）。
   - **左键双击主体区域**：立即向 Codex 发起即时额度与使用数据刷新。
 
 ---
@@ -50,7 +50,7 @@
   - **立即刷新**：手动唤起临时 Codex App Server 进行即时额度与 Token 统计同步。
   - **刷新间隔**：支持切换自动刷新周期（1分钟 / 3分钟 / 5分钟 / 10分钟 / 15分钟 / 30分钟 / 60分钟）。
   - **缩放大小**：支持切换 UI 缩放比例（80% / 90% / 100% / 110% / 125% / 150%）。
-  - **外观**：在默认外观与 `config.json` 自定义外观之间切换，可直接打开配置文件并在保存后重新加载。
+  - **外观配置**：切换默认 / 个性外观，或在统一编辑器中修改 19 项颜色与 0%–90% 的背景透明度；支持应用、确定和取消。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
   - **退出**：彻底关闭常驻进程并释放所有系统与图形资源。
 
@@ -58,7 +58,7 @@
 
 ## ✨ 架构特性
 
-- **Direct2D 1.0 硬件加速渲染**：`ID2D1HwndRenderTarget` 将整帧绘制到窗口表面，交由 DWM 合成；窗口跳过背景擦除（`WM_ERASEBKGND`），过渡期零白闪
+- **Direct2D 1.0 逐像素渲染**：`ID2D1DCRenderTarget` 将预乘 Alpha 画面绘制到内存位图，再由分层窗口交给 DWM 合成；窗口跳过背景擦除（`WM_ERASEBKGND`），支持真正的背景透明与圆角边缘
 - **PerMonitorV2 感知 DPI**：按物理像素对齐绘制，跨屏拖动无缩放模糊
 - **DirectWrite 现代排版**：Microsoft YaHei UI 中文字体渲染
 - **固定向下展开**：详情面板始终追加在折叠栏下方（统计卡片 + 限额重置卡片）；底部空间不足时整体上移窗口
@@ -99,14 +99,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.3：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.8：
 
 ```powershell
-git tag -a v2.5.3 -m "Codex-Quota-Bar 2.5.3"
-git push origin v2.5.3
+git tag -a v2.5.8 -m "Codex-Quota-Bar 2.5.8"
+git push origin v2.5.8
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.3.exe` 与 `Codex-Quota-Bar_version_2.5.3.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.8.exe` 与 `Codex-Quota-Bar_version_2.5.8.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -126,6 +126,7 @@ scripts/      构建、运行、测试、安装包与清理脚本
 dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 .build/       隐藏的编译缓存；不纳入版本控制
 .github/      GitHub Actions 远程构建与正式发布流程
+config-default.json  程序默认设置、字体与完整颜色基线
 CHANGELOG.md  各版本新增、变更与修复记录
 ```
 
@@ -133,15 +134,16 @@ CHANGELOG.md  各版本新增、变更与修复记录
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.3.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.8.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
 ├─ app\
 │  ├─ Codex-Quota-Bar.exe
+│  ├─ config-default.json
 │  └─ Uninstall.exe
 └─ data\
-   ├─ config.json
+   ├─ config-users.json
    ├─ diagnostic.log
    └─ diagnostic.previous.log
 ```
@@ -176,8 +178,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.5.3.exe
-dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
+dist\Release\Codex-Quota-Bar_version_2.5.8.exe
+dist\Release\Codex-Quota-Bar_version_2.5.8.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -218,19 +220,24 @@ dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
 
 ### 统一应用配置
 
-窗口位置、界面缩放、刷新间隔和伴随模式偏好统一保存在：
+默认基线与用户设置分开保存：
 
 ```text
-%LOCALAPPDATA%\Codex-Quota-Bar\data\config.json
+%LOCALAPPDATA%\Codex-Quota-Bar\app\config-default.json
+%LOCALAPPDATA%\Codex-Quota-Bar\data\config-users.json
 ```
 
-配置仅使用这一份 JSON 文件，不读取其他历史目录或旧格式文件。自定义安装位置时，配置跟随安装根目录写入同级 `data\config.json`。诊断日志同样位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括诊断日志），并在根目录为空时连同根目录删除；选择保留则只移除 `app`。
+`config-default.json` 随程序安装，保存完整默认设置、字体和颜色基线；`config-users.json` 保存用户设置、个性外观和窗口位置。加载时先读取默认基线，再按字段叠加用户配置。程序不读取旧版 `data\config.json`，升级前如需保留设置，应手动按新版结构写入 `config-users.json`。自定义安装位置时，两份文件仍分别位于安装根目录的 `app` 与 `data`。诊断日志位于 `data`，单文件最多 256 KiB，并只保留一份轮换副本；日志不会记录原始 App Server JSON、Token 明细或账户标识。卸载时选择删除本地设置会删除整个 `data`（包括用户配置和诊断日志），选择保留则只移除 `app`；重新安装会恢复新的默认配置。
 
-### 自定义外观
+### 默认外观与个性外观
 
-右键额度条，选择 **外观 > 打开配置文件**。将 `Settings.Appearance.Mode` 改为 `Custom`，编辑完成并保存后，选择 **外观 > 重新加载外观**。也可以通过菜单在 `Default` 与 `Custom` 间切换；`Default` 始终使用程序内置颜色和 `Microsoft YaHei UI`，但不会删除已经填写的自定义值。
+右键额度条，选择 **外观配置 > 编辑个性外观**，可在统一风格的窗口中输入全部 19 项颜色、查看即时色块预览，并以百分比设置 0%–90% 的背景透明度。颜色只接受严格的 `#RRGGBB` 格式，透明度只接受范围内的整数；错误项会自动定位并以内联提示标出。
 
-`config.json` 是标准 JSON，不支持注释。字体必须是 Windows 已安装的字体族名称，颜色只接受严格的 `#RRGGBB` 格式。所有颜色字段均可省略，省略时继承默认颜色。完整外观格式如下：
+底部“应用”会立即保存并启用个性外观，但保留编辑窗口；“确定”保存并关闭；“取消”关闭窗口，已经通过“应用”保存的修改不会回退。
+
+“使用默认外观 / 使用个性外观”分别切换 `Default` 与 `Custom`，每次点击都会重新读取并应用对应配置。默认外观始终使用 `config-default.json` 的完整基线和 0% 透明度，但不会删除已保存的个性值；个性透明度只改变主卡片与展开态子卡片背景，文字、进度条、状态灯、边框和右键菜单保持不透明。
+
+两份配置都是标准 JSON，不支持注释。字体必须是 Windows 已安装的字体族名称。`config-default.json` 必须包含完整颜色字段；`config-users.json` 中的颜色字段可以省略，省略时继承默认基线。完整用户配置格式如下：
 
 ```json
 {
@@ -242,6 +249,7 @@ dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
     "Appearance": {
       "Mode": "Custom",
       "FontFamily": "Microsoft YaHei UI",
+      "BackgroundTransparency": 30,
       "Colors": {
         "Surface": "#FFFFFF",
         "StatsCardBackground": "#FAFAFA",
@@ -269,7 +277,7 @@ dist\Release\Codex-Quota-Bar_version_2.5.3.sha256
 }
 ```
 
-程序逐字段校验自定义外观：未知颜色名、错误类型、非法色值和无效字体名称会显示具体配置路径；有效字段仍会应用，错误字段回退到默认值。若 JSON 本身损坏或存在未修正的外观字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到默认字体并给出提示。
+程序分别校验默认配置和用户配置：默认文件必须包含完整外观基线；用户文件中的未知颜色名、错误类型、非法色值、无效字体名称，以及不是 0–90 整数的背景透明度，都会显示具体配置路径。若 JSON 本身损坏或存在未修正的字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到可用字体并给出提示。
 
 ### Codex App Server
 
@@ -300,7 +308,7 @@ $env:CODEX_QUOTA_CODEX_PATH = "D:\path\to\codex.exe"
 
 ### 应用清单
 
-`src\resources\app.rc` 会把同目录的 `app.manifest`（Windows 11、PerMonitorV2 DPI 感知）编译并嵌入主程序。安装后文件名为 `Codex-Quota-Bar.exe`，发布安装器使用带版本号的文件名。项目只保留 MSVC x64 构建路径；如需修改 DPI 或兼容性声明，直接编辑该清单后重新构建即可。
+`src\resources\app.rc` 会把同目录的 `app.manifest`（Windows 11、PerMonitorV2 DPI 感知）编译并嵌入主程序；构建流程同时将仓库根目录的 `config-default.json` 复制到主程序旁。安装后主程序名为 `Codex-Quota-Bar.exe`，发布安装器使用带版本号的文件名。项目只保留 MSVC x64 构建路径；如需修改 DPI、兼容性声明或默认主题，分别编辑清单或默认配置后重新构建即可。
 
 ### 伴随模式
 

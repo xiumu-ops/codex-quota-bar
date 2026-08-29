@@ -32,21 +32,31 @@ namespace {
 
     std::mutex g_configMutex;
 
-    std::filesystem::path InstalledDataDirectory() {
+    std::filesystem::path ModuleDirectory() {
         std::wstring modulePath(32768, L'\0');
         const DWORD length = GetModuleFileNameW(
             nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
         if (length == 0 || length >= modulePath.size()) return {};
         modulePath.resize(length);
+        return std::filesystem::path(modulePath).parent_path();
+    }
 
-        const std::filesystem::path appDirectory =
-            std::filesystem::path(modulePath).parent_path();
+    std::filesystem::path InstalledDataDirectory() {
+        const std::filesystem::path appDirectory = ModuleDirectory();
+        if (appDirectory.empty()) return {};
         const std::filesystem::path installRoot = appDirectory.parent_path();
         if (_wcsicmp(appDirectory.filename().c_str(), L"app") != 0 ||
             _wcsicmp(installRoot.filename().c_str(), L"Codex-Quota-Bar") != 0) {
             return {};
         }
         return installRoot / L"data";
+    }
+
+    std::filesystem::path DefaultConfigPath() {
+        const std::filesystem::path moduleDirectory = ModuleDirectory();
+        return moduleDirectory.empty()
+            ? std::filesystem::path(L"config-default.json")
+            : moduleDirectory / L"config-default.json";
     }
 
     std::filesystem::path ConfigDirectory() {
@@ -136,6 +146,20 @@ namespace {
             }
         }
 
+        if (object.has_key(L"BackgroundTransparency")) {
+            const JsonValue& transparency = object[L"BackgroundTransparency"];
+            int parsedValue = 0;
+            if (!transparency.is_number() ||
+                !TryParseBackgroundTransparency(
+                    transparency.as_double(-1.0), parsedValue)) {
+                AppendValidationError(
+                    errors,
+                    L"Settings.Appearance.BackgroundTransparency 必须是 0 至 90 的整数");
+            } else {
+                appearance.backgroundTransparency = parsedValue;
+            }
+        }
+
         if (!object.has_key(L"Colors")) return;
         const JsonValue& colors = object[L"Colors"];
         if (!colors.is_object()) {
@@ -179,6 +203,58 @@ namespace {
             if (value >= 1 && value <= 1440) settings.refreshIntervalMinutes = value;
         }
         ReadAppearanceObject(object[L"Appearance"], settings.appearance, errors);
+    }
+
+    void ValidateDefaultConfigShape(const JsonValue& root, std::wstring& errors) {
+        const JsonValue& settings = root[L"Settings"];
+        const JsonValue& appearance = settings[L"Appearance"];
+        if (!root.has_key(L"Version") || !root[L"Version"].is_number() ||
+            root[L"Version"].as_int() != 2 || !root.has_key(L"Window")) {
+            AppendValidationError(
+                errors, L"config-default.json 必须使用完整的版本 2 配置结构");
+        }
+        if (!settings.is_object() || !appearance.is_object()) {
+            AppendValidationError(
+                errors, L"config-default.json 必须包含 Settings.Appearance 对象");
+            return;
+        }
+        if (!settings.has_key(L"UserScale") ||
+            !settings.has_key(L"CompanionMode") ||
+            !settings.has_key(L"RefreshIntervalMinutes")) {
+            AppendValidationError(
+                errors, L"config-default.json 缺少完整的通用设置基线");
+        }
+        if (!appearance.has_key(L"Mode") ||
+            !appearance[L"Mode"].is_string() ||
+            appearance[L"Mode"].as_string() != L"Default") {
+            AppendValidationError(
+                errors, L"config-default.json 的 Appearance.Mode 必须是 Default");
+        }
+        if (!appearance.has_key(L"FontFamily") ||
+            !appearance.has_key(L"BackgroundTransparency") ||
+            !appearance.has_key(L"Colors") ||
+            !appearance[L"Colors"].is_object()) {
+            AppendValidationError(
+                errors, L"config-default.json 必须包含完整的字体、透明度和颜色配置");
+            return;
+        }
+        const JsonValue& colors = appearance[L"Colors"];
+        for (const auto& [name, unused] : DefaultAppearanceColors()) {
+            static_cast<void>(unused);
+            if (!colors.has_key(name)) {
+                AppendValidationError(
+                    errors, L"config-default.json 缺少默认颜色 " + name);
+            }
+        }
+    }
+
+    void ValidateUserConfigShape(const JsonValue& root, std::wstring& errors) {
+        if (!root.has_key(L"Version") || !root[L"Version"].is_number() ||
+            root[L"Version"].as_int() != 2 ||
+            !root.has_key(L"Settings") || !root[L"Settings"].is_object()) {
+            AppendValidationError(
+                errors, L"config-users.json 必须使用版本 2 配置结构");
+        }
     }
 
     void ReadWindowObject(const JsonValue& object, StoredState& state) {
@@ -246,6 +322,11 @@ namespace {
             AppendValidationError(
                 errors, L"Settings.Appearance.FontFamily 必须是 1 至 128 个有效字符");
         }
+        if (!IsValidBackgroundTransparency(appearance.backgroundTransparency)) {
+            AppendValidationError(
+                errors,
+                L"Settings.Appearance.BackgroundTransparency 必须是 0 至 90 的整数");
+        }
         for (const auto& [name, value] : appearance.colors) {
             const std::wstring path = L"Settings.Appearance.Colors." + name;
             uint32_t rgb = 0;
@@ -288,6 +369,8 @@ namespace {
                      ? "Custom" : "Default")
              << "\",\n";
         file << "      \"FontFamily\": " << fontFamily << ",\n";
+        file << "      \"BackgroundTransparency\": "
+             << data.settings.appearance.backgroundTransparency << ",\n";
         file << "      \"Colors\": {";
         if (!data.settings.appearance.colors.empty()) file << "\n";
         size_t colorIndex = 0;
@@ -332,22 +415,39 @@ namespace {
     {
         if (validationErrors) validationErrors->clear();
         ConfigData data;
+        std::wstring errors;
+
+        JsonValue defaultRoot;
+        const ReadStatus defaultStatus = ReadJson(DefaultConfigPath(), defaultRoot);
+        if (defaultStatus == ReadStatus::Valid) {
+            ValidateDefaultConfigShape(defaultRoot, errors);
+            ReadSettingsObject(defaultRoot[L"Settings"], data.settings, errors);
+        } else {
+            AppendValidationError(
+                errors,
+                L"config-default.json 不是有效的 UTF-8 JSON，或文件不可读取");
+        }
+        data.settings.defaultAppearance = data.settings.appearance;
+
         const std::filesystem::path directory = ConfigDirectory();
-        const std::filesystem::path configPath = directory / L"config.json";
+        const std::filesystem::path userConfigPath = directory / L"config-users.json";
 
         JsonValue root;
-        const ReadStatus status = ReadJson(configPath, root);
-        if (readStatus) *readStatus = status;
-        std::wstring errors;
-        if (status == ReadStatus::Valid) {
+        const ReadStatus userStatus = ReadJson(userConfigPath, root);
+
+        const ReadStatus combinedStatus =
+            defaultStatus == ReadStatus::Valid ? userStatus : ReadStatus::Invalid;
+        if (readStatus) *readStatus = combinedStatus;
+        if (userStatus == ReadStatus::Valid) {
+            ValidateUserConfigShape(root, errors);
             ReadSettingsObject(root[L"Settings"], data.settings, errors);
             ReadWindowObject(root[L"Window"], data.state);
-            if (validationErrors) *validationErrors = errors;
-            return data;
+        } else if (userStatus == ReadStatus::Invalid) {
+            AppendValidationError(
+                errors,
+                L"config-users.json 不是有效的 UTF-8 JSON，或文件不可读取");
         }
-        if (status == ReadStatus::Invalid && validationErrors) {
-            *validationErrors = L"- config.json 不是有效的 UTF-8 JSON，或文件不可读取";
-        }
+        if (validationErrors) *validationErrors = errors;
         return data;
     }
 
@@ -384,9 +484,9 @@ namespace {
             return false;
         }
         data.settings = settings;
-        const bool saved = WriteConfig(ConfigDirectory() / L"config.json", data);
+        const bool saved = WriteConfig(ConfigDirectory() / L"config-users.json", data);
         if (!saved && validationError) {
-            *validationError = L"- config.json 写入失败";
+            *validationError = L"- config-users.json 写入失败";
         }
         return saved;
     }
@@ -399,7 +499,7 @@ namespace {
         if (status == ReadStatus::Invalid || !errors.empty()) return;
         data.state.position = position;
         data.state.hasPosition = true;
-        WriteConfig(ConfigDirectory() / L"config.json", data);
+        WriteConfig(ConfigDirectory() / L"config-users.json", data);
     }
 
     std::wstring ConfigStore::DataDirectory() {
@@ -407,7 +507,11 @@ namespace {
     }
 
     std::wstring ConfigStore::ConfigFilePath() {
-        return (ConfigDirectory() / L"config.json").wstring();
+        return (ConfigDirectory() / L"config-users.json").wstring();
+    }
+
+    std::wstring ConfigStore::DefaultConfigFilePath() {
+        return DefaultConfigPath().wstring();
     }
 
 } // namespace CodexQuotaBar

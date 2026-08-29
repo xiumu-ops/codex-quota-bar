@@ -28,6 +28,7 @@ constexpr wchar_t kAppDirectoryName[] = L"app";
 constexpr wchar_t kDataDirectoryName[] = L"data";
 constexpr wchar_t kAppFilename[] = L"Codex-Quota-Bar.exe";
 constexpr wchar_t kUninstallFilename[] = L"Uninstall.exe";
+constexpr wchar_t kDefaultConfigFilename[] = L"config-default.json";
 constexpr wchar_t kUninstallKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Codex-Quota-Bar";
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -321,6 +322,7 @@ bool SetRegistryString(HKEY key, const wchar_t* name, const std::wstring& value)
 bool RegisterUninstaller(const std::filesystem::path& installDir,
                          const std::filesystem::path& appPath,
                          const std::filesystem::path& uninstallPath,
+                         const std::filesystem::path& defaultConfigPath,
                          const std::filesystem::path& hookFilePath,
                          const std::filesystem::path& userDataDir) {
     HKEY key = nullptr;
@@ -333,7 +335,7 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
     const std::wstring quietCommand = uninstallCommand + L" /quiet";
     bool ok =
         SetRegistryString(key, L"DisplayName", kProductName) &&
-        SetRegistryString(key, L"DisplayVersion", L"2.5.3") &&
+        SetRegistryString(key, L"DisplayVersion", L"2.5.8") &&
         SetRegistryString(key, L"Publisher", L"xiumu-ops") &&
         SetRegistryString(key, L"InstallLocation", installDir.wstring()) &&
         SetRegistryString(key, L"HookFilePath", hookFilePath.wstring()) &&
@@ -356,6 +358,10 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
     error.clear();
     const std::uintmax_t uninstallBytes = std::filesystem::file_size(uninstallPath, error);
     if (!error) totalBytes += uninstallBytes;
+    error.clear();
+    const std::uintmax_t defaultConfigBytes =
+        std::filesystem::file_size(defaultConfigPath, error);
+    if (!error) totalBytes += defaultConfigBytes;
     const DWORD estimatedKb = static_cast<DWORD>((totalBytes + 1023) / 1024);
     ok = ok && RegSetValueExW(key, L"EstimatedSize", 0, REG_DWORD,
                               reinterpret_cast<const BYTE*>(&estimatedKb),
@@ -422,19 +428,24 @@ void UpdateExistingCompanionStartup(const std::filesystem::path& appPath) {
 
 void RollBackInstall(const FileRollback& appRollback,
                      const FileRollback& uninstallRollback,
+                     const FileRollback& defaultConfigRollback,
                      const FileRollback& shortcutRollback,
                      bool existingUserInstall,
                      const std::filesystem::path& installDir,
                      const std::filesystem::path& appPath,
                      const std::filesystem::path& uninstallPath,
+                     const std::filesystem::path& defaultConfigPath,
                      const std::filesystem::path& hookFilePath,
                      const std::filesystem::path& userDataDir) {
     RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
     RestoreFileRollback(shortcutRollback);
+    RestoreFileRollback(defaultConfigRollback);
     RestoreFileRollback(uninstallRollback);
     RestoreFileRollback(appRollback);
     if (existingUserInstall) {
-        RegisterUninstaller(installDir, appPath, uninstallPath, hookFilePath, userDataDir);
+        RegisterUninstaller(
+            installDir, appPath, uninstallPath, defaultConfigPath,
+            hookFilePath, userDataDir);
     } else {
         std::error_code error;
         if (std::filesystem::is_empty(installDir, error) && !error) {
@@ -511,6 +522,8 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     }
     const std::filesystem::path appPath = installDir / kAppFilename;
     const std::filesystem::path uninstallPath = installDir / kUninstallFilename;
+    const std::filesystem::path defaultConfigPath =
+        installDir / kDefaultConfigFilename;
     const std::filesystem::path shortcut =
         std::filesystem::path(programs) / L"Codex-Quota-Bar.lnk";
     const std::filesystem::path userDataDir = installRoot / kDataDirectoryName;
@@ -547,11 +560,14 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
     FileRollback appRollback;
     FileRollback uninstallRollback;
+    FileRollback defaultConfigRollback;
     FileRollback shortcutRollback;
     if (!PrepareFileRollback(appPath, appRollback) ||
         !PrepareFileRollback(uninstallPath, uninstallRollback) ||
+        !PrepareFileRollback(defaultConfigPath, defaultConfigRollback) ||
         !PrepareFileRollback(shortcut, shortcutRollback)) {
         RestoreFileRollback(shortcutRollback);
+        RestoreFileRollback(defaultConfigRollback);
         RestoreFileRollback(uninstallRollback);
         RestoreFileRollback(appRollback);
         ReportFailure(L"无法创建升级回滚备份，安装未开始。", quiet);
@@ -562,28 +578,31 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     const std::filesystem::path hookFilePath =
         CodexQuotaBarInstaller::HookConfig::ResolveHookFilePath();
     if (!ReplacePayload(IDR_APP_PAYLOAD, appPath) ||
-        !ReplacePayload(IDR_UNINSTALL_PAYLOAD, uninstallPath)) {
-        RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
+        !ReplacePayload(IDR_UNINSTALL_PAYLOAD, uninstallPath) ||
+        !ReplacePayload(IDR_DEFAULT_CONFIG_PAYLOAD, defaultConfigPath)) {
+        RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
         ReportFailure(L"无法写入程序文件。请退出正在运行的旧版本后重试。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 3;
     }
 
     if (!CreateStartMenuShortcut(shortcut, appPath)) {
-        RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
+        RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
         ReportFailure(L"无法创建当前用户的开始菜单快捷方式，安装已回滚。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 4;
     }
 
-    if (!RegisterUninstaller(installDir, appPath, uninstallPath, hookFilePath, userDataDir)) {
-        RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
+    if (!RegisterUninstaller(
+            installDir, appPath, uninstallPath, defaultConfigPath,
+            hookFilePath, userDataDir)) {
+        RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
         ReportFailure(L"无法注册当前用户的卸载入口，安装已回滚。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 5;
@@ -594,9 +613,9 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     const auto hookResult =
         CodexQuotaBarInstaller::HookConfig::Install(hookFilePath, appPath);
     if (!hookResult.success) {
-        RollBackInstall(appRollback, uninstallRollback, shortcutRollback,
+        RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
         ReportFailure(L"无法注册 Codex 会话同步 Hook，安装已回滚：\n\n" +
                       hookResult.error, quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
@@ -605,6 +624,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
     CommitFileRollback(appRollback);
     CommitFileRollback(uninstallRollback);
+    CommitFileRollback(defaultConfigRollback);
     CommitFileRollback(shortcutRollback);
     UpdateExistingCompanionStartup(appPath);
 

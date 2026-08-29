@@ -1,5 +1,6 @@
 #include "UI/MainWindow.h"
 #include "Core/Logger.h"
+#include "UI/AppearanceDialog.h"
 #include "UI/CustomMenu.h"
 #include "Services/CodexClient.h"
 #include "Services/CompanionMode.h"
@@ -10,7 +11,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <shellapi.h>
 #include <system_error>
 #include <limits>
 #include <thread>
@@ -31,8 +31,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_APPEARANCE_SUB = 2300;
     constexpr int IDM_APPEARANCE_DEFAULT = 2301;
     constexpr int IDM_APPEARANCE_CUSTOM = 2302;
-    constexpr int IDM_APPEARANCE_OPEN_CONFIG = 2303;
-    constexpr int IDM_APPEARANCE_RELOAD = 2304;
+    constexpr int IDM_APPEARANCE_EDIT = 2303;
 
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
@@ -139,7 +138,7 @@ namespace CodexQuotaBar {
         int initH = Scale(COLLAPSED_HEIGHT, 1.0f);
 
         m_hwnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
             wc.lpszClassName,
             L"Codex-Quota-Bar",
             WS_POPUP,
@@ -279,7 +278,7 @@ namespace CodexQuotaBar {
             if (!readable || !loadErrors.empty()) {
                 MessageBoxW(
                     m_hwnd,
-                    (L"配置未保存，请先修正 config.json：\n\n" + loadErrors).c_str(),
+                    (L"配置未保存，请先修正配置文件：\n\n" + loadErrors).c_str(),
                     L"Codex-Quota-Bar 配置错误",
                     MB_OK | MB_ICONWARNING);
                 return false;
@@ -291,7 +290,7 @@ namespace CodexQuotaBar {
         if (ConfigStore::SaveSettings(settingsToSave, &errors)) return true;
         MessageBoxW(
             m_hwnd,
-            (L"配置未保存，请修正 config.json：\n\n" + errors).c_str(),
+            (L"配置未保存，请修正配置文件：\n\n" + errors).c_str(),
             L"Codex-Quota-Bar 配置错误",
             MB_OK | MB_ICONWARNING);
         return false;
@@ -299,15 +298,18 @@ namespace CodexQuotaBar {
 
     void MainWindow::ApplyAppearance(const std::wstring& validationErrors) {
         const bool custom = m_settings.appearance.mode == AppearanceMode::Custom;
-        const ThemePalette palette = custom
-            ? ThemePalette::Custom(m_settings.appearance)
-            : ThemePalette::Light();
-        const std::wstring fontFamily = custom
-            ? m_settings.appearance.fontFamily
-            : L"Microsoft YaHei UI";
+        const AppearanceSettings& visualAppearance = custom
+            ? m_settings.appearance
+            : m_settings.defaultAppearance;
+        const ThemePalette palette = ThemePalette::Custom(visualAppearance);
+        const std::wstring& fontFamily = visualAppearance.fontFamily;
 
         std::wstring fontError;
-        m_renderer->SetAppearance(palette, fontFamily, &fontError);
+        m_renderer->SetAppearance(
+            palette,
+            fontFamily,
+            visualAppearance.backgroundTransparency,
+            &fontError);
         std::wstring errors = validationErrors;
         if (!fontError.empty()) {
             if (!errors.empty()) errors += L"\n";
@@ -330,51 +332,66 @@ namespace CodexQuotaBar {
         if (!readable || !loadErrors.empty()) {
             MessageBoxW(
                 m_hwnd,
-                (L"无法切换外观，请先修正 config.json：\n\n" + loadErrors).c_str(),
+                (L"无法切换外观，请先修正配置文件：\n\n" + loadErrors).c_str(),
                 L"Codex-Quota-Bar 配置错误",
                 MB_OK | MB_ICONWARNING);
             return;
         }
 
         const AppearanceSettings previous = m_settings.appearance;
+        const AppearanceSettings previousDefault = m_settings.defaultAppearance;
         m_settings.appearance = loaded.appearance;
+        m_settings.defaultAppearance = loaded.defaultAppearance;
         m_settings.appearance.mode = mode;
         if (!SaveSettingsWithFeedback(false)) {
             m_settings.appearance = previous;
+            m_settings.defaultAppearance = previousDefault;
             return;
         }
         ApplyAppearance();
     }
 
-    void MainWindow::ReloadAppearance() {
-        std::wstring errors;
+    void MainWindow::ConfigureCustomAppearance() {
+        std::wstring loadErrors;
         bool readable = false;
-        const AppSettings loaded = ConfigStore::LoadSettings(&errors, &readable);
-        if (!readable) {
+        const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
+        if (!readable || !loadErrors.empty()) {
             MessageBoxW(
                 m_hwnd,
-                (L"无法重新加载配置：\n\n" + errors).c_str(),
+                (L"无法修改个性外观，请先修正配置文件：\n\n" + loadErrors).c_str(),
                 L"Codex-Quota-Bar 配置错误",
                 MB_OK | MB_ICONWARNING);
             return;
         }
-        m_settings.appearance = loaded.appearance;
-        ApplyAppearance(errors);
-    }
 
-    void MainWindow::OpenConfigFile() {
-        const std::wstring path = ConfigStore::ConfigFilePath();
-        if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES &&
-            !SaveSettingsWithFeedback()) {
-            return;
-        }
-        const HINSTANCE result = ShellExecuteW(
-            m_hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        if (reinterpret_cast<INT_PTR>(result) <= 32) {
-            MessageBoxW(
-                m_hwnd, L"无法使用默认编辑器打开 config.json。",
-                L"Codex-Quota-Bar", MB_OK | MB_ICONWARNING);
-        }
+        const auto applyAppearance = [this, loaded](
+            const std::map<std::wstring, std::wstring>& colors,
+            int backgroundTransparency)
+        {
+            const AppearanceSettings previous = m_settings.appearance;
+            const AppearanceSettings previousDefault = m_settings.defaultAppearance;
+            m_settings.appearance = loaded.appearance;
+            m_settings.defaultAppearance = loaded.defaultAppearance;
+            m_settings.appearance.colors = colors;
+            m_settings.appearance.backgroundTransparency = backgroundTransparency;
+            m_settings.appearance.mode = AppearanceMode::Custom;
+            if (!SaveSettingsWithFeedback(false)) {
+                m_settings.appearance = previous;
+                m_settings.defaultAppearance = previousDefault;
+                return false;
+            }
+            ApplyAppearance();
+            return true;
+        };
+
+        ShowAppearanceDialog(
+            m_hwnd,
+            m_uiScale,
+            loaded.appearance.colors,
+            loaded.appearance.backgroundTransparency,
+            m_renderer->Palette(),
+            m_renderer->FontFamily(),
+            applyAppearance);
     }
 
     void MainWindow::ToggleCompanionMode() {
@@ -641,7 +658,7 @@ namespace CodexQuotaBar {
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_SCALE_SUB, L"缩放大小" },
-            { IDM_APPEARANCE_SUB, L"外观" },
+            { IDM_APPEARANCE_SUB, L"外观配置" },
             { IDM_COMPANION_MODE, m_companionMode ? L"伴随模式：开" : L"伴随模式：关" },
             { 0, L"" }, // 分隔线
             { IDM_EXIT, L"退出" },
@@ -689,10 +706,8 @@ namespace CodexQuotaBar {
                 m_settings.appearance.mode == AppearanceMode::Custom;
             const std::vector<MenuItem> appearanceItems = {
                 { IDM_APPEARANCE_DEFAULT, custom ? L"使用默认外观" : L"使用默认外观 (当前)" },
-                { IDM_APPEARANCE_CUSTOM, custom ? L"使用自定义外观 (当前)" : L"使用自定义外观" },
-                { 0, L"" },
-                { IDM_APPEARANCE_OPEN_CONFIG, L"打开配置文件" },
-                { IDM_APPEARANCE_RELOAD, L"重新加载外观" },
+                { IDM_APPEARANCE_CUSTOM, custom ? L"使用个性外观 (当前)" : L"使用个性外观" },
+                { IDM_APPEARANCE_EDIT, L"编辑个性外观" },
             };
             const int appearance = CustomMenu::Show(
                 m_hwnd, m_uiScale, screenX, screenY, appearanceItems,
@@ -701,10 +716,8 @@ namespace CodexQuotaBar {
                 SetAppearanceMode(AppearanceMode::Default);
             } else if (appearance == IDM_APPEARANCE_CUSTOM) {
                 SetAppearanceMode(AppearanceMode::Custom);
-            } else if (appearance == IDM_APPEARANCE_OPEN_CONFIG) {
-                OpenConfigFile();
-            } else if (appearance == IDM_APPEARANCE_RELOAD) {
-                ReloadAppearance();
+            } else if (appearance == IDM_APPEARANCE_EDIT) {
+                ConfigureCustomAppearance();
             }
         } else if (cmd == IDM_COMPANION_MODE) {
             ToggleCompanionMode();

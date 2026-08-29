@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
-project(Codex-Quota-Bar VERSION 2.5.3 LANGUAGES CXX)
+project(Codex-Quota-Bar VERSION 2.5.8 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Codex-Quota-Bar supports Windows 11 x64 with MSVC only.")
@@ -45,11 +45,13 @@ set(GRAPHICS_SOURCES
 set(UI_HEADERS
     src/UI/MainWindow.h
     src/UI/CustomMenu.h
+    src/UI/AppearanceDialog.h
 )
 
 set(UI_SOURCES
     src/UI/MainWindow.cpp
     src/UI/CustomMenu.cpp
+    src/UI/AppearanceDialog.cpp
 )
 
 set(SERVICES_HEADERS
@@ -97,6 +99,13 @@ source_group("Resource Files" FILES ${RESOURCE_HEADERS} src/resources/app.rc src
 
 add_executable(CodexQuotaBarApp WIN32 ${SOURCES})
 
+add_custom_command(TARGET CodexQuotaBarApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config-default.json"
+        "$<TARGET_FILE_DIR:CodexQuotaBarApp>/config-default.json"
+    VERBATIM
+)
+
 function(cqb_configure_target target)
     target_compile_features(${target} PRIVATE cxx_std_20)
     target_compile_definitions(${target} PRIVATE
@@ -128,6 +137,7 @@ endif()
 
 target_link_libraries(CodexQuotaBarApp
     user32
+    gdi32
     shell32
     ole32
     d2d1

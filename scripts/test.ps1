@@ -17,7 +17,8 @@ function Get-TargetProcesses {
 }
 
 $script:Failures = 0
-$ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config.json"
+$ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config-users.json"
+$DefaultConfigFile = Join-Path (Split-Path -Parent $ExePath) "config-default.json"
 $backupId = [Guid]::NewGuid().ToString("N")
 $ConfigBackup = "$ConfigFile.$backupId.cqbbak"
 $ConfigExisted = Test-Path -LiteralPath $ConfigFile
@@ -55,6 +56,14 @@ Write-Host "Building executable from current sources..." -ForegroundColor Yellow
 & (Join-Path $ScriptDir "build.ps1")
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $ExePath)) {
     throw "Build failed; aborting tests."
+}
+if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
+    throw "Default configuration was not copied beside the application."
+}
+$defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
+if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
+    $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0) {
+    throw "Default configuration content is incomplete."
 }
 
 # 清理上次运行可能残留的实例（避免单实例互斥体干扰本套件）
@@ -128,14 +137,15 @@ if ($protocolTestsBuilt) {
 # 先备份用户配置，结束后原样恢复，避免测试数据污染真实状态。
 if ($ConfigExisted) {
     Copy-Item $ConfigFile $ConfigBackup -Force
+    Remove-Item -LiteralPath $ConfigFile -Force
 }
 $ConfigBackupPrepared = $true
-# 写入当前格式配置，验证统一配置可被读取并保持。
+# 写入用户配置，验证其与默认基线组合读取。
 $ConfigDirectory = Split-Path -Parent $ConfigFile
 New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
 Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
 {
-  "Version": 1,
+  "Version": 2,
   "Settings": {
     "UserScale": 1.0,
     "CompanionMode": false,
@@ -156,15 +166,15 @@ Write-Host "  Process running (PID: $($proc.Id))" -ForegroundColor Green
 
 try {
     $config = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
-    $configOk = $config.Version -eq 1 -and
+    $configOk = $config.Version -eq 2 -and
                 $config.Settings.UserScale -eq 1.0 -and
                 $config.Settings.CompanionMode -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
                 $config.Window.X -eq 120 -and $config.Window.Y -eq 80
     if ($configOk) {
-        Write-Host "  [PASS] 统一配置读取正常" -ForegroundColor Green
+        Write-Host "  [PASS] 用户配置与默认配置组合读取正常" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 统一配置读取内容不完整" -ForegroundColor Red
+        Write-Host "  [FAIL] 用户配置与默认配置组合读取不完整" -ForegroundColor Red
         $script:Failures++
     }
 } catch {
@@ -421,10 +431,9 @@ try {
     @(Get-TargetProcesses) | Stop-Process -Force -ErrorAction SilentlyContinue
 
     if ($ConfigBackupPrepared) {
+        Remove-Item -LiteralPath $ConfigFile -Force -ErrorAction SilentlyContinue
         if ($ConfigExisted -and (Test-Path -LiteralPath $ConfigBackup)) {
             Move-Item -LiteralPath $ConfigBackup -Destination $ConfigFile -Force
-        } elseif (-not $ConfigExisted -and (Test-Path -LiteralPath $ConfigFile)) {
-            Remove-Item -LiteralPath $ConfigFile -Force
         }
         if (-not $ConfigExisted) {
             $testDataDirectory = Split-Path -Parent $ConfigFile
