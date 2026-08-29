@@ -61,7 +61,8 @@ if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
     throw "Default configuration was not copied beside the application."
 }
 $defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
-if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF") {
+if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
+    $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0) {
     throw "Default configuration content is incomplete."
 }
 

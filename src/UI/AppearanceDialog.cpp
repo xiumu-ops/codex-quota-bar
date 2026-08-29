@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cwchar>
 #include <iterator>
@@ -16,6 +17,7 @@ namespace {
 
     constexpr UINT WM_CQB_APPEARANCE_CONFIRM = WM_APP + 22;
     constexpr int kEditControlBase = 100;
+    constexpr int kTransparencyEditControlId = 200;
     constexpr size_t kColorCount = 19;
 
     struct ColorSpec {
@@ -55,14 +57,20 @@ namespace {
 
     struct AppearanceDialogState {
         std::array<ColorField, kColorCount> fields;
-        std::map<std::wstring, std::wstring> selectedColors;
+        AppearanceApplyCallback applyCallback;
         int hoverButton = -1;
         int invalidField = -1;
         bool accepted = false;
+        bool appliedNotice = false;
         bool done = false;
         float dpiScale = 1.0f;
         ThemePalette palette;
         std::wstring validationMessage;
+        RECT transparencyOutline = {};
+        HWND transparencyEdit = nullptr;
+        bool transparencyFocused = false;
+        bool transparencyInvalid = false;
+        RECT applyRect = {};
         RECT confirmRect = {};
         RECT cancelRect = {};
         HFONT editFont = nullptr;
@@ -150,6 +158,20 @@ namespace {
         return value;
     }
 
+    bool TryReadTransparency(HWND edit, int& transparency) {
+        const std::wstring value = ReadFieldText(edit);
+        if (value.empty()) return false;
+        wchar_t* end = nullptr;
+        errno = 0;
+        const long parsed = std::wcstol(value.c_str(), &end, 10);
+        if (errno != 0 || end == value.c_str() || *end != L'\0' ||
+            parsed < 0 || parsed > 90) {
+            return false;
+        }
+        transparency = static_cast<int>(parsed);
+        return IsValidBackgroundTransparency(transparency);
+    }
+
     bool RenderDialog(HDC hdc, const RECT& clientRect, AppearanceDialogState* state) {
         if (!hdc || !EnsureRenderTarget(state)) return false;
         RECT bound = clientRect;
@@ -170,7 +192,7 @@ namespace {
         state->hintFont->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
         DrawText(
-            state, L"编辑个性配色", state->titleFont.Get(),
+            state, L"编辑个性外观", state->titleFont.Get(),
             D2D1::RectF(ScaleF(16, scale), ScaleF(8, scale), width, ScaleF(42, scale)),
             state->palette.text);
         state->brush->SetColor(state->palette.menuDivider);
@@ -230,18 +252,65 @@ namespace {
                 D2D1::RoundedRect(swatch, radius, radius), state->brush.Get(), 1.0f);
         }
 
+        DrawText(
+            state, L"背景透明度", state->bodyFont.Get(),
+            D2D1::RectF(
+                ScaleF(386.0f, scale),
+                static_cast<float>(state->transparencyOutline.top),
+                ScaleF(492.0f, scale),
+                static_cast<float>(state->transparencyOutline.bottom)),
+            state->palette.text);
+        const D2D1_RECT_F transparencyOutline = D2D1::RectF(
+            static_cast<float>(state->transparencyOutline.left),
+            static_cast<float>(state->transparencyOutline.top),
+            static_cast<float>(state->transparencyOutline.right),
+            static_cast<float>(state->transparencyOutline.bottom));
+        const float transparencyRadius = ScaleF(5.0f, scale);
+        state->brush->SetColor(state->palette.trackBg);
+        state->renderTarget->FillRoundedRectangle(
+            D2D1::RoundedRect(
+                transparencyOutline, transparencyRadius, transparencyRadius),
+            state->brush.Get());
+        state->brush->SetColor(
+            state->transparencyInvalid
+                ? state->palette.progressRed
+                : (state->transparencyFocused
+                    ? state->palette.progressGreen
+                    : state->palette.statsCardBorder));
+        state->renderTarget->DrawRoundedRectangle(
+            D2D1::RoundedRect(
+                transparencyOutline, transparencyRadius, transparencyRadius),
+            state->brush.Get(),
+            state->transparencyInvalid || state->transparencyFocused ? 2.0f : 1.0f);
+        state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        DrawText(
+            state, L"%", state->bodyFont.Get(),
+            D2D1::RectF(
+                ScaleF(660.0f, scale),
+                static_cast<float>(state->transparencyOutline.top),
+                ScaleF(696.0f, scale),
+                static_cast<float>(state->transparencyOutline.bottom)),
+            state->palette.muted);
+
         const wchar_t* hint = state->invalidField >= 0
             ? state->validationMessage.c_str()
-            : L"确认后将保存全部配色，并自动启用个性外观";
+            : (state->appliedNotice
+                ? L"个性外观已应用"
+                : L"透明度范围为 0%–90%；应用后自动启用个性外观");
         DrawText(
             state, hint, state->hintFont.Get(),
             D2D1::RectF(
                 ScaleF(18, scale), ScaleF(410, scale),
                 ScaleF(500, scale), ScaleF(444, scale)),
-            state->invalidField >= 0 ? state->palette.progressRed : state->palette.muted);
+            state->invalidField >= 0
+                ? state->palette.progressRed
+                : (state->appliedNotice
+                    ? state->palette.syncSuccess
+                    : state->palette.muted));
 
-        DrawButton(state, state->confirmRect, L"确定", state->hoverButton == 0);
-        DrawButton(state, state->cancelRect, L"取消", state->hoverButton == 1);
+        DrawButton(state, state->applyRect, L"应用", state->hoverButton == 0);
+        DrawButton(state, state->confirmRect, L"确定", state->hoverButton == 1);
+        DrawButton(state, state->cancelRect, L"取消", state->hoverButton == 2);
 
         state->brush->SetColor(state->palette.statsCardBorder);
         state->renderTarget->DrawRoundedRectangle(
@@ -265,7 +334,11 @@ namespace {
         DestroyWindow(hwnd);
     }
 
-    void ConfirmDialog(HWND hwnd, AppearanceDialogState* state) {
+    void CommitDialog(
+        HWND hwnd,
+        AppearanceDialogState* state,
+        bool closeAfterApply)
+    {
         std::map<std::wstring, std::wstring> colors;
         state->invalidField = -1;
         for (size_t index = 0; index < kColorCount; ++index) {
@@ -278,18 +351,48 @@ namespace {
             }
             colors[kColorSpecs[index].key] = value;
         }
+        int transparency = 0;
+        state->transparencyInvalid = !TryReadTransparency(
+            state->transparencyEdit, transparency);
+        if (state->invalidField < 0 && state->transparencyInvalid) {
+            state->invalidField = static_cast<int>(kColorCount);
+        }
         if (state->invalidField >= 0) {
-            state->validationMessage = L"“";
-            state->validationMessage += kColorSpecs[state->invalidField].label;
-            state->validationMessage += L"”必须使用 #RRGGBB 格式";
-            HWND edit = state->fields[state->invalidField].edit;
+            HWND edit = nullptr;
+            if (state->invalidField < static_cast<int>(kColorCount)) {
+                state->validationMessage = L"“";
+                state->validationMessage += kColorSpecs[state->invalidField].label;
+                state->validationMessage += L"”必须使用 #RRGGBB 格式";
+                edit = state->fields[state->invalidField].edit;
+            } else {
+                state->validationMessage = L"背景透明度必须是 0 至 90 的整数";
+                edit = state->transparencyEdit;
+            }
             SetFocus(edit);
             SendMessageW(edit, EM_SETSEL, 0, static_cast<LPARAM>(-1));
             InvalidateRect(hwnd, nullptr, FALSE);
             return;
         }
-        state->selectedColors = std::move(colors);
-        CloseDialog(hwnd, state, true);
+        if (!state->applyCallback ||
+            !state->applyCallback(colors, transparency)) {
+            return;
+        }
+
+        AppearanceSettings previewAppearance;
+        previewAppearance.colors = colors;
+        state->palette = ThemePalette::Custom(previewAppearance);
+        HBRUSH replacementBrush = CreateSolidBrush(ToColorRef(state->palette.trackBg));
+        if (replacementBrush) {
+            DeleteObject(state->editBrush);
+            state->editBrush = replacementBrush;
+        }
+        state->brush.Reset();
+        state->renderTarget.Reset();
+        state->appliedNotice = true;
+        RedrawWindow(
+            hwnd, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+        if (closeAfterApply) CloseDialog(hwnd, state, true);
     }
 
     LRESULT CALLBACK AppearanceWndProc(
@@ -333,6 +436,36 @@ namespace {
                 if (HIWORD(wParam) == EN_KILLFOCUS) field.focused = false;
                 if (HIWORD(wParam) == EN_CHANGE) {
                     field.invalid = false;
+                    state->appliedNotice = false;
+                    state->invalidField = -1;
+                    for (size_t index = 0; index < kColorCount; ++index) {
+                        if (state->fields[index].invalid) {
+                            state->invalidField = static_cast<int>(index);
+                            state->validationMessage = L"“";
+                            state->validationMessage += kColorSpecs[index].label;
+                            state->validationMessage += L"”必须使用 #RRGGBB 格式";
+                            break;
+                        }
+                    }
+                    if (state->invalidField < 0 && state->transparencyInvalid) {
+                        state->invalidField = static_cast<int>(kColorCount);
+                        state->validationMessage =
+                            L"背景透明度必须是 0 至 90 的整数";
+                    }
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (controlId == kTransparencyEditControlId) {
+                if (HIWORD(wParam) == EN_SETFOCUS) {
+                    state->transparencyFocused = true;
+                }
+                if (HIWORD(wParam) == EN_KILLFOCUS) {
+                    state->transparencyFocused = false;
+                }
+                if (HIWORD(wParam) == EN_CHANGE) {
+                    state->transparencyInvalid = false;
+                    state->appliedNotice = false;
                     state->invalidField = -1;
                     for (size_t index = 0; index < kColorCount; ++index) {
                         if (state->fields[index].invalid) {
@@ -354,8 +487,9 @@ namespace {
             TrackMouseEvent(&tracking);
             const POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             int hover = -1;
-            if (PtInRect(&state->confirmRect, point)) hover = 0;
-            else if (PtInRect(&state->cancelRect, point)) hover = 1;
+            if (PtInRect(&state->applyRect, point)) hover = 0;
+            else if (PtInRect(&state->confirmRect, point)) hover = 1;
+            else if (PtInRect(&state->cancelRect, point)) hover = 2;
             if (hover != state->hoverButton) {
                 state->hoverButton = hover;
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -377,12 +511,13 @@ namespace {
         }
         case WM_LBUTTONUP: {
             const POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            if (PtInRect(&state->confirmRect, point)) ConfirmDialog(hwnd, state);
+            if (PtInRect(&state->applyRect, point)) CommitDialog(hwnd, state, false);
+            else if (PtInRect(&state->confirmRect, point)) CommitDialog(hwnd, state, true);
             else if (PtInRect(&state->cancelRect, point)) CloseDialog(hwnd, state, false);
             return 0;
         }
         case WM_CQB_APPEARANCE_CONFIRM:
-            ConfirmDialog(hwnd, state);
+            CommitDialog(hwnd, state, true);
             return 0;
         case WM_CLOSE:
             CloseDialog(hwnd, state, false);
@@ -446,17 +581,19 @@ namespace {
 
 } // namespace
 
-    bool ShowAppearanceColorsDialog(
+    bool ShowAppearanceDialog(
         HWND owner,
         float dpiScale,
         const std::map<std::wstring, std::wstring>& currentColors,
-        std::map<std::wstring, std::wstring>& selectedColors,
+        int currentBackgroundTransparency,
         const ThemePalette& palette,
-        const std::wstring& fontFamily)
+        const std::wstring& fontFamily,
+        const AppearanceApplyCallback& applyCallback)
     {
         AppearanceDialogState state;
         state.dpiScale = FitScaleToMonitor(owner, dpiScale);
         state.palette = palette;
+        state.applyCallback = applyCallback;
         if (!InitializeDrawing(state, fontFamily)) return false;
 
         static bool registered = false;
@@ -479,6 +616,10 @@ namespace {
         const int width = Scale(740.0f, scale);
         const int height = Scale(462.0f, scale);
         const POINT position = CenterAndClamp(owner, width, height);
+        state.applyRect = {
+            Scale(428, scale), Scale(414, scale),
+            Scale(520, scale), Scale(448, scale)
+        };
         state.confirmRect = {
             Scale(530, scale), Scale(414, scale),
             Scale(622, scale), Scale(448, scale)
@@ -490,7 +631,7 @@ namespace {
 
         HWND dialog = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT,
-            L"Codex-Quota-Bar_Appearance", L"编辑个性配色", WS_POPUP,
+            L"Codex-Quota-Bar_Appearance", L"编辑个性外观", WS_POPUP,
             position.x, position.y, width, height,
             owner, nullptr, GetModuleHandleW(nullptr), &state);
         if (!dialog) return false;
@@ -551,6 +692,32 @@ namespace {
             SendMessageW(field.edit, EM_SETLIMITTEXT, 7, 0);
         }
 
+        state.transparencyOutline = {
+            Scale(498.0f, scale), Scale(364.0f, scale),
+            Scale(650.0f, scale), Scale(392.0f, scale)
+        };
+        state.transparencyEdit = CreateWindowExW(
+            0, L"EDIT", std::to_wstring(currentBackgroundTransparency).c_str(),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_NUMBER | ES_AUTOHSCROLL,
+            state.transparencyOutline.left + Scale(6, scale),
+            state.transparencyOutline.top + Scale(3, scale),
+            state.transparencyOutline.right - state.transparencyOutline.left - Scale(12, scale),
+            state.transparencyOutline.bottom - state.transparencyOutline.top - Scale(6, scale),
+            dialog,
+            reinterpret_cast<HMENU>(
+                static_cast<INT_PTR>(kTransparencyEditControlId)),
+            GetModuleHandleW(nullptr), nullptr);
+        if (!state.transparencyEdit) {
+            DestroyWindow(dialog);
+            DeleteObject(state.editFont);
+            DeleteObject(state.editBrush);
+            return false;
+        }
+        SendMessageW(
+            state.transparencyEdit, WM_SETFONT,
+            reinterpret_cast<WPARAM>(state.editFont), TRUE);
+        SendMessageW(state.transparencyEdit, EM_SETLIMITTEXT, 2, 0);
+
         EnableWindow(owner, FALSE);
         ShowWindow(dialog, SW_SHOWNORMAL);
         UpdateWindow(dialog);
@@ -583,9 +750,7 @@ namespace {
         if (message.message == WM_QUIT) {
             PostQuitMessage(static_cast<int>(message.wParam));
         }
-        if (!state.accepted) return false;
-        selectedColors = std::move(state.selectedColors);
-        return true;
+        return state.accepted;
     }
 
 } // namespace CodexQuotaBar
