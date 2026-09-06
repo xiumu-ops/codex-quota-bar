@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
                 // 免费方案的唯一额度即使返回周级时长，也应固定放在第一行。
                 std::cout
                     << "{\"id\":2,\"result\":{"
-                       "\"rateLimits\":{\"primary\":{\"usedPercent\":99,\"windowDurationMins\":10080,\"resetsAt\":1893456000},\"secondary\":null},"
+                       "\"rateLimits\":{\"primary\":{\"usedPercent\":99,\"windowDurationMins\":10080,\"resetsAt\":1890000000},\"secondary\":null},"
                        "\"rateLimitsByLimitId\":{\"codex\":{"
                        "\"primary\":{\"usedPercent\":44,\"windowDurationMins\":10080,\"resetsAt\":1893456000},"
                        "\"secondary\":null,\"planType\":\"free\"}},"

@@ -88,6 +88,9 @@ int wmain(int argc, wchar_t** argv) {
            Near(freePlan.window.usedPercent, 44.0) &&
            Near(freePlan.window.remainingPercent, 56.0),
            "free-plan total quota is preserved in the window row from the preferred bucket");
+    Expect(freePlan.window.resetTimestamp == 1893456000 &&
+           !freePlan.window.resetTimeString.empty(),
+           "free-plan window keeps the preferred bucket reset time for detail rendering");
     Expect(!freePlan.weekly.available,
            "missing secondary quota remains unavailable instead of being fabricated");
 
