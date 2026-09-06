@@ -6,7 +6,7 @@
 [![Direct2D](https://img.shields.io/badge/Graphics-Direct2D%20%2F%20DirectWrite-success.svg)](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-portal)
 [![Remote Build](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml/badge.svg)](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml)
 
-基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：常驻工作区顶部，通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态。
+基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态，并可选择是否置顶显示。
 
 本项目是独立的第三方开源工具，与 OpenAI 不存在隶属或背书关系。参阅[修改日志](CHANGELOG.md)、[隐私政策](PRIVACY.md)和[代码签名政策](CODE_SIGNING_POLICY.md)。
 
@@ -17,8 +17,8 @@
 ![Codex-Quota-Bar 折叠状态](assets/screenshots/quota-bar-collapsed.png)
 
 - **核心功能**：
-  - **额度进度直观呈现**：双色指示条分别展示当前 5 小时窗口额度与每周总额度剩余百分比与胶囊进度条。
-  - **重置时间精准提示**：显示重置时间点（如 `重置 18:45` 或 `重置 08月29日 18:45`），清晰掌握额度重置周期。
+  - **额度进度直观呈现**：双色指示条展示窗口额度与每周额度的剩余百分比和胶囊进度条；免费方案返回的唯一额度显示在“窗口使用限额”，并在详情位置显示对应的额度重置时间。
+  - **重置时间精准提示**：显示重置时间点（如 `重置 18:45` 或 `重置 08月29日 18:45`）；额度窗口或对应重置时间未返回时统一显示“官方当前未返回”。
   - **状态指示灯与文字**：实时反馈同步健康状态（🟢 成功 / 🟡 同步中 / 🔴 失败 / ⚪ 等待）。
 - **交互方式**：
   - **左键单击右下角箭头（Chevron）**：展开或收起详细统计面板。
@@ -32,7 +32,7 @@
 ![Codex-Quota-Bar 展开状态](assets/screenshots/quota-bar-expanded.png)
 
 - **核心功能**：
-  - **精细额度指标**：展示 5 小时短期限额与每周长期限额的精确百分比与精确时刻。
+  - **精细额度指标**：展示窗口限额与每周限额的精确百分比及重置时刻；免费方案只有一个额度窗口时，“每周使用限额”明确显示官方当前未返回。
   - **Token 使用统计卡片**：聚合展示累计 Token（`累计tokens`）、单日峰值 Token（`峰值tokens`）以及最长连续对话时长（`最长聊天`），数值智能折算（`K` / `M` / `B` / `T`）。
   - **重置额度卡片 (Reset Credits)**：展示账户可用额度重置次数（`重置次数`）、最早过期时间（`过期时间`）及剩余有效天数（`剩余天数`）。
 - **交互方式**：
@@ -51,6 +51,7 @@
   - **刷新间隔**：支持切换自动刷新周期（1分钟 / 3分钟 / 5分钟 / 10分钟 / 15分钟 / 30分钟 / 60分钟）。
   - **缩放大小**：支持切换 UI 缩放比例（80% / 90% / 100% / 110% / 125% / 150%）。
   - **外观配置**：切换默认 / 个性外观，或在统一编辑器中修改 19 项颜色与 0%–90% 的背景透明度；支持应用、确定和取消。
+  - **置顶模式（开/关）**：控制额度条是否保持在其他窗口上方，设置会保存并在重启后继续生效。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
   - **退出**：彻底关闭常驻进程并释放所有系统与图形资源。
 
@@ -65,6 +66,7 @@
 - **官方账户接口**：临时启动 `codex app-server`，通过 stdio JSON-RPC 调用 `account/rateLimits/read` 与 `account/usage/read`，无需额外常驻服务或开放本地端口
 - **官方生命周期 Hook**：安装器注册 `SessionStart`、`Stop`、`SessionEnd`，新会话、每轮对话完成和会话结束时自动同步
 - **伴随模式**：可从右键菜单启用；Codex 桌面端启动时自动显示，桌面端退出后防抖隐藏，并通过当前用户启动项在登录后后台等待
+- **可选置顶模式**：可从右键菜单即时启用或关闭，状态写入用户配置并在下次启动时恢复
 - **当前用户安装与卸载**：单文件安装包默认写入 `%LOCALAPPDATA%\Codex-Quota-Bar\app`，程序、配置、开始菜单和“已安装的应用”入口全部限定在当前用户
 - **Win32 命名管道 IPC**：单实例守护进程，CLI / IDE / Git Hook 毫秒级通信（命令表见下）
 - **零第三方运行库**：程序只使用 Windows 系统组件；额度同步需要已安装并登录的官方 Codex
@@ -99,14 +101,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.5.8：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.6.1：
 
 ```powershell
-git tag -a v2.5.8 -m "Codex-Quota-Bar 2.5.8"
-git push origin v2.5.8
+git tag -a v2.6.1 -m "Codex-Quota-Bar 2.6.1"
+git push origin v2.6.1
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.5.8.exe` 与 `Codex-Quota-Bar_version_2.5.8.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.6.1.exe` 与 `Codex-Quota-Bar_version_2.6.1.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -134,7 +136,7 @@ CHANGELOG.md  各版本新增、变更与修复记录
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.5.8.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.6.1.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -178,8 +180,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.5.8.exe
-dist\Release\Codex-Quota-Bar_version_2.5.8.sha256
+dist\Release\Codex-Quota-Bar_version_2.6.1.exe
+dist\Release\Codex-Quota-Bar_version_2.6.1.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -245,6 +247,7 @@ dist\Release\Codex-Quota-Bar_version_2.5.8.sha256
   "Settings": {
     "UserScale": 1.0,
     "CompanionMode": false,
+    "AlwaysOnTop": true,
     "RefreshIntervalMinutes": 1,
     "Appearance": {
       "Mode": "Custom",
@@ -277,7 +280,7 @@ dist\Release\Codex-Quota-Bar_version_2.5.8.sha256
 }
 ```
 
-程序分别校验默认配置和用户配置：默认文件必须包含完整外观基线；用户文件中的未知颜色名、错误类型、非法色值、无效字体名称，以及不是 0–90 整数的背景透明度，都会显示具体配置路径。若 JSON 本身损坏或存在未修正的字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到可用字体并给出提示。
+程序分别校验默认配置和用户配置：默认文件必须包含完整设置及外观基线；用户文件中的未知颜色名、错误类型、非法色值、无效字体名称，不是 0–90 整数的背景透明度，以及非布尔值的 `AlwaysOnTop`，都会显示具体配置路径。若 JSON 本身损坏或存在未修正的字段错误，程序不会用默认内容覆盖该文件。系统中不存在的字体会在运行时回退到可用字体并给出提示。
 
 ### Codex App Server
 
@@ -288,7 +291,8 @@ codex app-server
   → initialize
   → initialized
   → account/rateLimits/read
-  → 按 300 / 10080 分钟识别窗口额度与每周额度（各行中部的重置时间取自对应限额的 resetAt）
+  → 优先读取 rateLimitsByLimitId.codex，保留实际返回的一个或两个额度窗口
+  → 免费方案的唯一额度映射为“窗口使用限额”，未返回的“每周使用限额”保持不可用
   → 读取 rateLimitResetCredits.availableCount 与 credits[].expiresAt
   → account/usage/read
   → 读取 lifetimeTokens / peakDailyTokens / longestRunningTurnSec / currentStreakDays

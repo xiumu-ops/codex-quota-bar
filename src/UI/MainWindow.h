@@ -53,6 +53,7 @@ namespace CodexQuotaBar {
         void ToggleExpanded();
         void RefreshQuota();
         void SetStats(const TokenStats& stats);
+        void ToggleAlwaysOnTop();
         void ToggleCompanionMode();
         void PollCompanionMode();
         void HandleCompanionResult(bool running);

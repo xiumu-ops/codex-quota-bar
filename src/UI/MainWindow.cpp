@@ -24,6 +24,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_REFRESH = 2002;
     constexpr int IDM_EXIT = 2003;
     constexpr int IDM_COMPANION_MODE = 2004;
+    constexpr int IDM_ALWAYS_ON_TOP = 2005;
     constexpr int IDM_SCALE_SUB = 2100;        // 一级菜单：进入缩放子菜单
     constexpr int IDM_SCALE_LEVEL_BASE = 2101; // 二级菜单：档位 id 基址（+0..4）
     constexpr int IDM_REFRESH_INTERVAL_SUB = 2200;
@@ -166,6 +167,11 @@ namespace CodexQuotaBar {
         m_refreshIntervalLevel = ClosestRefreshIntervalLevel(m_settings.refreshIntervalMinutes);
         m_companionMode = m_settings.companionMode;
         m_codexDesktopRunning = false;
+        SetWindowPos(
+            m_hwnd,
+            m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         if (m_companionMode) {
             CompanionMode::ConfigureAutoStart(true);
         }
@@ -392,6 +398,23 @@ namespace CodexQuotaBar {
             m_renderer->Palette(),
             m_renderer->FontFamily(),
             applyAppearance);
+    }
+
+    void MainWindow::ToggleAlwaysOnTop() {
+        if (!m_hwnd) return;
+
+        const bool previous = m_settings.alwaysOnTop;
+        m_settings.alwaysOnTop = !previous;
+        if (!SaveSettingsWithFeedback()) {
+            m_settings.alwaysOnTop = previous;
+            return;
+        }
+
+        SetWindowPos(
+            m_hwnd,
+            m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     void MainWindow::ToggleCompanionMode() {
@@ -659,6 +682,7 @@ namespace CodexQuotaBar {
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_SCALE_SUB, L"缩放大小" },
             { IDM_APPEARANCE_SUB, L"外观配置" },
+            { IDM_ALWAYS_ON_TOP, m_settings.alwaysOnTop ? L"置顶模式：开" : L"置顶模式：关" },
             { IDM_COMPANION_MODE, m_companionMode ? L"伴随模式：开" : L"伴随模式：关" },
             { 0, L"" }, // 分隔线
             { IDM_EXIT, L"退出" },
@@ -719,6 +743,8 @@ namespace CodexQuotaBar {
             } else if (appearance == IDM_APPEARANCE_EDIT) {
                 ConfigureCustomAppearance();
             }
+        } else if (cmd == IDM_ALWAYS_ON_TOP) {
+            ToggleAlwaysOnTop();
         } else if (cmd == IDM_COMPANION_MODE) {
             ToggleCompanionMode();
         } else if (cmd == IDM_EXIT) {

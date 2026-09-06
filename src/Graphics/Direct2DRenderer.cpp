@@ -26,6 +26,7 @@ namespace CodexQuotaBar {
                 local.tm_mon + 1, local.tm_mday, local.tm_hour, local.tm_min);
             return buffer;
         }
+
     }
 
     Direct2DRenderer::Direct2DRenderer()
@@ -444,8 +445,9 @@ namespace CodexQuotaBar {
         SyncState syncState)
     {
         auto quotaDetail = [](const QuotaWindow& w) -> std::wstring {
-            if (!w.available) return L"官方当前未返回";
-            if (w.resetTimeString.empty()) return L"重置时间未知";
+            if (!w.available || w.resetTimeString.empty()) {
+                return L"官方当前未返回";
+            }
             return L"重置 " + w.resetTimeString;
         };
 

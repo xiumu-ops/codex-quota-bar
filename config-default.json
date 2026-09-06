@@ -3,6 +3,7 @@
   "Settings": {
     "UserScale": 1.0,
     "CompanionMode": false,
+    "AlwaysOnTop": true,
     "RefreshIntervalMinutes": 1,
     "Appearance": {
       "Mode": "Default",

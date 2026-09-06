@@ -197,6 +197,13 @@ namespace {
         if (object.has_key(L"CompanionMode") && object[L"CompanionMode"].is_bool()) {
             settings.companionMode = object[L"CompanionMode"].as_bool(false);
         }
+        if (object.has_key(L"AlwaysOnTop")) {
+            if (object[L"AlwaysOnTop"].is_bool()) {
+                settings.alwaysOnTop = object[L"AlwaysOnTop"].as_bool(true);
+            } else {
+                AppendValidationError(errors, L"Settings.AlwaysOnTop 必须是布尔值");
+            }
+        }
         if (object.has_key(L"RefreshIntervalMinutes") &&
             object[L"RefreshIntervalMinutes"].is_number()) {
             const int value = object[L"RefreshIntervalMinutes"].as_int(1);
@@ -220,6 +227,7 @@ namespace {
         }
         if (!settings.has_key(L"UserScale") ||
             !settings.has_key(L"CompanionMode") ||
+            !settings.has_key(L"AlwaysOnTop") ||
             !settings.has_key(L"RefreshIntervalMinutes")) {
             AppendValidationError(
                 errors, L"config-default.json 缺少完整的通用设置基线");
@@ -361,6 +369,8 @@ namespace {
         file << "    \"UserScale\": " << data.settings.userScale << ",\n";
         file << "    \"CompanionMode\": "
              << (data.settings.companionMode ? "true" : "false") << ",\n";
+        file << "    \"AlwaysOnTop\": "
+             << (data.settings.alwaysOnTop ? "true" : "false") << ",\n";
         file << "    \"RefreshIntervalMinutes\": "
              << data.settings.refreshIntervalMinutes << ",\n";
         file << "    \"Appearance\": {\n";

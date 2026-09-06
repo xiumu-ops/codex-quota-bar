@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
             if (!Contains(line, "\"method\":\"initialize\"") ||
                 !Contains(line, "\"id\":1") ||
                 !Contains(line, "\"name\":\"codex_quota_bar\"") ||
-                !Contains(line, "\"version\":\"2.5.8\"")) {
+                !Contains(line, "\"version\":\"2.6.1\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
             // 非 JSON 诊断行用于覆盖客户端的输出降噪路径。
@@ -72,17 +72,29 @@ int main(int argc, char** argv) {
 
             // 无关通知应被客户端忽略，随后再读取 id=2 的真正响应。
             std::cout << "{\"method\":\"account/rateLimits/updated\",\"params\":{}}" << std::endl;
-            std::cout
-                << "{\"id\":2,\"result\":{\"rateLimits\":null,"
-                   "\"rateLimitsByLimitId\":{\"codex\":{"
-                   "\"primary\":{\"usedPercent\":37.5,\"windowDurationMins\":300,\"resetsAt\":1893456000},"
-                   "\"secondary\":{\"usedPercent\":90,\"windowDurationMins\":10080,\"resetsAt\":1893888000}"
-                   "}},"
-                   "\"rateLimitResetCredits\":{\"availableCount\":2,\"credits\":["
-                   "{\"status\":\"available\",\"expiresAt\":1789946796},"
-                   "{\"status\":\"available\",\"expiresAt\":1792538796}"
-                   "]}}}"
-                << std::endl;
+            if (scenario == "free_single_window") {
+                // 免费方案的唯一额度即使返回周级时长，也应固定放在第一行。
+                std::cout
+                    << "{\"id\":2,\"result\":{"
+                       "\"rateLimits\":{\"primary\":{\"usedPercent\":99,\"windowDurationMins\":10080,\"resetsAt\":1890000000},\"secondary\":null},"
+                       "\"rateLimitsByLimitId\":{\"codex\":{"
+                       "\"primary\":{\"usedPercent\":44,\"windowDurationMins\":10080,\"resetsAt\":1893456000},"
+                       "\"secondary\":null,\"planType\":\"free\"}},"
+                       "\"rateLimitResetCredits\":null}}"
+                    << std::endl;
+            } else {
+                std::cout
+                    << "{\"id\":2,\"result\":{\"rateLimits\":null,"
+                       "\"rateLimitsByLimitId\":{\"codex\":{"
+                       "\"primary\":{\"usedPercent\":37.5,\"windowDurationMins\":300,\"resetsAt\":1893456000},"
+                       "\"secondary\":{\"usedPercent\":90,\"windowDurationMins\":10080,\"resetsAt\":1893888000}"
+                       "}},"
+                       "\"rateLimitResetCredits\":{\"availableCount\":2,\"credits\":["
+                       "{\"status\":\"available\",\"expiresAt\":1789946796},"
+                       "{\"status\":\"available\",\"expiresAt\":1792538796}"
+                       "]}}}"
+                    << std::endl;
+            }
         } else if (step == 3) {
             if (!Contains(line, "\"method\":\"account/usage/read\"") ||
                 !Contains(line, "\"id\":3") || !Contains(line, "\"params\":{}")) {

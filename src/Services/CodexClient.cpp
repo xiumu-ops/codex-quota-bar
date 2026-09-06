@@ -226,7 +226,7 @@ namespace CodexQuotaBar {
         const wchar_t* weeklyAliases[] = { L"secondary", L"7d", L"7day", L"7days", L"weekly", L"week" };
 
         auto fillFromBucket = [&](const JsonValue& bucket) {
-            if (!bucket.is_object()) return;
+            if (!bucket.is_object()) return false;
 
             QuotaWindow primary;
             QuotaWindow secondary;
@@ -235,55 +235,44 @@ namespace CodexQuotaBar {
             if (primaryObj) ParseWindow(*primaryObj, primary);
             if (secondaryObj) ParseWindow(*secondaryObj, secondary);
 
-            const QuotaWindow* candidates[] = { &primary, &secondary };
-            auto chooseClosest = [&](int64_t targetMinutes, int fallbackIndex) {
-                int best = -1;
-                int64_t bestDifference = INT64_MAX;
-                for (int i = 0; i < 2; ++i) {
-                    const QuotaWindow& candidate = *candidates[i];
-                    if (!candidate.available || candidate.windowDurationMins <= 0) continue;
-                    int64_t difference = candidate.windowDurationMins > targetMinutes
-                        ? candidate.windowDurationMins - targetMinutes
-                        : targetMinutes - candidate.windowDurationMins;
-                    if (difference < bestDifference) {
-                        bestDifference = difference;
-                        best = i;
-                    }
-                }
-
-                const int64_t tolerance = (std::max<int64_t>)(60, targetMinutes / 4);
-                if (best >= 0 && bestDifference <= tolerance) return best;
-
-                const QuotaWindow& fallback = *candidates[fallbackIndex];
-                if (fallback.available && fallback.windowDurationMins <= 0) return fallbackIndex;
-                return -1;
-            };
-
-            const int windowChoice = chooseClosest(300, 0);
-            const int weeklyChoice = chooseClosest(10080, 1);
-
-            if (!snap.window.available && windowChoice >= 0) {
-                snap.window = *candidates[windowChoice];
+            if (!primary.available && !secondary.available) return false;
+            if (primary.available && secondary.available) {
+                const bool shouldSwap =
+                    primary.windowDurationMins > 0 &&
+                    secondary.windowDurationMins > 0 &&
+                    primary.windowDurationMins > secondary.windowDurationMins;
+                snap.window = shouldSwap ? secondary : primary;
+                snap.weekly = shouldSwap ? primary : secondary;
+                return true;
             }
-            if (!snap.weekly.available && weeklyChoice >= 0 && weeklyChoice != windowChoice) {
-                snap.weekly = *candidates[weeklyChoice];
+
+            const QuotaWindow& only = primary.available ? primary : secondary;
+            const bool freePlan = bucket.has_key(L"planType") &&
+                bucket[L"planType"].is_string() &&
+                bucket[L"planType"].as_string() == L"free";
+            // 免费方案的唯一窗口代表该账户当前可用的全部额度，应固定显示
+            // 在第一行；其他方案仅在只返回周级长周期时使用第二行。
+            if (!freePlan && only.windowDurationMins >= 6 * 24 * 60) {
+                snap.weekly = only;
+            } else {
+                snap.window = only;
             }
+            return true;
         };
 
-        if ((*result)[L"rateLimits"].is_object()) {
-            fillFromBucket((*result)[L"rateLimits"]);
-        }
-
         const JsonValue& byId = (*result)[L"rateLimitsByLimitId"];
+        const JsonValue* selected = nullptr;
         if (byId.is_object() && !byId.objVal.empty()) {
-            const JsonValue* selected = nullptr;
             auto codex = byId.objVal.find(L"codex");
             if (codex != byId.objVal.end() && codex->second.is_object()) {
                 selected = &codex->second;
             } else if (byId.objVal.size() == 1 && byId.objVal.begin()->second.is_object()) {
                 selected = &byId.objVal.begin()->second;
             }
-            if (selected) fillFromBucket(*selected);
+        }
+        const bool filledFromPreferred = selected && fillFromBucket(*selected);
+        if (!filledFromPreferred && (*result)[L"rateLimits"].is_object()) {
+            fillFromBucket((*result)[L"rateLimits"]);
         }
 
         snap.success = snap.window.available || snap.weekly.available;

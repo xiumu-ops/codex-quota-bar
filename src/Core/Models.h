@@ -44,8 +44,8 @@ namespace CodexQuotaBar {
         // 中的各统计值允许为 null，因此不能用字段是否为空判断同步是否成功。
         bool statsSynchronized = false;
         std::wstring errorMessage;
-        QuotaWindow window;  // 5小时滚动周期 (Primary)
-        QuotaWindow weekly;  // 7天用量周期 (Secondary)
+        QuotaWindow window;  // 第一行“窗口使用限额”；免费方案的唯一额度也放在此处
+        QuotaWindow weekly;  // 第二行“每周使用限额”；未返回时保持 unavailable
         TokenStats stats;    // 统计数据
         RateLimitResetCredits resetCredits; // 官方可用额度重置次数及到期时间
         std::chrono::system_clock::time_point fetchedAt;
