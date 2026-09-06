@@ -26,6 +26,25 @@ namespace CodexQuotaBar {
                 local.tm_mon + 1, local.tm_mday, local.tm_hour, local.tm_min);
             return buffer;
         }
+
+        std::wstring FormatQuotaWindowLabel(
+            const QuotaWindow& window,
+            const wchar_t* fallback)
+        {
+            if (!window.available || window.windowDurationMins <= 0) return fallback;
+
+            const int64_t minutes = window.windowDurationMins;
+            if (minutes == 7 * 24 * 60) return L"每周使用限额";
+            if (minutes == 24 * 60) return L"每日使用限额";
+            if (minutes == 60) return L"每小时使用限额";
+            if (minutes % (24 * 60) == 0) {
+                return std::to_wstring(minutes / (24 * 60)) + L"天使用限额";
+            }
+            if (minutes % 60 == 0) {
+                return std::to_wstring(minutes / 60) + L"小时使用限额";
+            }
+            return std::to_wstring(minutes) + L"分钟使用限额";
+        }
     }
 
     Direct2DRenderer::Direct2DRenderer()
@@ -451,11 +470,13 @@ namespace CodexQuotaBar {
 
         DrawQuotaRow(
             topY + ScaleF(3.0f, m_dpiScale),
-            L"窗口使用限额", quotaDetail(snapshot.window), snapshot.window);
+            FormatQuotaWindowLabel(snapshot.window, L"窗口使用限额"),
+            quotaDetail(snapshot.window), snapshot.window);
 
         DrawQuotaRow(
             topY + ScaleF(33.0f, m_dpiScale),
-            L"每周使用限额", quotaDetail(snapshot.weekly), snapshot.weekly);
+            FormatQuotaWindowLabel(snapshot.weekly, L"其他使用限额"),
+            quotaDetail(snapshot.weekly), snapshot.weekly);
 
         const wchar_t* syncDetail = L"等待";
         switch (syncState) {

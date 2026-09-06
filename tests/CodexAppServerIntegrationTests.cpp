@@ -81,6 +81,16 @@ int wmain(int argc, wchar_t** argv) {
     Expect(happy.stats.longestTask == L"1.5 小时", "longestRunningTurnSec is formatted");
     Expect(happy.stats.streakDays == L"12天", "currentStreakDays is formatted");
 
+    std::cout << "Free-plan single-window quota\n";
+    QuotaSnapshot freePlan = Fetch(L"free_single_window");
+    Expect(freePlan.success, "free-plan synchronization succeeds");
+    Expect(freePlan.window.available && freePlan.window.windowDurationMins == 60 &&
+           Near(freePlan.window.usedPercent, 44.0) &&
+           Near(freePlan.window.remainingPercent, 56.0),
+           "arbitrary-duration free quota is preserved from the preferred bucket");
+    Expect(!freePlan.weekly.available,
+           "missing secondary quota remains unavailable instead of being fabricated");
+
     std::cout << "Token unit precision\n";
     QuotaSnapshot smallUnits = Fetch(L"token_units_small");
     Expect(smallUnits.success && smallUnits.stats.totalTokens == L"2.30 M" &&

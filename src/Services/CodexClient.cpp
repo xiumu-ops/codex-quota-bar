@@ -226,7 +226,7 @@ namespace CodexQuotaBar {
         const wchar_t* weeklyAliases[] = { L"secondary", L"7d", L"7day", L"7days", L"weekly", L"week" };
 
         auto fillFromBucket = [&](const JsonValue& bucket) {
-            if (!bucket.is_object()) return;
+            if (!bucket.is_object()) return false;
 
             QuotaWindow primary;
             QuotaWindow secondary;
@@ -235,55 +235,42 @@ namespace CodexQuotaBar {
             if (primaryObj) ParseWindow(*primaryObj, primary);
             if (secondaryObj) ParseWindow(*secondaryObj, secondary);
 
-            const QuotaWindow* candidates[] = { &primary, &secondary };
-            auto chooseClosest = [&](int64_t targetMinutes, int fallbackIndex) {
-                int best = -1;
-                int64_t bestDifference = INT64_MAX;
-                for (int i = 0; i < 2; ++i) {
-                    const QuotaWindow& candidate = *candidates[i];
-                    if (!candidate.available || candidate.windowDurationMins <= 0) continue;
-                    int64_t difference = candidate.windowDurationMins > targetMinutes
-                        ? candidate.windowDurationMins - targetMinutes
-                        : targetMinutes - candidate.windowDurationMins;
-                    if (difference < bestDifference) {
-                        bestDifference = difference;
-                        best = i;
-                    }
-                }
-
-                const int64_t tolerance = (std::max<int64_t>)(60, targetMinutes / 4);
-                if (best >= 0 && bestDifference <= tolerance) return best;
-
-                const QuotaWindow& fallback = *candidates[fallbackIndex];
-                if (fallback.available && fallback.windowDurationMins <= 0) return fallbackIndex;
-                return -1;
-            };
-
-            const int windowChoice = chooseClosest(300, 0);
-            const int weeklyChoice = chooseClosest(10080, 1);
-
-            if (!snap.window.available && windowChoice >= 0) {
-                snap.window = *candidates[windowChoice];
+            if (!primary.available && !secondary.available) return false;
+            if (primary.available && secondary.available) {
+                const bool shouldSwap =
+                    primary.windowDurationMins > 0 &&
+                    secondary.windowDurationMins > 0 &&
+                    primary.windowDurationMins > secondary.windowDurationMins;
+                snap.window = shouldSwap ? secondary : primary;
+                snap.weekly = shouldSwap ? primary : secondary;
+                return true;
             }
-            if (!snap.weekly.available && weeklyChoice >= 0 && weeklyChoice != windowChoice) {
-                snap.weekly = *candidates[weeklyChoice];
+
+            const QuotaWindow& only = primary.available ? primary : secondary;
+            // 官方协议允许不同方案返回任意时长，且单一长周期窗口也可能
+            // 出现在 primary。仅把接近一周的单窗口放到第二行，其他时长
+            // 均保留在第一行并由 UI 按实际时长命名，不能因不是 5 小时而丢弃。
+            if (only.windowDurationMins >= 6 * 24 * 60) {
+                snap.weekly = only;
+            } else {
+                snap.window = only;
             }
+            return true;
         };
 
-        if ((*result)[L"rateLimits"].is_object()) {
-            fillFromBucket((*result)[L"rateLimits"]);
-        }
-
         const JsonValue& byId = (*result)[L"rateLimitsByLimitId"];
+        const JsonValue* selected = nullptr;
         if (byId.is_object() && !byId.objVal.empty()) {
-            const JsonValue* selected = nullptr;
             auto codex = byId.objVal.find(L"codex");
             if (codex != byId.objVal.end() && codex->second.is_object()) {
                 selected = &codex->second;
             } else if (byId.objVal.size() == 1 && byId.objVal.begin()->second.is_object()) {
                 selected = &byId.objVal.begin()->second;
             }
-            if (selected) fillFromBucket(*selected);
+        }
+        const bool filledFromPreferred = selected && fillFromBucket(*selected);
+        if (!filledFromPreferred && (*result)[L"rateLimits"].is_object()) {
+            fillFromBucket((*result)[L"rateLimits"]);
         }
 
         snap.success = snap.window.available || snap.weekly.available;

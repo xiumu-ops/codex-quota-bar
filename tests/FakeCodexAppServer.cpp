@@ -72,17 +72,29 @@ int main(int argc, char** argv) {
 
             // 无关通知应被客户端忽略，随后再读取 id=2 的真正响应。
             std::cout << "{\"method\":\"account/rateLimits/updated\",\"params\":{}}" << std::endl;
-            std::cout
-                << "{\"id\":2,\"result\":{\"rateLimits\":null,"
-                   "\"rateLimitsByLimitId\":{\"codex\":{"
-                   "\"primary\":{\"usedPercent\":37.5,\"windowDurationMins\":300,\"resetsAt\":1893456000},"
-                   "\"secondary\":{\"usedPercent\":90,\"windowDurationMins\":10080,\"resetsAt\":1893888000}"
-                   "}},"
-                   "\"rateLimitResetCredits\":{\"availableCount\":2,\"credits\":["
-                   "{\"status\":\"available\",\"expiresAt\":1789946796},"
-                   "{\"status\":\"available\",\"expiresAt\":1792538796}"
-                   "]}}}"
-                << std::endl;
+            if (scenario == "free_single_window") {
+                // 免费方案可只返回一个非 5 小时窗口；按 limitId 的结果优先于兼容字段。
+                std::cout
+                    << "{\"id\":2,\"result\":{"
+                       "\"rateLimits\":{\"primary\":{\"usedPercent\":99,\"windowDurationMins\":60,\"resetsAt\":1893456000},\"secondary\":null},"
+                       "\"rateLimitsByLimitId\":{\"codex\":{"
+                       "\"primary\":{\"usedPercent\":44,\"windowDurationMins\":60,\"resetsAt\":1893456000},"
+                       "\"secondary\":null,\"planType\":\"free\"}},"
+                       "\"rateLimitResetCredits\":null}}"
+                    << std::endl;
+            } else {
+                std::cout
+                    << "{\"id\":2,\"result\":{\"rateLimits\":null,"
+                       "\"rateLimitsByLimitId\":{\"codex\":{"
+                       "\"primary\":{\"usedPercent\":37.5,\"windowDurationMins\":300,\"resetsAt\":1893456000},"
+                       "\"secondary\":{\"usedPercent\":90,\"windowDurationMins\":10080,\"resetsAt\":1893888000}"
+                       "}},"
+                       "\"rateLimitResetCredits\":{\"availableCount\":2,\"credits\":["
+                       "{\"status\":\"available\",\"expiresAt\":1789946796},"
+                       "{\"status\":\"available\",\"expiresAt\":1792538796}"
+                       "]}}}"
+                    << std::endl;
+            }
         } else if (step == 3) {
             if (!Contains(line, "\"method\":\"account/usage/read\"") ||
                 !Contains(line, "\"id\":3") || !Contains(line, "\"params\":{}")) {

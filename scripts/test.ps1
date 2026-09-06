@@ -62,7 +62,8 @@ if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
 }
 $defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
 if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
-    $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0) {
+    $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0 -or
+    $defaultConfig.Settings.AlwaysOnTop -ne $true) {
     throw "Default configuration content is incomplete."
 }
 
@@ -149,6 +150,7 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
   "Settings": {
     "UserScale": 1.0,
     "CompanionMode": false,
+    "AlwaysOnTop": false,
     "RefreshIntervalMinutes": 5
   },
   "Window": { "X": 120, "Y": 80 }
@@ -169,6 +171,7 @@ try {
     $configOk = $config.Version -eq 2 -and
                 $config.Settings.UserScale -eq 1.0 -and
                 $config.Settings.CompanionMode -eq $false -and
+                $config.Settings.AlwaysOnTop -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
                 $config.Window.X -eq 120 -and $config.Window.Y -eq 80
     if ($configOk) {
@@ -191,6 +194,7 @@ public struct CqbPoint { public int X; public int Y; }
 public struct CqbRect { public int Left; public int Top; public int Right; public int Bottom; }
 public static class CqbNative {
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out CqbRect rect);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out CqbPoint point);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -213,6 +217,14 @@ $savedCursor = [CqbPoint]::new()
 [void][CqbNative]::GetCursorPos([ref]$savedCursor)
 try {
     if ($hwnd -eq [IntPtr]::Zero) { throw "Main window handle is unavailable" }
+
+    $extendedStyle = [CqbNative]::GetWindowLongPtr($hwnd, -20).ToInt64()
+    if (($extendedStyle -band 0x8) -eq 0) {
+        Write-Host "  [PASS] 置顶模式关闭设置已应用到窗口" -ForegroundColor Green
+    } else {
+        Write-Host "  [FAIL] 置顶模式关闭后窗口仍为 TOPMOST" -ForegroundColor Red
+        $script:Failures++
+    }
 
     $collapsedBefore = Get-CqbWindowRect $hwnd
     $uiScale = ($collapsedBefore.Right - $collapsedBefore.Left) / 380.0
