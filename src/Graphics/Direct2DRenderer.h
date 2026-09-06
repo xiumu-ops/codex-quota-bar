@@ -24,6 +24,7 @@ namespace CodexQuotaBar {
 
         HRESULT Render(
             bool expanded,
+            bool miniMode,
             const QuotaSnapshot& snapshot,
             SyncState syncState);
 
@@ -42,12 +43,22 @@ namespace CodexQuotaBar {
             bool expanded,
             const QuotaSnapshot& snapshot,
             SyncState syncState);
+        void DrawMiniBar(const QuotaSnapshot& snapshot);
+        void DrawMiniQuota(
+            float left,
+            float width,
+            const QuotaWindow& window);
         void DrawSyncIndicator(float topY, SyncState state);
         void DrawChevron(float topY, bool expanded);
         void DrawQuotaRow(
             float topY,
             const std::wstring& title,
             const std::wstring& detail,
+            const QuotaWindow& window);
+        void DrawProgressTrack(
+            float trackX,
+            float trackY,
+            float trackW,
             const QuotaWindow& window);
         void DrawStatsSubCard(float topY, float height, const TokenStats& stats);
         void DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot);

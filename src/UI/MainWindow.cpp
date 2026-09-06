@@ -6,6 +6,7 @@
 #include "Services/CompanionMode.h"
 #include "Core/Constants.h"
 #include "Core/DpiHelper.h"
+#include "Core/Layout.h"
 #include "Core/ConfigStore.h"
 #include "resources/resource.h"
 
@@ -25,6 +26,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_EXIT = 2003;
     constexpr int IDM_COMPANION_MODE = 2004;
     constexpr int IDM_ALWAYS_ON_TOP = 2005;
+    constexpr int IDM_MINI_MODE = 2006;
     constexpr int IDM_SCALE_SUB = 2100;        // 一级菜单：进入缩放子菜单
     constexpr int IDM_SCALE_LEVEL_BASE = 2101; // 二级菜单：档位 id 基址（+0..4）
     constexpr int IDM_REFRESH_INTERVAL_SUB = 2200;
@@ -185,15 +187,17 @@ namespace CodexQuotaBar {
         // 读取持久化窗口位置
         auto stored = ConfigStore::LoadState();
         if (stored.hasPosition) {
-            SIZE sz = { Scale(BAR_WIDTH, m_uiScale), Scale(COLLAPSED_HEIGHT, m_uiScale) };
+            const SIZE logical = LogicalWindowSize();
+            SIZE sz = { Scale(logical.cx, m_uiScale), Scale(logical.cy, m_uiScale) };
             POINT clamped = ClampToScreens(stored.position, sz);
             SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE);
             m_collapsedLocation = clamped;
         } else {
             RECT rcWork;
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
-            int w = Scale(BAR_WIDTH, m_uiScale);
-            int h = Scale(COLLAPSED_HEIGHT, m_uiScale);
+            const SIZE logical = LogicalWindowSize();
+            int w = Scale(logical.cx, m_uiScale);
+            int h = Scale(logical.cy, m_uiScale);
             int x = rcWork.left + (rcWork.right - rcWork.left - w) / 2;
             int y = rcWork.top + 34;
             SetWindowPos(m_hwnd, NULL, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -247,10 +251,9 @@ namespace CodexQuotaBar {
         m_uiScale = m_dpiScale * kUserScaleLevels[m_userScaleLevel];
         m_renderer->SetDpiScale(m_uiScale);
 
-        int targetW = Scale(BAR_WIDTH, m_uiScale);
-        float logicalH = m_expanded ? static_cast<float>(EXPANDED_HEIGHT)
-                                    : static_cast<float>(COLLAPSED_HEIGHT);
-        int targetH = Scale(logicalH, m_uiScale);
+        const SIZE logical = LogicalWindowSize();
+        int targetW = Scale(logical.cx, m_uiScale);
+        int targetH = Scale(logical.cy, m_uiScale);
 
         SetWindowPos(m_hwnd, NULL, 0, 0, targetW, targetH,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
@@ -417,6 +420,24 @@ namespace CodexQuotaBar {
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
+    void MainWindow::ToggleMiniMode() {
+        const bool previous = m_settings.miniMode;
+        m_settings.miniMode = !previous;
+        if (!SaveSettingsWithFeedback()) {
+            m_settings.miniMode = previous;
+            return;
+        }
+
+        if (m_settings.miniMode && m_expanded) {
+            ToggleExpanded();
+            return;
+        }
+        if (!m_expanded) {
+            ApplyUiScale();
+            OnWindowMoved();
+        }
+    }
+
     void MainWindow::ToggleCompanionMode() {
         const bool enabled = !m_companionMode;
         if (!CompanionMode::ConfigureAutoStart(enabled)) {
@@ -520,10 +541,15 @@ namespace CodexQuotaBar {
         return clamped;
     }
 
-    void MainWindow::ToggleExpanded() {
-        int collapsedH = Scale(COLLAPSED_HEIGHT, m_uiScale);
-        int expandedH = Scale(EXPANDED_HEIGHT, m_uiScale);
+    SIZE MainWindow::LogicalWindowSize() const {
+        if (m_expanded) return { BAR_WIDTH, EXPANDED_HEIGHT };
+        if (m_settings.miniMode) {
+            return { MiniBarLogicalWidth(m_snapshot), MINI_HEIGHT };
+        }
+        return { BAR_WIDTH, COLLAPSED_HEIGHT };
+    }
 
+    void MainWindow::ToggleExpanded() {
         HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
@@ -534,29 +560,31 @@ namespace CodexQuotaBar {
 
         int targetLeft = rc.left;
         int targetTop = rc.top;
-        int targetH;
-
         if (!m_expanded) {
             m_collapsedLocation = { rc.left, rc.top };
             m_hasCollapsedLocation = true;
             m_expanded = true;
-
-            if (rc.top + expandedH > area.bottom) {
-                targetTop = std::max<int>(area.top, area.bottom - expandedH);
-            }
-            targetH = expandedH;
         } else {
             POINT col = m_hasCollapsedLocation ? m_collapsedLocation : POINT{ rc.left, rc.top };
-            SIZE sz = { rc.right - rc.left, collapsedH };
-            col = ClampToScreens(col, sz);
-            m_collapsedLocation = col;
             targetLeft = col.x;
             targetTop = col.y;
-            targetH = collapsedH;
             m_expanded = false;
         }
 
-        int targetW = Scale(BAR_WIDTH, m_uiScale);
+        const SIZE logical = LogicalWindowSize();
+        int targetW = Scale(logical.cx, m_uiScale);
+        int targetH = Scale(logical.cy, m_uiScale);
+        if (m_expanded && rc.top + targetH > area.bottom) {
+            targetTop = std::max<int>(area.top, area.bottom - targetH);
+        }
+        const POINT clamped = ClampToScreens(
+            { targetLeft, targetTop }, { targetW, targetH });
+        targetLeft = clamped.x;
+        targetTop = clamped.y;
+        if (!m_expanded) {
+            m_collapsedLocation = clamped;
+            m_hasCollapsedLocation = true;
+        }
 
         SetWindowPos(
             m_hwnd, NULL,
@@ -663,10 +691,14 @@ namespace CodexQuotaBar {
 
     bool MainWindow::IsHeaderArea(POINT pt) const {
         int logicalY = static_cast<int>(std::round(pt.y / m_uiScale));
-        return logicalY < COLLAPSED_HEIGHT;
+        const int headerHeight = m_settings.miniMode && !m_expanded
+            ? MINI_HEIGHT
+            : COLLAPSED_HEIGHT;
+        return logicalY < headerHeight;
     }
 
     bool MainWindow::IsExpandButtonArea(POINT pt) const {
+        if (m_settings.miniMode && !m_expanded) return false;
         int logicalX = static_cast<int>(std::round(pt.x / m_uiScale));
         int logicalY = static_cast<int>(std::round(pt.y / m_uiScale));
 
@@ -678,6 +710,7 @@ namespace CodexQuotaBar {
     void MainWindow::HandleContextMenu(int screenX, int screenY) {
         const std::vector<MenuItem> items = {
             { IDM_TOGGLE_EXPAND, m_expanded ? L"收起详情" : L"展开详情" },
+            { IDM_MINI_MODE, m_settings.miniMode ? L"迷你模式：开" : L"迷你模式：关" },
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_SCALE_SUB, L"缩放大小" },
@@ -695,6 +728,8 @@ namespace CodexQuotaBar {
 
         if (cmd == IDM_TOGGLE_EXPAND) {
             ToggleExpanded();
+        } else if (cmd == IDM_MINI_MODE) {
+            ToggleMiniMode();
         } else if (cmd == IDM_REFRESH) {
             RefreshQuota();
         } else if (cmd == IDM_REFRESH_INTERVAL_SUB) {
@@ -875,10 +910,18 @@ namespace CodexQuotaBar {
                 snap.swap(m_fetchState->pending);
             }
             if (snap) {
+                const int previousMiniWidth = MiniBarLogicalWidth(m_snapshot);
                 if (!snap->statsSynchronized) snap->stats = m_snapshot.stats;
                 m_snapshot = std::move(*snap);
                 m_syncState = m_snapshot.success ? SyncState::Synced : SyncState::Failed;
-                InvalidateRect(m_hwnd, NULL, FALSE);
+                const bool miniWidthChanged = m_settings.miniMode && !m_expanded &&
+                    previousMiniWidth != MiniBarLogicalWidth(m_snapshot);
+                if (miniWidthChanged) {
+                    ApplyUiScale();
+                    OnWindowMoved();
+                } else {
+                    InvalidateRect(m_hwnd, NULL, FALSE);
+                }
             }
             m_fetchState->inFlight = false;
             if (m_refreshQueued.exchange(false)) {
@@ -932,7 +975,8 @@ namespace CodexQuotaBar {
         PAINTSTRUCT ps;
         BeginPaint(m_hwnd, &ps);
 
-        HRESULT hr = m_renderer->Render(m_expanded, m_snapshot, m_syncState);
+        HRESULT hr = m_renderer->Render(
+            m_expanded, m_settings.miniMode, m_snapshot, m_syncState);
         if (hr == D2DERR_RECREATE_TARGET) {
             InvalidateRect(m_hwnd, NULL, FALSE);
         }

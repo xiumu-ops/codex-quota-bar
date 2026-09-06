@@ -63,7 +63,8 @@ if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
 $defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
 if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
     $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0 -or
-    $defaultConfig.Settings.AlwaysOnTop -ne $true) {
+    $defaultConfig.Settings.AlwaysOnTop -ne $true -or
+    $defaultConfig.Settings.MiniMode -ne $false) {
     throw "Default configuration content is incomplete."
 }
 
@@ -151,6 +152,7 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
     "UserScale": 1.0,
     "CompanionMode": false,
     "AlwaysOnTop": false,
+    "MiniMode": false,
     "RefreshIntervalMinutes": 5
   },
   "Window": { "X": 120, "Y": 80 }
@@ -172,6 +174,7 @@ try {
                 $config.Settings.UserScale -eq 1.0 -and
                 $config.Settings.CompanionMode -eq $false -and
                 $config.Settings.AlwaysOnTop -eq $false -and
+                $config.Settings.MiniMode -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
                 $config.Window.X -eq 120 -and $config.Window.Y -eq 80
     if ($configOk) {
@@ -195,6 +198,7 @@ public struct CqbRect { public int Left; public int Top; public int Right; publi
 public static class CqbNative {
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out CqbRect rect);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out CqbPoint point);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -377,6 +381,10 @@ try {
     } else {
         $env:CODEX_QUOTA_CODEX_PATH = $fakeCodexPath
         $env:CODEX_QUOTA_FAKE_SCENARIO = "happy"
+        $miniConfig = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
+        $miniConfig.Settings.MiniMode = $true
+        $miniConfig | ConvertTo-Json -Depth 10 | Set-Content `
+            -LiteralPath $ConfigFile -Encoding utf8NoBOM
         # 由 SessionStart Hook 在无实例时派生长驻 GUI。外层 Hook 必须在
         # SessionEnd 的官方 3 秒上限内快速退出，同时子进程继承测试环境。
         $hookTimer = [Diagnostics.Stopwatch]::StartNew()
@@ -418,6 +426,28 @@ try {
             }
             if ($pipeReady) {
                 Write-Host "  [PASS] App Server 实例管道已就绪" -ForegroundColor Green
+                $miniDeadline = (Get-Date).AddSeconds(5)
+                $miniSizeOk = $false
+                while ((Get-Date) -lt $miniDeadline) {
+                    $appB.Refresh()
+                    $miniHwnd = [IntPtr]$appB.MainWindowHandle
+                    if ($miniHwnd -ne [IntPtr]::Zero) {
+                        $miniRect = Get-CqbWindowRect $miniHwnd
+                        $dpiScale = [CqbNative]::GetDpiForWindow($miniHwnd) / 96.0
+                        $expectedMiniWidth = [int][Math]::Round(240 * $dpiScale)
+                        $expectedMiniHeight = [int][Math]::Round(48 * $dpiScale)
+                        $miniSizeOk = ($miniRect.Right - $miniRect.Left) -eq $expectedMiniWidth -and
+                                      ($miniRect.Bottom - $miniRect.Top) -eq $expectedMiniHeight
+                        if ($miniSizeOk) { break }
+                    }
+                    Start-Sleep -Milliseconds 100
+                }
+                if ($miniSizeOk) {
+                    Write-Host "  [PASS] 双额度迷你栏使用 240 x 48 逻辑尺寸" -ForegroundColor Green
+                } else {
+                    Write-Host "  [FAIL] 双额度迷你栏尺寸不正确" -ForegroundColor Red
+                    $script:Failures++
+                }
             } else {
                 Write-Host "  [FAIL] App Server 实例管道未在 5 秒内就绪" -ForegroundColor Red
                 $script:Failures++

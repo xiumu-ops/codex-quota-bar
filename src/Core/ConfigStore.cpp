@@ -204,6 +204,13 @@ namespace {
                 AppendValidationError(errors, L"Settings.AlwaysOnTop 必须是布尔值");
             }
         }
+        if (object.has_key(L"MiniMode")) {
+            if (object[L"MiniMode"].is_bool()) {
+                settings.miniMode = object[L"MiniMode"].as_bool(false);
+            } else {
+                AppendValidationError(errors, L"Settings.MiniMode 必须是布尔值");
+            }
+        }
         if (object.has_key(L"RefreshIntervalMinutes") &&
             object[L"RefreshIntervalMinutes"].is_number()) {
             const int value = object[L"RefreshIntervalMinutes"].as_int(1);
@@ -228,6 +235,7 @@ namespace {
         if (!settings.has_key(L"UserScale") ||
             !settings.has_key(L"CompanionMode") ||
             !settings.has_key(L"AlwaysOnTop") ||
+            !settings.has_key(L"MiniMode") ||
             !settings.has_key(L"RefreshIntervalMinutes")) {
             AppendValidationError(
                 errors, L"config-default.json 缺少完整的通用设置基线");
@@ -371,6 +379,8 @@ namespace {
              << (data.settings.companionMode ? "true" : "false") << ",\n";
         file << "    \"AlwaysOnTop\": "
              << (data.settings.alwaysOnTop ? "true" : "false") << ",\n";
+        file << "    \"MiniMode\": "
+             << (data.settings.miniMode ? "true" : "false") << ",\n";
         file << "    \"RefreshIntervalMinutes\": "
              << data.settings.refreshIntervalMinutes << ",\n";
         file << "    \"Appearance\": {\n";

@@ -51,6 +51,7 @@ namespace CodexQuotaBar {
         void Hide();
         void ToggleVisible();
         void ToggleExpanded();
+        void ToggleMiniMode();
         void RefreshQuota();
         void SetStats(const TokenStats& stats);
         void ToggleAlwaysOnTop();
@@ -61,6 +62,7 @@ namespace CodexQuotaBar {
         void HandleContextMenu(int screenX, int screenY);
         bool IsHeaderArea(POINT pt) const;
         bool IsExpandButtonArea(POINT pt) const;
+        SIZE LogicalWindowSize() const;
         POINT ClampToScreens(POINT pt, SIZE sz) const;
 
         struct FetchResultState {
