@@ -188,7 +188,10 @@ namespace CodexQuotaBar {
         auto stored = ConfigStore::LoadState();
         if (stored.hasPosition) {
             const SIZE logical = LogicalWindowSize();
-            SIZE sz = { Scale(logical.cx, m_uiScale), Scale(logical.cy, m_uiScale) };
+            SIZE sz = {
+                Scale(static_cast<float>(logical.cx), m_uiScale),
+                Scale(static_cast<float>(logical.cy), m_uiScale)
+            };
             POINT clamped = ClampToScreens(stored.position, sz);
             SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE);
             m_collapsedLocation = clamped;
@@ -196,8 +199,8 @@ namespace CodexQuotaBar {
             RECT rcWork;
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
             const SIZE logical = LogicalWindowSize();
-            int w = Scale(logical.cx, m_uiScale);
-            int h = Scale(logical.cy, m_uiScale);
+            int w = Scale(static_cast<float>(logical.cx), m_uiScale);
+            int h = Scale(static_cast<float>(logical.cy), m_uiScale);
             int x = rcWork.left + (rcWork.right - rcWork.left - w) / 2;
             int y = rcWork.top + 34;
             SetWindowPos(m_hwnd, NULL, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -252,8 +255,8 @@ namespace CodexQuotaBar {
         m_renderer->SetDpiScale(m_uiScale);
 
         const SIZE logical = LogicalWindowSize();
-        int targetW = Scale(logical.cx, m_uiScale);
-        int targetH = Scale(logical.cy, m_uiScale);
+        int targetW = Scale(static_cast<float>(logical.cx), m_uiScale);
+        int targetH = Scale(static_cast<float>(logical.cy), m_uiScale);
 
         SetWindowPos(m_hwnd, NULL, 0, 0, targetW, targetH,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
@@ -572,8 +575,8 @@ namespace CodexQuotaBar {
         }
 
         const SIZE logical = LogicalWindowSize();
-        int targetW = Scale(logical.cx, m_uiScale);
-        int targetH = Scale(logical.cy, m_uiScale);
+        int targetW = Scale(static_cast<float>(logical.cx), m_uiScale);
+        int targetH = Scale(static_cast<float>(logical.cy), m_uiScale);
         if (m_expanded && rc.top + targetH > area.bottom) {
             targetTop = std::max<int>(area.top, area.bottom - targetH);
         }
