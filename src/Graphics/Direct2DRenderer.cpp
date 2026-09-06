@@ -346,6 +346,7 @@ namespace CodexQuotaBar {
 
     HRESULT Direct2DRenderer::Render(
         bool expanded,
+        bool miniMode,
         const QuotaSnapshot& snapshot,
         SyncState syncState)
     {
@@ -365,19 +366,23 @@ namespace CodexQuotaBar {
             D2D1::RectF(0.0f, 0.0f, w, h), outerRadius, outerRadius);
         m_pRenderTarget->FillRoundedRectangle(background, m_pBrushSurface.Get());
 
-        // 2. 折叠态呈现两组额度；展开态追加统计卡片与限额重置卡片
-        const float collapsedH = ScaleF(static_cast<float>(COLLAPSED_HEIGHT), m_dpiScale);
-        DrawCollapsedBar(0.0f, expanded, snapshot, syncState);
-        if (expanded) {
-            const float padX = ScaleF(8.0f, m_dpiScale);
-            m_pRenderTarget->DrawLine(
-                D2D1::Point2F(padX, collapsedH), D2D1::Point2F(w - padX, collapsedH),
-                m_pBrushDivider.Get(), 1.0f);
-            const float cardH = ScaleF(66.0f, m_dpiScale);
-            DrawStatsSubCard(collapsedH + ScaleF(8.0f, m_dpiScale), cardH, snapshot.stats);
-            DrawResetSubCard(
-                collapsedH + ScaleF(8.0f, m_dpiScale) + cardH + ScaleF(5.0f, m_dpiScale),
-                cardH, snapshot);
+        // 2. 迷你态只呈现额度与缩短的进度条；标准展开态追加详情卡片。
+        if (miniMode && !expanded) {
+            DrawMiniBar(snapshot);
+        } else {
+            const float collapsedH = ScaleF(static_cast<float>(COLLAPSED_HEIGHT), m_dpiScale);
+            DrawCollapsedBar(0.0f, expanded, snapshot, syncState);
+            if (expanded) {
+                const float padX = ScaleF(8.0f, m_dpiScale);
+                m_pRenderTarget->DrawLine(
+                    D2D1::Point2F(padX, collapsedH), D2D1::Point2F(w - padX, collapsedH),
+                    m_pBrushDivider.Get(), 1.0f);
+                const float cardH = ScaleF(66.0f, m_dpiScale);
+                DrawStatsSubCard(collapsedH + ScaleF(8.0f, m_dpiScale), cardH, snapshot.stats);
+                DrawResetSubCard(
+                    collapsedH + ScaleF(8.0f, m_dpiScale) + cardH + ScaleF(5.0f, m_dpiScale),
+                    cardH, snapshot);
+            }
         }
 
         // 3. 亮白圆角外描边
@@ -392,6 +397,59 @@ namespace CodexQuotaBar {
             hr = PresentLayeredWindow();
         }
         return hr;
+    }
+
+    void Direct2DRenderer::DrawMiniBar(const QuotaSnapshot& snapshot) {
+        QuotaWindow unavailable;
+        const QuotaWindow* windows[2] = {};
+        int count = 0;
+        if (snapshot.window.available) windows[count++] = &snapshot.window;
+        if (snapshot.weekly.available) windows[count++] = &snapshot.weekly;
+        if (count == 0) windows[count++] = &unavailable;
+
+        const float segmentWidth = static_cast<float>(m_width) / count;
+        for (int i = 0; i < count; ++i) {
+            DrawMiniQuota(segmentWidth * i, segmentWidth, *windows[i]);
+        }
+
+        if (count == 2) {
+            const float dividerX = segmentWidth;
+            m_pRenderTarget->DrawLine(
+                D2D1::Point2F(dividerX, ScaleF(8.0f, m_dpiScale)),
+                D2D1::Point2F(dividerX, static_cast<float>(m_height) - ScaleF(8.0f, m_dpiScale)),
+                m_pBrushDivider.Get(), 1.0f);
+        }
+    }
+
+    void Direct2DRenderer::DrawMiniQuota(
+        float left,
+        float width,
+        const QuotaWindow& window)
+    {
+        const std::wstring value = window.available
+            ? std::to_wstring(static_cast<int>(std::round(window.remainingPercent))) + L"%"
+            : L"---";
+
+        if (m_pFontRowValueBold) {
+            m_pFontRowValueBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_pFontRowValueBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            const D2D1_RECT_F valueRect = D2D1::RectF(
+                left + ScaleF(4.0f, m_dpiScale),
+                ScaleF(1.0f, m_dpiScale),
+                left + width - ScaleF(4.0f, m_dpiScale),
+                ScaleF(27.0f, m_dpiScale));
+            ID2D1SolidColorBrush* brush = window.available
+                ? ProgressBrushFor(window.remainingPercent)
+                : m_pBrushProgressBlue.Get();
+            m_pRenderTarget->DrawTextW(
+                value.c_str(), static_cast<UINT32>(value.size()),
+                m_pFontRowValueBold.Get(), valueRect, brush);
+        }
+
+        const float trackX = left + ScaleF(8.0f, m_dpiScale);
+        const float trackW = (std::max)(0.0f, width - ScaleF(16.0f, m_dpiScale));
+        DrawProgressTrack(
+            trackX, ScaleF(33.0f, m_dpiScale), trackW, window);
     }
 
     void Direct2DRenderer::DrawSyncIndicator(float topY, SyncState state) {
@@ -605,10 +663,19 @@ namespace CodexQuotaBar {
         }
 
         // 3. 满宽细胶囊进度条
-        float trackX = padX;
-        float trackW = w - padX * 2.0f;
+        const float trackX = padX;
+        const float trackW = w - padX * 2.0f;
+        const float trackY = topY + ScaleF(25.0f, m_dpiScale);
+        DrawProgressTrack(trackX, trackY, trackW, window);
+    }
+
+    void Direct2DRenderer::DrawProgressTrack(
+        float trackX,
+        float trackY,
+        float trackW,
+        const QuotaWindow& window)
+    {
         float trackH = std::max(4.0f, ScaleF(5.0f, m_dpiScale));
-        float trackY = topY + ScaleF(25.0f, m_dpiScale);
         float trackRadius = trackH / 2.0f;
 
         D2D1_ROUNDED_RECT trackBgRect = D2D1::RoundedRect(D2D1::RectF(trackX, trackY, trackX + trackW, trackY + trackH), trackRadius, trackRadius);

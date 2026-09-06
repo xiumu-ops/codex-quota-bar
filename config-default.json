@@ -4,6 +4,7 @@
     "UserScale": 1.0,
     "CompanionMode": false,
     "AlwaysOnTop": true,
+    "MiniMode": false,
     "RefreshIntervalMinutes": 1,
     "Appearance": {
       "Mode": "Default",
