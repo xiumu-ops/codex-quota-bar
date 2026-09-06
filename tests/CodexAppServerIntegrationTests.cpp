@@ -84,10 +84,10 @@ int wmain(int argc, wchar_t** argv) {
     std::cout << "Free-plan single-window quota\n";
     QuotaSnapshot freePlan = Fetch(L"free_single_window");
     Expect(freePlan.success, "free-plan synchronization succeeds");
-    Expect(freePlan.window.available && freePlan.window.windowDurationMins == 60 &&
+    Expect(freePlan.window.available && freePlan.window.windowDurationMins == 10080 &&
            Near(freePlan.window.usedPercent, 44.0) &&
            Near(freePlan.window.remainingPercent, 56.0),
-           "arbitrary-duration free quota is preserved from the preferred bucket");
+           "free-plan total quota is preserved in the window row from the preferred bucket");
     Expect(!freePlan.weekly.available,
            "missing secondary quota remains unavailable instead of being fabricated");
 

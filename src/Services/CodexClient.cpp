@@ -247,10 +247,12 @@ namespace CodexQuotaBar {
             }
 
             const QuotaWindow& only = primary.available ? primary : secondary;
-            // 官方协议允许不同方案返回任意时长，且单一长周期窗口也可能
-            // 出现在 primary。仅把接近一周的单窗口放到第二行，其他时长
-            // 均保留在第一行并由 UI 按实际时长命名，不能因不是 5 小时而丢弃。
-            if (only.windowDurationMins >= 6 * 24 * 60) {
+            const bool freePlan = bucket.has_key(L"planType") &&
+                bucket[L"planType"].is_string() &&
+                bucket[L"planType"].as_string() == L"free";
+            // 免费方案的唯一窗口代表该账户当前可用的全部额度，应固定显示
+            // 在第一行；其他方案仅在只返回周级长周期时使用第二行。
+            if (!freePlan && only.windowDurationMins >= 6 * 24 * 60) {
                 snap.weekly = only;
             } else {
                 snap.window = only;

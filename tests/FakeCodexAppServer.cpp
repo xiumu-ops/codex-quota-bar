@@ -73,12 +73,12 @@ int main(int argc, char** argv) {
             // 无关通知应被客户端忽略，随后再读取 id=2 的真正响应。
             std::cout << "{\"method\":\"account/rateLimits/updated\",\"params\":{}}" << std::endl;
             if (scenario == "free_single_window") {
-                // 免费方案可只返回一个非 5 小时窗口；按 limitId 的结果优先于兼容字段。
+                // 免费方案的唯一额度即使返回周级时长，也应固定放在第一行。
                 std::cout
                     << "{\"id\":2,\"result\":{"
-                       "\"rateLimits\":{\"primary\":{\"usedPercent\":99,\"windowDurationMins\":60,\"resetsAt\":1893456000},\"secondary\":null},"
+                       "\"rateLimits\":{\"primary\":{\"usedPercent\":99,\"windowDurationMins\":10080,\"resetsAt\":1893456000},\"secondary\":null},"
                        "\"rateLimitsByLimitId\":{\"codex\":{"
-                       "\"primary\":{\"usedPercent\":44,\"windowDurationMins\":60,\"resetsAt\":1893456000},"
+                       "\"primary\":{\"usedPercent\":44,\"windowDurationMins\":10080,\"resetsAt\":1893456000},"
                        "\"secondary\":null,\"planType\":\"free\"}},"
                        "\"rateLimitResetCredits\":null}}"
                     << std::endl;

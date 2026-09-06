@@ -6,7 +6,7 @@
 [![Direct2D](https://img.shields.io/badge/Graphics-Direct2D%20%2F%20DirectWrite-success.svg)](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-portal)
 [![Remote Build](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml/badge.svg)](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml)
 
-基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：通过 Codex 官方 App Server 实时展示账户实际返回的配额周期、额度重置时间、Token 活动统计与同步状态，并可选择是否置顶显示。
+基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态，并可选择是否置顶显示。
 
 本项目是独立的第三方开源工具，与 OpenAI 不存在隶属或背书关系。参阅[修改日志](CHANGELOG.md)、[隐私政策](PRIVACY.md)和[代码签名政策](CODE_SIGNING_POLICY.md)。
 
@@ -17,7 +17,7 @@
 ![Codex-Quota-Bar 折叠状态](assets/screenshots/quota-bar-collapsed.png)
 
 - **核心功能**：
-  - **额度进度直观呈现**：双色指示条展示账户当前可用配额窗口的剩余百分比与胶囊进度条；窗口名称按官方返回的实际时长显示。
+  - **额度进度直观呈现**：双色指示条展示窗口额度与每周额度的剩余百分比和胶囊进度条；免费方案返回的唯一额度显示在“窗口使用限额”。
   - **重置时间精准提示**：显示重置时间点（如 `重置 18:45` 或 `重置 08月29日 18:45`），清晰掌握额度重置周期。
   - **状态指示灯与文字**：实时反馈同步健康状态（🟢 成功 / 🟡 同步中 / 🔴 失败 / ⚪ 等待）。
 - **交互方式**：
@@ -32,7 +32,7 @@
 ![Codex-Quota-Bar 展开状态](assets/screenshots/quota-bar-expanded.png)
 
 - **核心功能**：
-  - **精细额度指标**：展示官方为当前账户方案返回的短期与长期限额、精确百分比及重置时刻；只有一个配额窗口时不会虚构第二项数据。
+  - **精细额度指标**：展示窗口限额与每周限额的精确百分比及重置时刻；免费方案只有一个额度窗口时，“每周使用限额”明确显示官方当前未返回。
   - **Token 使用统计卡片**：聚合展示累计 Token（`累计tokens`）、单日峰值 Token（`峰值tokens`）以及最长连续对话时长（`最长聊天`），数值智能折算（`K` / `M` / `B` / `T`）。
   - **重置额度卡片 (Reset Credits)**：展示账户可用额度重置次数（`重置次数`）、最早过期时间（`过期时间`）及剩余有效天数（`剩余天数`）。
 - **交互方式**：
@@ -291,8 +291,8 @@ codex app-server
   → initialize
   → initialized
   → account/rateLimits/read
-  → 优先读取 rateLimitsByLimitId.codex，保留实际返回的一个或两个任意时长窗口
-  → 按 windowDurationMins 动态命名额度周期（各行中部的重置时间取自对应限额的 resetAt）
+  → 优先读取 rateLimitsByLimitId.codex，保留实际返回的一个或两个额度窗口
+  → 免费方案的唯一额度映射为“窗口使用限额”，未返回的“每周使用限额”保持不可用
   → 读取 rateLimitResetCredits.availableCount 与 credits[].expiresAt
   → account/usage/read
   → 读取 lifetimeTokens / peakDailyTokens / longestRunningTurnSec / currentStreakDays
