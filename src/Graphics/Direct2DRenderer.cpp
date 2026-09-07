@@ -408,6 +408,9 @@ namespace CodexQuotaBar {
             DiscardDeviceResources();
         } else if (SUCCEEDED(hr)) {
             hr = PresentLayeredWindow();
+            if (FAILED(hr)) {
+                DiscardDeviceResources();
+            }
         }
         return hr;
     }

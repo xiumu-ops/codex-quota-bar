@@ -45,11 +45,12 @@ namespace {
                lower.find(L"\\bin\\") == std::wstring::npos;
     }
 
-    bool CompanionMode::IsDesktopRunning() {
+    DesktopProcessState CompanionMode::ProbeDesktopState() {
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snapshot == INVALID_HANDLE_VALUE) return false;
+        if (snapshot == INVALID_HANDLE_VALUE) return DesktopProcessState::QueryFailed;
 
         bool found = false;
+        bool queryFailed = false;
         PROCESSENTRY32W entry = {};
         entry.dwSize = sizeof(entry);
         if (Process32FirstW(snapshot, &entry)) {
@@ -61,14 +62,20 @@ namespace {
 
                 HANDLE process = OpenProcess(
                     PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
-                if (!process) continue;
+                if (!process) {
+                    queryFailed = true;
+                    continue;
+                }
 
                 std::wstring path(32768, L'\0');
                 DWORD length = static_cast<DWORD>(path.size());
                 const BOOL queried = QueryFullProcessImageNameW(
                     process, 0, path.data(), &length);
                 CloseHandle(process);
-                if (!queried || length == 0) continue;
+                if (!queried || length == 0) {
+                    queryFailed = true;
+                    continue;
+                }
 
                 path.resize(length);
                 if (IsDesktopExecutablePath(path)) {
@@ -76,9 +83,18 @@ namespace {
                     break;
                 }
             } while (Process32NextW(snapshot, &entry));
+        } else if (GetLastError() != ERROR_NO_MORE_FILES) {
+            queryFailed = true;
         }
         CloseHandle(snapshot);
-        return found;
+        if (found) return DesktopProcessState::Running;
+        return queryFailed
+            ? DesktopProcessState::QueryFailed
+            : DesktopProcessState::NotRunning;
+    }
+
+    bool CompanionMode::IsDesktopRunning() {
+        return ProbeDesktopState() == DesktopProcessState::Running;
     }
 
     bool CompanionMode::ConfigureAutoStart(bool enabled) {

@@ -8,6 +8,8 @@
 
 using CodexQuotaBar::CodexClient;
 using CodexQuotaBar::CompanionMode;
+using CodexQuotaBar::COMPANION_MISSING_POLL_THRESHOLD;
+using CodexQuotaBar::DesktopProcessState;
 using CodexQuotaBar::QuotaSnapshot;
 
 namespace {
@@ -46,6 +48,12 @@ int wmain(int argc, wchar_t** argv) {
     _wputenv_s(L"CODEX_QUOTA_CODEX_PATH", argv[1]);
 
     std::cout << "Companion desktop-process classification\n";
+    Expect(COMPANION_MISSING_POLL_THRESHOLD == 3,
+           "companion mode tolerates three consecutive missing polls");
+    Expect(static_cast<int>(DesktopProcessState::NotRunning) == 0 &&
+               static_cast<int>(DesktopProcessState::Running) == 1 &&
+               static_cast<int>(DesktopProcessState::QueryFailed) == 2,
+           "companion process probe states have stable message values");
     Expect(CompanionMode::IsDesktopExecutablePath(
                L"C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0_x64__test\\app\\ChatGPT.exe"),
            "packaged Codex ChatGPT host is recognized");

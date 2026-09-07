@@ -155,7 +155,7 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
     "MiniMode": false,
     "RefreshIntervalMinutes": 5
   },
-  "Window": { "X": 120, "Y": 80 }
+  "Window": { "X": 120, "Y": 2000000000 }
 }
 '@
 
@@ -176,7 +176,7 @@ try {
                 $config.Settings.AlwaysOnTop -eq $false -and
                 $config.Settings.MiniMode -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
-                $config.Window.X -eq 120 -and $config.Window.Y -eq 80
+                $config.Window.X -eq 120 -and $config.Window.Y -eq 2000000000
     if ($configOk) {
         Write-Host "  [PASS] 用户配置与默认配置组合读取正常" -ForegroundColor Green
     } else {
@@ -203,6 +203,7 @@ public static class CqbNative {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out CqbRect rect);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out CqbPoint point);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, out CqbRect rect, uint flags);
 }
 "@
 
@@ -222,6 +223,18 @@ $savedCursor = [CqbPoint]::new()
 [void][CqbNative]::GetCursorPos([ref]$savedCursor)
 try {
     if ($hwnd -eq [IntPtr]::Zero) { throw "Main window handle is unavailable" }
+
+    $workArea = [CqbRect]::new()
+    if (-not [CqbNative]::SystemParametersInfo(48, 0, [ref]$workArea, 0)) {
+        throw "SystemParametersInfo(SPI_GETWORKAREA) failed"
+    }
+    $initialRect = Get-CqbWindowRect $hwnd
+    if ($initialRect.Bottom -le $workArea.Bottom) {
+        Write-Host "  [PASS] 非置顶窗口启动位置受工作区约束" -ForegroundColor Green
+    } else {
+        Write-Host "  [FAIL] 非置顶窗口仍可被任务栏完全遮挡" -ForegroundColor Red
+        $script:Failures++
+    }
 
     $extendedStyle = [CqbNative]::GetWindowLongPtr($hwnd, -20).ToInt64()
     if (($extendedStyle -band 0x8) -eq 0) {

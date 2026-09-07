@@ -41,7 +41,7 @@ namespace CodexQuotaBar {
 
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
-        constexpr int kCompanionMissingPollThreshold = 1; // 首次轮询未发现即隐藏（最长约 2 秒）
+        constexpr int kRenderRetryLimit = 3;
         // 数值 → 最接近档位索引（配置读回时归一）
         int ClosestScaleLevel(float value) {
             int best = DEFAULT_USER_SCALE_LEVEL;
@@ -430,6 +430,9 @@ namespace CodexQuotaBar {
             m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        if (!m_settings.alwaysOnTop) {
+            OnWindowMoved();
+        }
     }
 
     void MainWindow::ToggleMiniMode() {
@@ -466,6 +469,7 @@ namespace CodexQuotaBar {
         m_settings.companionMode = m_companionMode;
         SaveSettingsWithFeedback();
         m_codexMissingPolls = 0;
+        m_companionProbeFailures = 0;
 
         if (m_companionMode) {
             m_codexDesktopRunning = false;
@@ -488,9 +492,14 @@ namespace CodexQuotaBar {
         const HWND hwnd = m_hwnd.load();
         try {
             std::thread([state, hwnd]() {
-                const bool running = CompanionMode::IsDesktopRunning();
+                const DesktopProcessState processState =
+                    CompanionMode::ProbeDesktopState();
                 if (state->canceled.load() ||
-                    !PostMessageW(hwnd, WM_CQB_COMPANION_RESULT, running ? 1 : 0, 0)) {
+                    !PostMessageW(
+                        hwnd,
+                        WM_CQB_COMPANION_RESULT,
+                        static_cast<WPARAM>(processState),
+                        0)) {
                     state->inFlight = false;
                 }
             }).detach();
@@ -500,11 +509,21 @@ namespace CodexQuotaBar {
         }
     }
 
-    void MainWindow::HandleCompanionResult(bool running) {
+    void MainWindow::HandleCompanionResult(DesktopProcessState state) {
         m_companionPollState->inFlight = false;
         if (!m_companionMode || m_shuttingDown.load()) return;
 
-        if (running) {
+        if (state == DesktopProcessState::QueryFailed) {
+            if (m_companionProbeFailures++ == 0) {
+                WriteLog(
+                    LogLevel::Warning,
+                    L"伴随模式暂时无法查询 Codex 桌面进程；保持当前显示状态。");
+            }
+            return;
+        }
+        m_companionProbeFailures = 0;
+
+        if (state == DesktopProcessState::Running) {
             const bool wasRunning = m_codexDesktopRunning;
             m_codexDesktopRunning = true;
             m_codexMissingPolls = 0;
@@ -516,12 +535,17 @@ namespace CodexQuotaBar {
             return;
         }
 
-        if (m_codexMissingPolls < kCompanionMissingPollThreshold) {
+        if (m_codexMissingPolls < COMPANION_MISSING_POLL_THRESHOLD) {
             ++m_codexMissingPolls;
         }
-        if (m_codexMissingPolls >= kCompanionMissingPollThreshold) {
+        if (m_codexMissingPolls >= COMPANION_MISSING_POLL_THRESHOLD) {
             m_codexDesktopRunning = false;
-            if (IsWindowVisible(m_hwnd)) Hide();
+            if (IsWindowVisible(m_hwnd)) {
+                WriteLog(
+                    LogLevel::Info,
+                    L"伴随模式连续三次未检测到 Codex 桌面端，隐藏额度栏。");
+                Hide();
+            }
         }
     }
 
@@ -542,7 +566,7 @@ namespace CodexQuotaBar {
         HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
-        RECT area = mi.rcMonitor;
+        const RECT area = m_settings.alwaysOnTop ? mi.rcMonitor : mi.rcWork;
 
         POINT clamped = pt;
         if (clamped.x < area.left) clamped.x = area.left;
@@ -972,7 +996,7 @@ namespace CodexQuotaBar {
         }
 
         case WM_CQB_COMPANION_RESULT:
-            HandleCompanionResult(wParam != 0);
+            HandleCompanionResult(static_cast<DesktopProcessState>(wParam));
             return 0;
 
         case 0x02E0: // WM_DPICHANGED
@@ -1018,11 +1042,27 @@ namespace CodexQuotaBar {
 
         HRESULT hr = m_renderer->Render(
             m_expanded, m_settings.miniMode, m_snapshot, m_syncState);
-        if (hr == D2DERR_RECREATE_TARGET) {
-            InvalidateRect(m_hwnd, NULL, FALSE);
+        EndPaint(m_hwnd, &ps);
+
+        if (SUCCEEDED(hr)) {
+            m_renderFailureCount = 0;
+            return;
         }
 
-        EndPaint(m_hwnd, &ps);
+        ++m_renderFailureCount;
+        if (m_renderFailureCount <= kRenderRetryLimit) {
+            wchar_t message[128] = {};
+            swprintf_s(
+                message,
+                L"分层窗口渲染失败（HRESULT=0x%08X），正在重试（%d/%d）。",
+                static_cast<unsigned>(hr),
+                m_renderFailureCount,
+                kRenderRetryLimit);
+            WriteLog(LogLevel::Warning, message);
+            InvalidateRect(m_hwnd, NULL, FALSE);
+        } else if (m_renderFailureCount == kRenderRetryLimit + 1) {
+            WriteLog(LogLevel::Error, L"分层窗口连续渲染失败，已停止自动重试。");
+        }
     }
 
 } // namespace CodexQuotaBar

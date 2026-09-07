@@ -224,6 +224,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         } else if (cmd == L"TOGGLE") {
             return PostMessageW(hwnd, WM_CQB_TOGGLE, 0, 0) ? L"OK" : L"ERROR";
         } else if (cmd == L"EXIT") {
+            WriteLog(LogLevel::Info, L"收到 IPC 退出请求。");
             return PostMessageW(hwnd, WM_CLOSE, 0, 0) ? L"OK" : L"ERROR";
         }
         return L"UNKNOWN";
@@ -258,7 +259,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     pipeServer.Stop();
     mainWindow->BeginShutdown();
     mainWindow.reset();
-    WriteLog(LogLevel::Info, L"Codex-Quota-Bar 已正常退出。");
+    WriteLog(
+        getMessageResult == -1 ? LogLevel::Error : LogLevel::Info,
+        getMessageResult == -1
+            ? L"Codex-Quota-Bar 因消息循环错误退出。"
+            : L"Codex-Quota-Bar 已正常退出。");
     if (comInitialized) CoUninitialize();
 
     if (hMutex) {

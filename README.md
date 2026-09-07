@@ -106,14 +106,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.7.5：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.7.6：
 
 ```powershell
-git tag -a v2.7.5 -m "Codex-Quota-Bar 2.7.5"
-git push origin v2.7.5
+git tag -a v2.7.6 -m "Codex-Quota-Bar 2.7.6"
+git push origin v2.7.6
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.7.5.exe` 与 `Codex-Quota-Bar_version_2.7.5.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.7.6.exe` 与 `Codex-Quota-Bar_version_2.7.6.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -141,7 +141,7 @@ CHANGELOG.md  各版本新增、变更与修复记录
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.7.5.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.7.6.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -185,8 +185,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.7.5.exe
-dist\Release\Codex-Quota-Bar_version_2.7.5.sha256
+dist\Release\Codex-Quota-Bar_version_2.7.6.exe
+dist\Release\Codex-Quota-Bar_version_2.7.6.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。

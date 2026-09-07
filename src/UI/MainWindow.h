@@ -13,6 +13,8 @@
 
 namespace CodexQuotaBar {
 
+    enum class DesktopProcessState;
+
     // 跨线程消息：工作线程通过 PostMessage 投递，全部由 UI 线程消费
     constexpr UINT WM_CQB_REFRESH = WM_APP + 1;      // wParam=0
     constexpr UINT WM_CQB_STATS = WM_APP + 3;        // 数据从线程安全待处理槽读取
@@ -57,7 +59,7 @@ namespace CodexQuotaBar {
         void ToggleAlwaysOnTop();
         void ToggleCompanionMode();
         void PollCompanionMode();
-        void HandleCompanionResult(bool running);
+        void HandleCompanionResult(DesktopProcessState state);
         void OnWindowMoved();
         void HandleContextMenu(int screenX, int screenY);
         bool IsHeaderArea(POINT pt) const;
@@ -89,6 +91,8 @@ namespace CodexQuotaBar {
         bool m_companionMode = false;
         bool m_codexDesktopRunning = false;
         int m_codexMissingPolls = 0;
+        int m_companionProbeFailures = 0;
+        int m_renderFailureCount = 0;
 
         bool m_expanded = false;
         POINT m_collapsedLocation = { 0, 0 };
