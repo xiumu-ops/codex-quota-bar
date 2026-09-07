@@ -150,8 +150,8 @@ namespace CodexQuotaBar {
 
         if (!m_hwnd) return false;
 
-        // Windows 11 DWM 硬件级圆角
-        int cornerPref = DWMWCP_ROUND;
+        // Windows 11 DWM 硬件级圆角：分层窗口由自身 Alpha 通道控制圆角，禁用系统级圆角以杜绝暗色虚边
+        int cornerPref = DWMWCP_DONOTROUND;
         DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPref, sizeof(cornerPref));
 
         // 初始化 Direct2D 渲染器

@@ -385,9 +385,10 @@ namespace CodexQuotaBar {
             }
         }
 
-        // 3. 亮白圆角外描边
+        // 3. 亮白圆角外描边（内缩 0.5px 时半径同步减半，保证内外同心）
+        const float strokeRadius = (std::max)(0.0f, outerRadius - 0.5f);
         D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
-            D2D1::RectF(0.5f, 0.5f, w - 0.5f, h - 0.5f), outerRadius, outerRadius);
+            D2D1::RectF(0.5f, 0.5f, w - 0.5f, h - 0.5f), strokeRadius, strokeRadius);
         m_pRenderTarget->DrawRoundedRectangle(outer, m_pBrushBorder.Get(), 1.0f);
 
         hr = m_pRenderTarget->EndDraw();
@@ -693,7 +694,7 @@ namespace CodexQuotaBar {
         float padX = ScaleF(8.0f, m_dpiScale);
         float w = static_cast<float>(m_width);
         float cardW = w - padX * 2.0f;
-        float cardCorner = ScaleF(12.0f, m_dpiScale);
+        float cardCorner = ScaleF(6.0f, m_dpiScale);
 
         D2D1_ROUNDED_RECT subCardRect = D2D1::RoundedRect(D2D1::RectF(padX, topY, padX + cardW, topY + height), cardCorner, cardCorner);
         m_pRenderTarget->FillRoundedRectangle(subCardRect, m_pBrushStatsCardBg.Get());
@@ -736,7 +737,7 @@ namespace CodexQuotaBar {
         float padX = ScaleF(8.0f, m_dpiScale);
         float w = static_cast<float>(m_width);
         float cardW = w - padX * 2.0f;
-        float cardCorner = ScaleF(12.0f, m_dpiScale);
+        float cardCorner = ScaleF(6.0f, m_dpiScale);
 
         D2D1_ROUNDED_RECT subCardRect = D2D1::RoundedRect(D2D1::RectF(padX, topY, padX + cardW, topY + height), cardCorner, cardCorner);
         m_pRenderTarget->FillRoundedRectangle(subCardRect, m_pBrushStatsCardBg.Get());

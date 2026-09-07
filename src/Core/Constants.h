@@ -2,8 +2,8 @@
 
 namespace CodexQuotaBar {
 
-    inline constexpr wchar_t APP_VERSION[] = L"2.7.1";
-    inline constexpr char APP_VERSION_UTF8[] = "2.7.1";
+    inline constexpr wchar_t APP_VERSION[] = L"2.7.2";
+    inline constexpr char APP_VERSION_UTF8[] = "2.7.2";
     inline constexpr wchar_t PIPE_NAME_PREFIX[] = L"\\\\.\\pipe\\Codex-Quota-Bar_Pipe_";
     inline constexpr wchar_t MUTEX_NAME[] = L"Local\\Codex-Quota-Bar_Mutex_Session";
 
@@ -16,6 +16,6 @@ namespace CodexQuotaBar {
     constexpr int MINI_DUAL_WIDTH = 240;
     constexpr int MINI_SINGLE_WIDTH = 120;
     constexpr int MINI_HEIGHT = 48;
-    constexpr int CORNER_RADIUS = 16;
+    constexpr int CORNER_RADIUS = 8;
 
 } // namespace CodexQuotaBar
