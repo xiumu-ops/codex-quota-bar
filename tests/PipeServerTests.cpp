@@ -48,10 +48,24 @@ int main() {
     Expect(PipeServer::SendCommand(name, L"PING " + std::wstring(3000, L'x'), 2000) == L"OK",
            "command larger than the pipe buffer succeeds");
 
-    WaitNamedPipeW(name.c_str(), 2000);
-    HANDLE silent = CreateFileW(
-        name.c_str(), GENERIC_READ | GENERIC_WRITE | READ_CONTROL, 0, nullptr,
-        OPEN_EXISTING, 0, nullptr);
+    HANDLE silent = INVALID_HANDLE_VALUE;
+    const ULONGLONG connectDeadline = GetTickCount64() + 3000;
+    while (GetTickCount64() < connectDeadline) {
+        silent = CreateFileW(
+            name.c_str(), GENERIC_READ | GENERIC_WRITE | READ_CONTROL, 0, nullptr,
+            OPEN_EXISTING, 0, nullptr);
+        if (silent != INVALID_HANDLE_VALUE) {
+            break;
+        }
+        const DWORD err = GetLastError();
+        if (err == ERROR_PIPE_BUSY) {
+            WaitNamedPipeW(name.c_str(), 100);
+        } else if (err == ERROR_FILE_NOT_FOUND) {
+            Sleep(10);
+        } else {
+            break;
+        }
+    }
     Expect(silent != INVALID_HANDLE_VALUE, "silent client connects");
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     PACL dacl = nullptr;
