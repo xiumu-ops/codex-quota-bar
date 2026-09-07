@@ -433,7 +433,6 @@ namespace CodexQuotaBar {
         const float pillTop = pad;
         const float pillBottom = static_cast<float>(m_height) - pad;
         const float pillW = (std::max)(0.0f, pillRight - pillLeft);
-        const float pillH = (std::max)(0.0f, pillBottom - pillTop);
         const float pillRadius = ScaleF(5.0f, m_dpiScale);
 
         // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观逻辑）
