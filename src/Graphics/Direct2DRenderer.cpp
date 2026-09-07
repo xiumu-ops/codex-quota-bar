@@ -428,31 +428,53 @@ namespace CodexQuotaBar {
             : L"---";
 
         const float pad = ScaleF(4.0f, m_dpiScale);
-        const float contentX = left + pad;
-        const float contentW = (std::max)(0.0f, width - pad * 2.0f);
-        const float contentRight = contentX + contentW;
-        const float fontH = ScaleF(20.0f, m_dpiScale);
+        const float pillLeft = left + pad;
+        const float pillRight = left + width - pad;
+        const float pillTop = pad;
+        const float pillBottom = static_cast<float>(m_height) - pad;
+        const float pillW = (std::max)(0.0f, pillRight - pillLeft);
+        const float pillH = (std::max)(0.0f, pillBottom - pillTop);
+        const float pillRadius = ScaleF(5.0f, m_dpiScale);
 
+        // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观逻辑）
+        const D2D1_ROUNDED_RECT pillRect = D2D1::RoundedRect(
+            D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),
+            pillRadius, pillRadius);
+        m_pRenderTarget->FillRoundedRectangle(pillRect, m_pBrushTrackBg.Get());
+
+        // 2. 拓宽内部进度条（接入已有 ProgressBrushFor 色彩梯度与自定义外观逻辑）
+        if (window.available && window.remainingPercent > 0.0) {
+            float fillW = std::max(pillRadius * 2.0f, pillW * static_cast<float>(window.remainingPercent / 100.0));
+            fillW = std::min(fillW, pillW);
+            ID2D1SolidColorBrush* statusBrush = ProgressBrushFor(window.remainingPercent);
+            if (statusBrush && m_pBrushHalo) {
+                D2D1_COLOR_F tintColor = statusBrush->GetColor();
+                tintColor.a = 0.32f;
+                m_pBrushHalo->SetColor(tintColor);
+
+                m_pRenderTarget->PushAxisAlignedClip(
+                    D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                const D2D1_ROUNDED_RECT fillRect = D2D1::RoundedRect(
+                    D2D1::RectF(pillLeft, pillTop, pillLeft + fillW, pillBottom),
+                    pillRadius, pillRadius);
+                m_pRenderTarget->FillRoundedRectangle(fillRect, m_pBrushHalo.Get());
+                m_pRenderTarget->PopAxisAlignedClip();
+            }
+        }
+
+        // 3. 百分比文字（大小保持 16px Bold 不变，在胶囊内实现像素级水平与垂直双向绝对居中）
         if (m_pFontRowValueBold) {
             m_pFontRowValueBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_pFontRowValueBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            const D2D1_RECT_F valueRect = D2D1::RectF(
-                contentX,
-                pad,
-                contentRight,
-                pad + fontH);
+            const D2D1_RECT_F textRect = D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom);
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
             m_pRenderTarget->DrawTextW(
                 value.c_str(), static_cast<UINT32>(value.size()),
-                m_pFontRowValueBold.Get(), valueRect, brush);
+                m_pFontRowValueBold.Get(), textRect, brush);
         }
-
-        const float trackTop = pad + fontH + pad;
-        const float trackH = pad;
-        DrawProgressTrack(
-            contentX, trackTop, contentW, window, trackH);
     }
 
     void Direct2DRenderer::DrawSyncIndicator(float topY, SyncState state) {

@@ -434,8 +434,8 @@ try {
                     if ($miniHwnd -ne [IntPtr]::Zero) {
                         $miniRect = Get-CqbWindowRect $miniHwnd
                         $dpiScale = [CqbNative]::GetDpiForWindow($miniHwnd) / 96.0
-                        $expectedMiniWidth = [int][Math]::Round(140 * $dpiScale)
-                        $expectedMiniHeight = [int][Math]::Round(36 * $dpiScale)
+                        $expectedMiniWidth = [int][Math]::Round(112 * $dpiScale)
+                        $expectedMiniHeight = [int][Math]::Round(28 * $dpiScale)
                         $miniSizeOk = ($miniRect.Right - $miniRect.Left) -eq $expectedMiniWidth -and
                                       ($miniRect.Bottom - $miniRect.Top) -eq $expectedMiniHeight
                         if ($miniSizeOk) { break }
@@ -443,7 +443,7 @@ try {
                     Start-Sleep -Milliseconds 100
                 }
                 if ($miniSizeOk) {
-                    Write-Host "  [PASS] 双额度迷你栏使用 140 x 36 逻辑尺寸" -ForegroundColor Green
+                    Write-Host "  [PASS] 双额度迷你栏使用 112 x 28 逻辑尺寸" -ForegroundColor Green
                 } else {
                     Write-Host "  [FAIL] 双额度迷你栏尺寸不正确" -ForegroundColor Red
                     $script:Failures++
