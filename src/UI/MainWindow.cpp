@@ -122,7 +122,7 @@ namespace CodexQuotaBar {
 
         WNDCLASSEXW wc = { 0 };
         wc.cbSize = sizeof(WNDCLASSEXW);
-        wc.style = CS_DBLCLKS | CS_DROPSHADOW;
+        wc.style = CS_DBLCLKS;
         wc.lpfnWndProc = &MainWindow::WndProcSetup;
         wc.hInstance = hInstance;
         wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
@@ -137,8 +137,17 @@ namespace CodexQuotaBar {
             }
         }
 
-        int initW = Scale(BAR_WIDTH, 1.0f);
-        int initH = Scale(COLLAPSED_HEIGHT, 1.0f);
+        // 读取用户设置（提前读取以精确确定初始窗口几何尺寸与显示模式）
+        std::wstring settingsErrors;
+        m_settings = ConfigStore::LoadSettings(&settingsErrors);
+        m_userScaleLevel = ClosestScaleLevel(m_settings.userScale);
+        m_refreshIntervalLevel = ClosestRefreshIntervalLevel(m_settings.refreshIntervalMinutes);
+        m_companionMode = m_settings.companionMode;
+        m_codexDesktopRunning = false;
+
+        const SIZE initialLogical = LogicalWindowSize();
+        int initW = Scale(static_cast<float>(initialLogical.cx), 1.0f);
+        int initH = Scale(static_cast<float>(initialLogical.cy), 1.0f);
 
         m_hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
@@ -150,7 +159,7 @@ namespace CodexQuotaBar {
 
         if (!m_hwnd) return false;
 
-        // Windows 11 DWM 硬件级圆角与流体立体阴影（与右键菜单统一）
+        // Windows 11 DWM 硬件级圆角与流体立体阴影（由 DWM 统一呈现 360° 原生柔和阴影，与右键菜单架构同构）
         int cornerPref = DWMWCP_ROUND;
         DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPref, sizeof(cornerPref));
 
@@ -162,13 +171,6 @@ namespace CodexQuotaBar {
             return false;
         }
 
-        // 读取用户设置
-        std::wstring settingsErrors;
-        m_settings = ConfigStore::LoadSettings(&settingsErrors);
-        m_userScaleLevel = ClosestScaleLevel(m_settings.userScale);
-        m_refreshIntervalLevel = ClosestRefreshIntervalLevel(m_settings.refreshIntervalMinutes);
-        m_companionMode = m_settings.companionMode;
-        m_codexDesktopRunning = false;
         SetWindowPos(
             m_hwnd,
             m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
@@ -193,7 +195,7 @@ namespace CodexQuotaBar {
                 Scale(static_cast<float>(logical.cy), m_uiScale)
             };
             POINT clamped = ClampToScreens(stored.position, sz);
-            SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             m_collapsedLocation = clamped;
         } else {
             RECT rcWork;
@@ -203,7 +205,7 @@ namespace CodexQuotaBar {
             int h = Scale(static_cast<float>(logical.cy), m_uiScale);
             int x = rcWork.left + (rcWork.right - rcWork.left - w) / 2;
             int y = rcWork.top + 34;
-            SetWindowPos(m_hwnd, NULL, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(m_hwnd, NULL, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             m_collapsedLocation = { x, y };
         }
         m_hasCollapsedLocation = true;
@@ -259,7 +261,7 @@ namespace CodexQuotaBar {
         int targetH = Scale(static_cast<float>(logical.cy), m_uiScale);
 
         SetWindowPos(m_hwnd, NULL, 0, 0, targetW, targetH,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_FRAMECHANGED);
         m_renderer->Resize(targetW, targetH);
         InvalidateRect(m_hwnd, NULL, FALSE);
     }
@@ -593,7 +595,7 @@ namespace CodexQuotaBar {
             m_hwnd, NULL,
             targetLeft, targetTop,
             targetW, targetH,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_FRAMECHANGED);
 
         m_renderer->Resize(targetW, targetH);
         RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -605,7 +607,7 @@ namespace CodexQuotaBar {
         POINT pt = { rc.left, rc.top };
         SIZE sz = { rc.right - rc.left, rc.bottom - rc.top };
         POINT clamped = ClampToScreens(pt, sz);
-        SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
         m_collapsedLocation = clamped;
         m_hasCollapsedLocation = true;
