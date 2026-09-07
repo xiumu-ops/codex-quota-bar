@@ -11,11 +11,12 @@
 
 namespace CodexQuotaBar {
 
-    // 主窗口与右键菜单共用同一种系统投影机制。
-    inline constexpr UINT POPUP_SHADOW_CLASS_STYLE = CS_DROPSHADOW;
-
-    inline void ApplyPopupWindowEffects(HWND hwnd) {
-        const int cornerPreference = DWMWCP_ROUND;
+    // 主窗口与右键菜单均由 DWM 提供原生投影。不要叠加 CS_DROPSHADOW：它的固定向下
+    // 偏移会在低高度迷你栏两侧形成明显的上下阴影断层。
+    inline void ApplyPopupWindowEffects(HWND hwnd, bool useSmallCorner = false) {
+        const int cornerPreference = useSmallCorner
+            ? DWMWCP_ROUNDSMALL
+            : DWMWCP_ROUND;
         DwmSetWindowAttribute(
             hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,

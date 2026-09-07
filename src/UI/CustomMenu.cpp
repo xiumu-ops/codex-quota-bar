@@ -288,7 +288,7 @@ namespace CodexQuotaBar {
         if (!registered) {
             WNDCLASSEXW wc = { 0 };
             wc.cbSize = sizeof(WNDCLASSEXW);
-            wc.style = POPUP_SHADOW_CLASS_STYLE;
+            wc.style = 0;
             wc.lpfnWndProc = &MenuWndProc;
             wc.hInstance = GetModuleHandleW(NULL);
             wc.hCursor = LoadCursor(NULL, IDC_ARROW);

@@ -73,26 +73,42 @@ int main() {
     Expect(MiniQuotaSlotCount(twoQuotas) == 2, "two quotas use two mini slots");
     Expect(MiniBarLogicalWidth(twoQuotas) == MINI_DUAL_WIDTH,
            "two quotas use full-width mini bar");
+    Expect(MiniBarPhysicalWidth(twoQuotas, 0.75f) == 84,
+           "75% dual mini bar combines two equal physical slots");
+    Expect(MiniBarPhysicalWidth(twoQuotas, 1.125f) == 126,
+           "112.5% dual mini bar combines two equal physical slots");
+    Expect(MiniBarPhysicalWidth(twoQuotas, 1.5625f) == 176,
+           "fractional DPI and user scaling preserve equal physical slots");
+    Expect(MiniBarPhysicalWidth(oneQuota, 1.5625f) == 88,
+           "single mini slot matches half of dual width at fractional scale");
 
     const MiniBarMetrics miniAt75 = ScaledMiniBarMetrics(0.75f);
     Expect(miniAt75.outerCornerRadius == 6.0f,
            "mini outer corner follows 75% user scale");
     Expect(miniAt75.contentInset == 3.0f,
            "mini content inset follows 75% user scale");
-    Expect(miniAt75.pillCornerRadius == 3.75f,
-           "mini pill corner follows 75% user scale");
-    Expect(miniAt75.dividerThickness == 0.75f,
-           "mini divider follows 75% user scale");
+    Expect(miniAt75.pillCornerRadius == 3.0f,
+           "mini pill corner weakens on the physical pixel grid at 75%");
+    Expect(miniAt75.dividerThickness == 1.0f,
+           "mini divider remains one visible physical pixel at 75%");
+    Expect(miniAt75.outerBorderThickness == 1.0f,
+           "mini border remains one visible physical pixel at 75%");
+    Expect(MiniDividerHeight(21, miniAt75) == 9.0f,
+           "75% divider only spans the pill's straight center section");
 
     const MiniBarMetrics miniAt125 = ScaledMiniBarMetrics(1.25f);
     Expect(miniAt125.outerCornerRadius == 10.0f,
            "mini outer corner follows 125% user scale");
     Expect(miniAt125.contentInset == 5.0f,
            "mini content inset follows 125% user scale");
-    Expect(miniAt125.pillCornerRadius == 6.25f,
-           "mini pill corner follows 125% user scale");
-    Expect(miniAt125.dividerThickness == 1.25f,
-           "mini divider follows 125% user scale");
+    Expect(miniAt125.pillCornerRadius == 6.0f,
+           "mini pill corner snaps down at 125% scale");
+    Expect(miniAt125.dividerThickness == 1.0f,
+           "mini divider snaps to a physical pixel at 125%");
+    Expect(miniAt125.outerBorderThickness == 1.0f,
+           "mini border snaps to a physical pixel at 125%");
+    Expect(MiniDividerHeight(35, miniAt125) == 13.0f,
+           "125% divider only spans the pill's straight center section");
 
     Expect(IsSupportedUserScale(0.75), "minimum UI scale accepted");
     Expect(IsSupportedUserScale(1.25), "maximum UI scale accepted");

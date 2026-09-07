@@ -436,7 +436,7 @@ try {
                     if ($miniHwnd -ne [IntPtr]::Zero) {
                         $miniRect = Get-CqbWindowRect $miniHwnd
                         $dpiScale = [CqbNative]::GetDpiForWindow($miniHwnd) / 96.0
-                        $expectedMiniWidth = [int][Math]::Round(112 * $dpiScale * 1.25)
+                        $expectedMiniWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.25)
                         $expectedMiniHeight = [int][Math]::Round(28 * $dpiScale * 1.25)
                         $miniSizeOk = ($miniRect.Right - $miniRect.Left) -eq $expectedMiniWidth -and
                                       ($miniRect.Bottom - $miniRect.Top) -eq $expectedMiniHeight
@@ -452,10 +452,10 @@ try {
                 }
                 if ($miniHwnd -ne [IntPtr]::Zero) {
                     $classStyle = [CqbNative]::GetClassLongPtr($miniHwnd, -26).ToInt64()
-                    if (($classStyle -band 0x00020000) -ne 0) {
-                        Write-Host "  [PASS] 迷你栏与右键菜单共用系统投影类样式" -ForegroundColor Green
+                    if (($classStyle -band 0x00020000) -eq 0) {
+                        Write-Host "  [PASS] 迷你栏仅使用 DWM 原生投影，无固定下偏阴影" -ForegroundColor Green
                     } else {
-                        Write-Host "  [FAIL] 迷你栏缺少系统投影类样式" -ForegroundColor Red
+                        Write-Host "  [FAIL] 迷你栏仍叠加固定 CS_DROPSHADOW 投影" -ForegroundColor Red
                         $script:Failures++
                     }
                 }

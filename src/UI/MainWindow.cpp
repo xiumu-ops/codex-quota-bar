@@ -123,7 +123,7 @@ namespace CodexQuotaBar {
 
         WNDCLASSEXW wc = { 0 };
         wc.cbSize = sizeof(WNDCLASSEXW);
-        wc.style = CS_DBLCLKS | POPUP_SHADOW_CLASS_STYLE;
+        wc.style = CS_DBLCLKS;
         wc.lpfnWndProc = &MainWindow::WndProcSetup;
         wc.hInstance = hInstance;
         wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
@@ -160,8 +160,8 @@ namespace CodexQuotaBar {
 
         if (!m_hwnd) return false;
 
-        // 与右键菜单使用相同的系统投影及圆角偏好。
-        ApplyPopupWindowEffects(m_hwnd);
+        // 与右键菜单统一使用 DWM 原生投影；低缩放迷你栏使用小圆角档位。
+        ApplyCurrentWindowEffects();
 
         // 初始化 Direct2D 渲染器
         HRESULT rendererHr = m_renderer->Initialize(m_hwnd);
@@ -189,25 +189,21 @@ namespace CodexQuotaBar {
         // 读取持久化窗口位置
         auto stored = ConfigStore::LoadState();
         if (stored.hasPosition) {
-            const SIZE logical = LogicalWindowSize();
-            SIZE sz = {
-                Scale(static_cast<float>(logical.cx), m_uiScale),
-                Scale(static_cast<float>(logical.cy), m_uiScale)
-            };
+            const SIZE sz = PhysicalWindowSize();
             POINT clamped = ClampToScreens(stored.position, sz);
             SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             m_collapsedLocation = clamped;
         } else {
             RECT rcWork;
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
-            const SIZE logical = LogicalWindowSize();
-            int w = Scale(static_cast<float>(logical.cx), m_uiScale);
-            int h = Scale(static_cast<float>(logical.cy), m_uiScale);
+            const SIZE physical = PhysicalWindowSize();
+            int w = physical.cx;
+            int h = physical.cy;
             int x = rcWork.left + (rcWork.right - rcWork.left - w) / 2;
             int y = rcWork.top + 34;
             SetWindowPos(m_hwnd, NULL, x, y, w, h,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             m_collapsedLocation = { x, y };
         }
         m_hasCollapsedLocation = true;
@@ -260,14 +256,17 @@ namespace CodexQuotaBar {
             static_cast<std::size_t>(m_userScaleLevel)];
         m_renderer->SetDpiScale(m_uiScale);
 
-        const SIZE logical = LogicalWindowSize();
-        int targetW = Scale(static_cast<float>(logical.cx), m_uiScale);
-        int targetH = Scale(static_cast<float>(logical.cy), m_uiScale);
+        const SIZE physical = PhysicalWindowSize();
+        int targetW = physical.cx;
+        int targetH = physical.cy;
 
         SetWindowPos(m_hwnd, NULL, 0, 0, targetW, targetH,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_NOCOPYBITS | SWP_FRAMECHANGED);
         m_renderer->Resize(targetW, targetH);
-        InvalidateRect(m_hwnd, NULL, FALSE);
+        ApplyCurrentWindowEffects();
+        RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
+        DwmFlush();
     }
 
     void MainWindow::ApplyUserScale(int level) {
@@ -562,6 +561,27 @@ namespace CodexQuotaBar {
         return { BAR_WIDTH, COLLAPSED_HEIGHT };
     }
 
+    SIZE MainWindow::PhysicalWindowSize() const {
+        if (m_settings.miniMode && !m_expanded) {
+            return {
+                MiniBarPhysicalWidth(m_snapshot, m_uiScale),
+                Scale(static_cast<float>(MINI_HEIGHT), m_uiScale)
+            };
+        }
+        const SIZE logical = LogicalWindowSize();
+        return {
+            Scale(static_cast<float>(logical.cx), m_uiScale),
+            Scale(static_cast<float>(logical.cy), m_uiScale)
+        };
+    }
+
+    void MainWindow::ApplyCurrentWindowEffects() const {
+        const float userScale = USER_SCALE_LEVELS[
+            static_cast<std::size_t>(m_userScaleLevel)];
+        const bool useSmallCorner = m_settings.miniMode && !m_expanded && userScale < 1.0f;
+        ApplyPopupWindowEffects(m_hwnd, useSmallCorner);
+    }
+
     void MainWindow::ToggleExpanded() {
         HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
@@ -584,9 +604,9 @@ namespace CodexQuotaBar {
             m_expanded = false;
         }
 
-        const SIZE logical = LogicalWindowSize();
-        int targetW = Scale(static_cast<float>(logical.cx), m_uiScale);
-        int targetH = Scale(static_cast<float>(logical.cy), m_uiScale);
+        const SIZE physical = PhysicalWindowSize();
+        int targetW = physical.cx;
+        int targetH = physical.cy;
         if (m_expanded && rc.top + targetH > area.bottom) {
             targetTop = std::max<int>(area.top, area.bottom - targetH);
         }
@@ -603,10 +623,13 @@ namespace CodexQuotaBar {
             m_hwnd, NULL,
             targetLeft, targetTop,
             targetW, targetH,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS |
+            SWP_NOREDRAW | SWP_FRAMECHANGED);
 
         m_renderer->Resize(targetW, targetH);
+        ApplyCurrentWindowEffects();
         RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        DwmFlush();
     }
 
     void MainWindow::OnWindowMoved() {

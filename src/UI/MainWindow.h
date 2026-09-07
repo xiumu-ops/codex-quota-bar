@@ -63,6 +63,8 @@ namespace CodexQuotaBar {
         bool IsHeaderArea(POINT pt) const;
         bool IsExpandButtonArea(POINT pt) const;
         SIZE LogicalWindowSize() const;
+        SIZE PhysicalWindowSize() const;
+        void ApplyCurrentWindowEffects() const;
         POINT ClampToScreens(POINT pt, SIZE sz) const;
 
         struct FetchResultState {

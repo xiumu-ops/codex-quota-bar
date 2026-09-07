@@ -390,7 +390,9 @@ namespace CodexQuotaBar {
         }
 
         // 3. 外描边保留在逐像素 Alpha 画面内，确保 OuterBorder 个性配置生效。
-        const float strokeWidth = ScaleF(1.0f, m_dpiScale);
+        const float strokeWidth = miniVisible
+            ? ScaledMiniBarMetrics(m_dpiScale).outerBorderThickness
+            : ScaleF(1.0f, m_dpiScale);
         const float strokeInset = strokeWidth / 2.0f;
         const float strokeRadius = (std::max)(0.0f, outerRadius - strokeInset);
         const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
@@ -419,18 +421,19 @@ namespace CodexQuotaBar {
         if (snapshot.weekly.available) windows[count++] = &snapshot.weekly;
         if (count == 0) windows[count++] = &unavailable;
 
-        const float segmentWidth = static_cast<float>(m_width) / count;
+        const float segmentWidth = static_cast<float>(m_width / count);
         for (int i = 0; i < count; ++i) {
             DrawMiniQuota(segmentWidth * i, segmentWidth, *windows[i]);
         }
 
         if (count == 2) {
             const float dividerX = segmentWidth;
+            const float dividerHeight = MiniDividerHeight(m_height, metrics);
+            const float dividerTop =
+                (static_cast<float>(m_height) - dividerHeight) / 2.0f;
             m_pRenderTarget->DrawLine(
-                D2D1::Point2F(dividerX, metrics.contentInset),
-                D2D1::Point2F(
-                    dividerX,
-                    static_cast<float>(m_height) - metrics.contentInset),
+                D2D1::Point2F(dividerX, dividerTop),
+                D2D1::Point2F(dividerX, dividerTop + dividerHeight),
                 m_pBrushDivider.Get(), metrics.dividerThickness);
         }
     }
@@ -552,11 +555,11 @@ namespace CodexQuotaBar {
         };
 
         DrawQuotaRow(
-            topY + ScaleF(3.0f, m_dpiScale),
+            topY + static_cast<float>(Scale(3.0f, m_dpiScale)),
             L"窗口使用限额", quotaDetail(snapshot.window), snapshot.window);
 
         DrawQuotaRow(
-            topY + ScaleF(33.0f, m_dpiScale),
+            topY + static_cast<float>(Scale(33.0f, m_dpiScale)),
             L"每周使用限额", quotaDetail(snapshot.weekly), snapshot.weekly);
 
         const wchar_t* syncDetail = L"等待";
@@ -654,7 +657,7 @@ namespace CodexQuotaBar {
         const std::wstring& detail,
         const QuotaWindow& window)
     {
-        float padX = ScaleF(8.0f, m_dpiScale);
+        float padX = static_cast<float>(Scale(8.0f, m_dpiScale));
         float w = static_cast<float>(m_width);
         float rightX = w - padX;
 
@@ -697,7 +700,9 @@ namespace CodexQuotaBar {
         if (numFormat) {
             numFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
             numFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            D2D1_RECT_F valRect = D2D1::RectF(numLeft, topY, rightX, topY + ScaleF(24.0f, m_dpiScale));
+            D2D1_RECT_F valRect = D2D1::RectF(
+                numLeft, topY, rightX,
+                topY + static_cast<float>(Scale(24.0f, m_dpiScale)));
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
