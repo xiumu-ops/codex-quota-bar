@@ -122,7 +122,7 @@ namespace CodexQuotaBar {
 
         WNDCLASSEXW wc = { 0 };
         wc.cbSize = sizeof(WNDCLASSEXW);
-        wc.style = CS_DBLCLKS;
+        wc.style = CS_DBLCLKS | CS_DROPSHADOW;
         wc.lpfnWndProc = &MainWindow::WndProcSetup;
         wc.hInstance = hInstance;
         wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
@@ -150,8 +150,8 @@ namespace CodexQuotaBar {
 
         if (!m_hwnd) return false;
 
-        // Windows 11 DWM 硬件级圆角：分层窗口由自身 Alpha 通道控制圆角，禁用系统级圆角以杜绝暗色虚边
-        int cornerPref = DWMWCP_DONOTROUND;
+        // Windows 11 DWM 硬件级圆角与流体立体阴影（与右键菜单统一）
+        int cornerPref = DWMWCP_ROUND;
         DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPref, sizeof(cornerPref));
 
         // 初始化 Direct2D 渲染器
@@ -533,7 +533,7 @@ namespace CodexQuotaBar {
         HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
-        RECT area = mi.rcWork;
+        RECT area = mi.rcMonitor;
 
         POINT clamped = pt;
         if (clamped.x < area.left) clamped.x = area.left;
@@ -556,7 +556,7 @@ namespace CodexQuotaBar {
         HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
-        RECT area = mi.rcWork;
+        RECT area = mi.rcMonitor;
 
         RECT rc;
         GetWindowRect(m_hwnd, &rc);

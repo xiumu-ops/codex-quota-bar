@@ -59,7 +59,8 @@ namespace CodexQuotaBar {
             float trackX,
             float trackY,
             float trackW,
-            const QuotaWindow& window);
+            const QuotaWindow& window,
+            float customHeight = 0.0f);
         void DrawStatsSubCard(float topY, float height, const TokenStats& stats);
         void DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot);
 

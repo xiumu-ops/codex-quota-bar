@@ -385,11 +385,7 @@ namespace CodexQuotaBar {
             }
         }
 
-        // 3. 亮白圆角外描边（内缩 0.5px 时半径同步减半，保证内外同心）
-        const float strokeRadius = (std::max)(0.0f, outerRadius - 0.5f);
-        D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
-            D2D1::RectF(0.5f, 0.5f, w - 0.5f, h - 0.5f), strokeRadius, strokeRadius);
-        m_pRenderTarget->DrawRoundedRectangle(outer, m_pBrushBorder.Get(), 1.0f);
+        // 3. 外部描边与右键菜单统一由 DWM 接管，无需 D2D 自绘外描边以避免双重虚边与毛刺
 
         hr = m_pRenderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
@@ -416,8 +412,8 @@ namespace CodexQuotaBar {
         if (count == 2) {
             const float dividerX = segmentWidth;
             m_pRenderTarget->DrawLine(
-                D2D1::Point2F(dividerX, ScaleF(8.0f, m_dpiScale)),
-                D2D1::Point2F(dividerX, static_cast<float>(m_height) - ScaleF(8.0f, m_dpiScale)),
+                D2D1::Point2F(dividerX, ScaleF(4.0f, m_dpiScale)),
+                D2D1::Point2F(dividerX, static_cast<float>(m_height) - ScaleF(4.0f, m_dpiScale)),
                 m_pBrushDivider.Get(), 1.0f);
         }
     }
@@ -431,14 +427,20 @@ namespace CodexQuotaBar {
             ? std::to_wstring(static_cast<int>(std::round(window.remainingPercent))) + L"%"
             : L"---";
 
+        const float pad = ScaleF(4.0f, m_dpiScale);
+        const float contentX = left + pad;
+        const float contentW = (std::max)(0.0f, width - pad * 2.0f);
+        const float contentRight = contentX + contentW;
+        const float fontH = ScaleF(20.0f, m_dpiScale);
+
         if (m_pFontRowValueBold) {
             m_pFontRowValueBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_pFontRowValueBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             const D2D1_RECT_F valueRect = D2D1::RectF(
-                left + ScaleF(4.0f, m_dpiScale),
-                ScaleF(1.0f, m_dpiScale),
-                left + width - ScaleF(4.0f, m_dpiScale),
-                ScaleF(27.0f, m_dpiScale));
+                contentX,
+                pad,
+                contentRight,
+                pad + fontH);
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
@@ -447,10 +449,10 @@ namespace CodexQuotaBar {
                 m_pFontRowValueBold.Get(), valueRect, brush);
         }
 
-        const float trackX = left + ScaleF(8.0f, m_dpiScale);
-        const float trackW = (std::max)(0.0f, width - ScaleF(16.0f, m_dpiScale));
+        const float trackTop = pad + fontH + pad;
+        const float trackH = pad;
         DrawProgressTrack(
-            trackX, ScaleF(33.0f, m_dpiScale), trackW, window);
+            contentX, trackTop, contentW, window, trackH);
     }
 
     void Direct2DRenderer::DrawSyncIndicator(float topY, SyncState state) {
@@ -674,9 +676,12 @@ namespace CodexQuotaBar {
         float trackX,
         float trackY,
         float trackW,
-        const QuotaWindow& window)
+        const QuotaWindow& window,
+        float customHeight)
     {
-        float trackH = std::max(4.0f, ScaleF(5.0f, m_dpiScale));
+        float trackH = customHeight > 0.0f
+            ? customHeight
+            : std::max(4.0f, ScaleF(5.0f, m_dpiScale));
         float trackRadius = trackH / 2.0f;
 
         D2D1_ROUNDED_RECT trackBgRect = D2D1::RoundedRect(D2D1::RectF(trackX, trackY, trackX + trackW, trackY + trackH), trackRadius, trackRadius);

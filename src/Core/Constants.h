@@ -13,9 +13,9 @@ namespace CodexQuotaBar {
     // 展开态追加统计子卡片与重置子卡片。
     constexpr int COLLAPSED_HEIGHT = 91;
     constexpr int EXPANDED_HEIGHT = 244;
-    constexpr int MINI_DUAL_WIDTH = 240;
-    constexpr int MINI_SINGLE_WIDTH = 120;
-    constexpr int MINI_HEIGHT = 48;
+    constexpr int MINI_DUAL_WIDTH = 140;
+    constexpr int MINI_SINGLE_WIDTH = 70;
+    constexpr int MINI_HEIGHT = 36;
     constexpr int CORNER_RADIUS = 8;
 
 } // namespace CodexQuotaBar
