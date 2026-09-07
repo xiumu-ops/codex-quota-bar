@@ -1,4 +1,5 @@
 #include "UI/CustomMenu.h"
+#include "UI/WindowEffects.h"
 #include "Core/DpiHelper.h"
 
 #include <algorithm>
@@ -287,7 +288,7 @@ namespace CodexQuotaBar {
         if (!registered) {
             WNDCLASSEXW wc = { 0 };
             wc.cbSize = sizeof(WNDCLASSEXW);
-            wc.style = CS_DROPSHADOW;
+            wc.style = POPUP_SHADOW_CLASS_STYLE;
             wc.lpfnWndProc = &MenuWndProc;
             wc.hInstance = GetModuleHandleW(NULL);
             wc.hCursor = LoadCursor(NULL, IDC_ARROW);
@@ -304,9 +305,7 @@ namespace CodexQuotaBar {
             owner, NULL, GetModuleHandleW(NULL), &st);
         if (!hwnd) return 0;
 
-        int cornerPref = DWMWCP_ROUND;
-        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
-                              &cornerPref, sizeof(cornerPref));
+        ApplyPopupWindowEffects(hwnd);
 
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         UpdateWindow(hwnd);

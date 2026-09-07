@@ -21,6 +21,7 @@ set(CORE_HEADERS
     src/Core/DpiHelper.h
     src/Core/Layout.h
     src/Core/Models.h
+    src/Core/Settings.h
     src/Core/ConfigStore.h
     src/Core/SimpleJson.h
     src/Core/Logger.h
@@ -47,6 +48,7 @@ set(UI_HEADERS
     src/UI/MainWindow.h
     src/UI/CustomMenu.h
     src/UI/AppearanceDialog.h
+    src/UI/WindowEffects.h
 )
 
 set(UI_SOURCES

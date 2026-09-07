@@ -1,5 +1,6 @@
 #include "Core/Appearance.h"
 #include "Core/Layout.h"
+#include "Core/Settings.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -72,6 +73,45 @@ int main() {
     Expect(MiniQuotaSlotCount(twoQuotas) == 2, "two quotas use two mini slots");
     Expect(MiniBarLogicalWidth(twoQuotas) == MINI_DUAL_WIDTH,
            "two quotas use full-width mini bar");
+
+    const MiniBarMetrics miniAt75 = ScaledMiniBarMetrics(0.75f);
+    Expect(miniAt75.outerCornerRadius == 6.0f,
+           "mini outer corner follows 75% user scale");
+    Expect(miniAt75.contentInset == 3.0f,
+           "mini content inset follows 75% user scale");
+    Expect(miniAt75.pillCornerRadius == 3.75f,
+           "mini pill corner follows 75% user scale");
+    Expect(miniAt75.dividerThickness == 0.75f,
+           "mini divider follows 75% user scale");
+
+    const MiniBarMetrics miniAt125 = ScaledMiniBarMetrics(1.25f);
+    Expect(miniAt125.outerCornerRadius == 10.0f,
+           "mini outer corner follows 125% user scale");
+    Expect(miniAt125.contentInset == 5.0f,
+           "mini content inset follows 125% user scale");
+    Expect(miniAt125.pillCornerRadius == 6.25f,
+           "mini pill corner follows 125% user scale");
+    Expect(miniAt125.dividerThickness == 1.25f,
+           "mini divider follows 125% user scale");
+
+    Expect(IsSupportedUserScale(0.75), "minimum UI scale accepted");
+    Expect(IsSupportedUserScale(1.25), "maximum UI scale accepted");
+    Expect(!IsSupportedUserScale(0.8), "unsupported UI scale rejected");
+    Expect(!IsSupportedUserScale(2.0), "out-of-menu UI scale rejected");
+
+    int interval = 0;
+    Expect(TryParseSupportedRefreshInterval(30.0, interval) && interval == 30,
+           "supported refresh interval accepted");
+    Expect(!TryParseSupportedRefreshInterval(3.0, interval),
+           "unsupported refresh interval rejected");
+    Expect(!TryParseSupportedRefreshInterval(5.5, interval),
+           "fractional refresh interval rejected");
+
+    int integer = 0;
+    Expect(TryParseConfigInteger(-120.0, integer) && integer == -120,
+           "integer window coordinate accepted");
+    Expect(!TryParseConfigInteger(2.7, integer),
+           "fractional config integer rejected");
 
     std::cout << "Appearance tests passed\n";
     return 0;

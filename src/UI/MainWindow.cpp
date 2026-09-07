@@ -7,10 +7,13 @@
 #include "Core/Constants.h"
 #include "Core/DpiHelper.h"
 #include "Core/Layout.h"
+#include "Core/Settings.h"
 #include "Core/ConfigStore.h"
+#include "UI/WindowEffects.h"
 #include "resources/resource.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <system_error>
 #include <limits>
@@ -39,21 +42,15 @@ namespace CodexQuotaBar {
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
         constexpr int kCompanionMissingPollThreshold = 1; // 首次轮询未发现即隐藏（最长约 2 秒）
-        // 用户缩放档位：75% / 87.5% / 100% / 112.5% / 125%
-        constexpr float kUserScaleLevels[] = { 0.75f, 0.875f, 1.0f, 1.125f, 1.25f };
-        constexpr int kUserScaleCount = 5;
-        constexpr int kRefreshIntervalMinutes[] = { 1, 5, 10, 30, 60 };
-        constexpr int kRefreshIntervalCount = 5;
-
         // 数值 → 最接近档位索引（配置读回时归一）
         int ClosestScaleLevel(float value) {
-            int best = 2; // 默认 100%
+            int best = DEFAULT_USER_SCALE_LEVEL;
             float bestDiff = 1e9f;
-            for (int i = 0; i < kUserScaleCount; ++i) {
-                const float diff = std::fabs(kUserScaleLevels[i] - value);
+            for (std::size_t i = 0; i < USER_SCALE_LEVELS.size(); ++i) {
+                const float diff = std::fabs(USER_SCALE_LEVELS[i] - value);
                 if (diff < bestDiff) {
                     bestDiff = diff;
-                    best = i;
+                    best = static_cast<int>(i);
                 }
             }
             return best;
@@ -62,25 +59,29 @@ namespace CodexQuotaBar {
         // 档位 → 百分比文案："75%" / "87.5%" / "100%" / "112.5%" / "125%"
         std::wstring ScaleLevelText(int level) {
             wchar_t buf[16] = {};
-            swprintf_s(buf, L"%g%%", kUserScaleLevels[level] * 100.0);
+            swprintf_s(
+                buf,
+                L"%g%%",
+                USER_SCALE_LEVELS[static_cast<std::size_t>(level)] * 100.0);
             return buf;
         }
 
         int ClosestRefreshIntervalLevel(int minutes) {
             int best = 0;
             int bestDiff = (std::numeric_limits<int>::max)();
-            for (int i = 0; i < kRefreshIntervalCount; ++i) {
-                const int diff = std::abs(kRefreshIntervalMinutes[i] - minutes);
+            for (std::size_t i = 0; i < REFRESH_INTERVAL_MINUTES.size(); ++i) {
+                const int diff = std::abs(REFRESH_INTERVAL_MINUTES[i] - minutes);
                 if (diff < bestDiff) {
                     bestDiff = diff;
-                    best = i;
+                    best = static_cast<int>(i);
                 }
             }
             return best;
         }
 
         std::wstring RefreshIntervalText(int level) {
-            return std::to_wstring(kRefreshIntervalMinutes[level]) + L" 分钟";
+            return std::to_wstring(
+                REFRESH_INTERVAL_MINUTES[static_cast<std::size_t>(level)]) + L" 分钟";
         }
     }
 
@@ -122,7 +123,7 @@ namespace CodexQuotaBar {
 
         WNDCLASSEXW wc = { 0 };
         wc.cbSize = sizeof(WNDCLASSEXW);
-        wc.style = CS_DBLCLKS;
+        wc.style = CS_DBLCLKS | POPUP_SHADOW_CLASS_STYLE;
         wc.lpfnWndProc = &MainWindow::WndProcSetup;
         wc.hInstance = hInstance;
         wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
@@ -159,9 +160,8 @@ namespace CodexQuotaBar {
 
         if (!m_hwnd) return false;
 
-        // Windows 11 DWM 硬件级圆角与流体立体阴影（由 DWM 统一呈现 360° 原生柔和阴影，与右键菜单架构同构）
-        int cornerPref = DWMWCP_ROUND;
-        DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPref, sizeof(cornerPref));
+        // 与右键菜单使用相同的系统投影及圆角偏好。
+        ApplyPopupWindowEffects(m_hwnd);
 
         // 初始化 Direct2D 渲染器
         HRESULT rendererHr = m_renderer->Initialize(m_hwnd);
@@ -195,7 +195,8 @@ namespace CodexQuotaBar {
                 Scale(static_cast<float>(logical.cy), m_uiScale)
             };
             POINT clamped = ClampToScreens(stored.position, sz);
-            SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
             m_collapsedLocation = clamped;
         } else {
             RECT rcWork;
@@ -205,14 +206,16 @@ namespace CodexQuotaBar {
             int h = Scale(static_cast<float>(logical.cy), m_uiScale);
             int x = rcWork.left + (rcWork.right - rcWork.left - w) / 2;
             int y = rcWork.top + 34;
-            SetWindowPos(m_hwnd, NULL, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            SetWindowPos(m_hwnd, NULL, x, y, w, h,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
             m_collapsedLocation = { x, y };
         }
         m_hasCollapsedLocation = true;
 
         // 自动刷新定时器
         SetTimer(m_hwnd, TIMER_REFRESH_ID,
-                 static_cast<UINT>(kRefreshIntervalMinutes[m_refreshIntervalLevel] * 60 * 1000), NULL);
+                 static_cast<UINT>(REFRESH_INTERVAL_MINUTES[
+                     static_cast<std::size_t>(m_refreshIntervalLevel)] * 60 * 1000), NULL);
         if (m_companionMode) {
             SetTimer(m_hwnd, TIMER_COMPANION_ID, kCompanionPollMs, NULL);
             PollCompanionMode();
@@ -253,7 +256,8 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ApplyUiScale() {
-        m_uiScale = m_dpiScale * kUserScaleLevels[m_userScaleLevel];
+        m_uiScale = m_dpiScale * USER_SCALE_LEVELS[
+            static_cast<std::size_t>(m_userScaleLevel)];
         m_renderer->SetDpiScale(m_uiScale);
 
         const SIZE logical = LogicalWindowSize();
@@ -261,25 +265,29 @@ namespace CodexQuotaBar {
         int targetH = Scale(static_cast<float>(logical.cy), m_uiScale);
 
         SetWindowPos(m_hwnd, NULL, 0, 0, targetW, targetH,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_FRAMECHANGED);
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
         m_renderer->Resize(targetW, targetH);
         InvalidateRect(m_hwnd, NULL, FALSE);
     }
 
     void MainWindow::ApplyUserScale(int level) {
-        if (level < 0 || level >= kUserScaleCount) return;
+        if (level < 0 || level >= static_cast<int>(USER_SCALE_LEVELS.size())) return;
         m_userScaleLevel = level;
-        m_settings.userScale = kUserScaleLevels[level];
+        m_settings.userScale = USER_SCALE_LEVELS[static_cast<std::size_t>(level)];
         SaveSettingsWithFeedback();
         ApplyUiScale();
     }
 
     void MainWindow::ApplyRefreshInterval(int level) {
-        if (level < 0 || level >= kRefreshIntervalCount || !m_hwnd) return;
+        if (level < 0 ||
+            level >= static_cast<int>(REFRESH_INTERVAL_MINUTES.size()) ||
+            !m_hwnd) return;
         m_refreshIntervalLevel = level;
         SetTimer(m_hwnd, TIMER_REFRESH_ID,
-                 static_cast<UINT>(kRefreshIntervalMinutes[level] * 60 * 1000), NULL);
-        m_settings.refreshIntervalMinutes = kRefreshIntervalMinutes[level];
+                 static_cast<UINT>(REFRESH_INTERVAL_MINUTES[
+                     static_cast<std::size_t>(level)] * 60 * 1000), NULL);
+        m_settings.refreshIntervalMinutes =
+            REFRESH_INTERVAL_MINUTES[static_cast<std::size_t>(level)];
         SaveSettingsWithFeedback();
     }
 
@@ -595,7 +603,7 @@ namespace CodexQuotaBar {
             m_hwnd, NULL,
             targetLeft, targetTop,
             targetW, targetH,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_FRAMECHANGED);
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 
         m_renderer->Resize(targetW, targetH);
         RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -607,7 +615,8 @@ namespace CodexQuotaBar {
         POINT pt = { rc.left, rc.top };
         SIZE sz = { rc.right - rc.left, rc.bottom - rc.top };
         POINT clamped = ClampToScreens(pt, sz);
-        SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
 
         m_collapsedLocation = clamped;
         m_hasCollapsedLocation = true;
@@ -739,30 +748,34 @@ namespace CodexQuotaBar {
             RefreshQuota();
         } else if (cmd == IDM_REFRESH_INTERVAL_SUB) {
             std::vector<MenuItem> intervalItems;
-            for (int i = 0; i < kRefreshIntervalCount; ++i) {
-                std::wstring text = RefreshIntervalText(i);
-                if (i == m_refreshIntervalLevel) text += L" (当前)";
-                intervalItems.push_back({ IDM_REFRESH_INTERVAL_BASE + i, text });
+            for (std::size_t i = 0; i < REFRESH_INTERVAL_MINUTES.size(); ++i) {
+                const int level = static_cast<int>(i);
+                std::wstring text = RefreshIntervalText(level);
+                if (level == m_refreshIntervalLevel) text += L" (当前)";
+                intervalItems.push_back({ IDM_REFRESH_INTERVAL_BASE + level, text });
             }
             const int interval = CustomMenu::Show(
                 m_hwnd, m_uiScale, screenX, screenY, intervalItems,
                 m_renderer->Palette(), m_renderer->FontFamily());
             if (interval >= IDM_REFRESH_INTERVAL_BASE &&
-                interval < IDM_REFRESH_INTERVAL_BASE + kRefreshIntervalCount) {
+                interval < IDM_REFRESH_INTERVAL_BASE +
+                    static_cast<int>(REFRESH_INTERVAL_MINUTES.size())) {
                 ApplyRefreshInterval(interval - IDM_REFRESH_INTERVAL_BASE);
             }
         } else if (cmd == IDM_SCALE_SUB) {
             std::vector<MenuItem> scaleItems;
-            for (int i = 0; i < kUserScaleCount; ++i) {
-                std::wstring text = ScaleLevelText(i);
-                if (i == m_userScaleLevel) text += L" (当前)";
-                scaleItems.push_back({ IDM_SCALE_LEVEL_BASE + i, text });
+            for (std::size_t i = 0; i < USER_SCALE_LEVELS.size(); ++i) {
+                const int level = static_cast<int>(i);
+                std::wstring text = ScaleLevelText(level);
+                if (level == m_userScaleLevel) text += L" (当前)";
+                scaleItems.push_back({ IDM_SCALE_LEVEL_BASE + level, text });
             }
             const int level = CustomMenu::Show(
                 m_hwnd, m_uiScale, screenX, screenY, scaleItems,
                 m_renderer->Palette(), m_renderer->FontFamily());
             if (level >= IDM_SCALE_LEVEL_BASE &&
-                level < IDM_SCALE_LEVEL_BASE + kUserScaleCount) {
+                level < IDM_SCALE_LEVEL_BASE +
+                    static_cast<int>(USER_SCALE_LEVELS.size())) {
                 ApplyUserScale(level - IDM_SCALE_LEVEL_BASE);
             }
         } else if (cmd == IDM_APPEARANCE_SUB) {

@@ -1,6 +1,7 @@
 #include "Graphics/Direct2DRenderer.h"
 #include "Core/Constants.h"
 #include "Core/DpiHelper.h"
+#include "Core/Layout.h"
 
 #include <cmath>
 #include <ctime>
@@ -361,13 +362,16 @@ namespace CodexQuotaBar {
         float h = static_cast<float>(m_height);
 
         // 1. 绘制带逐像素 Alpha 的圆角悬浮卡片背景
-        const float outerRadius = ScaleF(static_cast<float>(CORNER_RADIUS), m_dpiScale);
+        const bool miniVisible = miniMode && !expanded;
+        const float outerRadius = miniVisible
+            ? ScaledMiniBarMetrics(m_dpiScale).outerCornerRadius
+            : ScaleF(static_cast<float>(CORNER_RADIUS), m_dpiScale);
         const D2D1_ROUNDED_RECT background = D2D1::RoundedRect(
             D2D1::RectF(0.0f, 0.0f, w, h), outerRadius, outerRadius);
         m_pRenderTarget->FillRoundedRectangle(background, m_pBrushSurface.Get());
 
         // 2. 迷你态只呈现额度与缩短的进度条；标准展开态追加详情卡片。
-        if (miniMode && !expanded) {
+        if (miniVisible) {
             DrawMiniBar(snapshot);
         } else {
             const float collapsedH = ScaleF(static_cast<float>(COLLAPSED_HEIGHT), m_dpiScale);
@@ -385,7 +389,17 @@ namespace CodexQuotaBar {
             }
         }
 
-        // 3. 外部描边与右键菜单统一由 DWM 接管，无需 D2D 自绘外描边以避免双重虚边与毛刺
+        // 3. 外描边保留在逐像素 Alpha 画面内，确保 OuterBorder 个性配置生效。
+        const float strokeWidth = ScaleF(1.0f, m_dpiScale);
+        const float strokeInset = strokeWidth / 2.0f;
+        const float strokeRadius = (std::max)(0.0f, outerRadius - strokeInset);
+        const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
+            D2D1::RectF(
+                strokeInset, strokeInset,
+                w - strokeInset, h - strokeInset),
+            strokeRadius, strokeRadius);
+        m_pRenderTarget->DrawRoundedRectangle(
+            outer, m_pBrushBorder.Get(), strokeWidth);
 
         hr = m_pRenderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
@@ -397,6 +411,7 @@ namespace CodexQuotaBar {
     }
 
     void Direct2DRenderer::DrawMiniBar(const QuotaSnapshot& snapshot) {
+        const MiniBarMetrics metrics = ScaledMiniBarMetrics(m_dpiScale);
         QuotaWindow unavailable;
         const QuotaWindow* windows[2] = {};
         int count = 0;
@@ -412,9 +427,11 @@ namespace CodexQuotaBar {
         if (count == 2) {
             const float dividerX = segmentWidth;
             m_pRenderTarget->DrawLine(
-                D2D1::Point2F(dividerX, ScaleF(4.0f, m_dpiScale)),
-                D2D1::Point2F(dividerX, static_cast<float>(m_height) - ScaleF(4.0f, m_dpiScale)),
-                m_pBrushDivider.Get(), 1.0f);
+                D2D1::Point2F(dividerX, metrics.contentInset),
+                D2D1::Point2F(
+                    dividerX,
+                    static_cast<float>(m_height) - metrics.contentInset),
+                m_pBrushDivider.Get(), metrics.dividerThickness);
         }
     }
 
@@ -427,13 +444,14 @@ namespace CodexQuotaBar {
             ? std::to_wstring(static_cast<int>(std::round(window.remainingPercent))) + L"%"
             : L"---";
 
-        const float pad = ScaleF(4.0f, m_dpiScale);
-        const float pillLeft = left + pad;
-        const float pillRight = left + width - pad;
-        const float pillTop = pad;
-        const float pillBottom = static_cast<float>(m_height) - pad;
+        const MiniBarMetrics metrics = ScaledMiniBarMetrics(m_dpiScale);
+        const float pillLeft = left + metrics.contentInset;
+        const float pillRight = left + width - metrics.contentInset;
+        const float pillTop = metrics.contentInset;
+        const float pillBottom =
+            static_cast<float>(m_height) - metrics.contentInset;
         const float pillW = (std::max)(0.0f, pillRight - pillLeft);
-        const float pillRadius = ScaleF(5.0f, m_dpiScale);
+        const float pillRadius = metrics.pillCornerRadius;
 
         // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观逻辑）
         const D2D1_ROUNDED_RECT pillRect = D2D1::RoundedRect(

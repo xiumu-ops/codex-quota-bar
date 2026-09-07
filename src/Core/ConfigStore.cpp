@@ -1,4 +1,5 @@
 #include "Core/ConfigStore.h"
+#include "Core/Settings.h"
 #include "Core/SimpleJson.h"
 
 #include <knownfolders.h>
@@ -7,12 +8,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <limits>
 #include <locale>
 #include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace CodexQuotaBar {
 namespace {
@@ -78,6 +81,33 @@ namespace {
         errors += L"- " + message;
     }
 
+    bool IsKnownKey(
+        const std::wstring& key,
+        std::initializer_list<std::wstring_view> allowed)
+    {
+        for (const std::wstring_view candidate : allowed) {
+            if (key == candidate) return true;
+        }
+        return false;
+    }
+
+    void ValidateKnownKeys(
+        const JsonValue& object,
+        std::wstring_view path,
+        std::initializer_list<std::wstring_view> allowed,
+        std::wstring& errors)
+    {
+        if (!object.is_object()) return;
+        for (const auto& [name, unused] : object.objVal) {
+            static_cast<void>(unused);
+            if (!IsKnownKey(name, allowed)) {
+                AppendValidationError(
+                    errors,
+                    std::wstring(path) + L"." + name + L" 不是支持的字段");
+            }
+        }
+    }
+
     ReadStatus ReadJson(const std::filesystem::path& path, JsonValue& root) {
         std::error_code error;
         const bool exists = std::filesystem::exists(path, error);
@@ -118,11 +148,15 @@ namespace {
         AppearanceSettings& appearance,
         std::wstring& errors)
     {
-        if (object.is_null()) return;
         if (!object.is_object()) {
             AppendValidationError(errors, L"Settings.Appearance 必须是对象");
             return;
         }
+        ValidateKnownKeys(
+            object,
+            L"Settings.Appearance",
+            { L"Mode", L"FontFamily", L"BackgroundTransparency", L"Colors" },
+            errors);
 
         if (object.has_key(L"Mode")) {
             if (!object[L"Mode"].is_string()) {
@@ -188,14 +222,30 @@ namespace {
         std::wstring& errors)
     {
         if (!object.is_object()) return;
-        if (object.has_key(L"UserScale") && object[L"UserScale"].is_number()) {
-            const double value = object[L"UserScale"].as_double(1.0);
-            if (value > 0.0 && value <= 10.0) {
+        ValidateKnownKeys(
+            object,
+            L"Settings",
+            { L"UserScale", L"CompanionMode", L"AlwaysOnTop", L"MiniMode",
+              L"RefreshIntervalMinutes", L"Appearance" },
+            errors);
+
+        if (object.has_key(L"UserScale")) {
+            const JsonValue& userScale = object[L"UserScale"];
+            const double value = userScale.as_double();
+            if (userScale.is_number() && IsSupportedUserScale(value)) {
                 settings.userScale = static_cast<float>(value);
+            } else {
+                AppendValidationError(
+                    errors,
+                    L"Settings.UserScale 只能是 0.75、0.875、1、1.125 或 1.25");
             }
         }
-        if (object.has_key(L"CompanionMode") && object[L"CompanionMode"].is_bool()) {
-            settings.companionMode = object[L"CompanionMode"].as_bool(false);
+        if (object.has_key(L"CompanionMode")) {
+            if (object[L"CompanionMode"].is_bool()) {
+                settings.companionMode = object[L"CompanionMode"].as_bool(false);
+            } else {
+                AppendValidationError(errors, L"Settings.CompanionMode 必须是布尔值");
+            }
         }
         if (object.has_key(L"AlwaysOnTop")) {
             if (object[L"AlwaysOnTop"].is_bool()) {
@@ -211,21 +261,43 @@ namespace {
                 AppendValidationError(errors, L"Settings.MiniMode 必须是布尔值");
             }
         }
-        if (object.has_key(L"RefreshIntervalMinutes") &&
-            object[L"RefreshIntervalMinutes"].is_number()) {
-            const int value = object[L"RefreshIntervalMinutes"].as_int(1);
-            if (value >= 1 && value <= 1440) settings.refreshIntervalMinutes = value;
+        if (object.has_key(L"RefreshIntervalMinutes")) {
+            int value = 0;
+            const JsonValue& interval = object[L"RefreshIntervalMinutes"];
+            if (interval.is_number() &&
+                TryParseSupportedRefreshInterval(interval.as_double(), value)) {
+                settings.refreshIntervalMinutes = value;
+            } else {
+                AppendValidationError(
+                    errors,
+                    L"Settings.RefreshIntervalMinutes 只能是 1、5、10、30 或 60");
+            }
         }
-        ReadAppearanceObject(object[L"Appearance"], settings.appearance, errors);
+        if (object.has_key(L"Appearance")) {
+            ReadAppearanceObject(object[L"Appearance"], settings.appearance, errors);
+        }
+    }
+
+    bool HasConfigVersion2(const JsonValue& root) {
+        int version = 0;
+        return root.has_key(L"Version") && root[L"Version"].is_number() &&
+               TryParseConfigInteger(root[L"Version"].as_double(), version) &&
+               version == 2;
     }
 
     void ValidateDefaultConfigShape(const JsonValue& root, std::wstring& errors) {
         const JsonValue& settings = root[L"Settings"];
         const JsonValue& appearance = settings[L"Appearance"];
-        if (!root.has_key(L"Version") || !root[L"Version"].is_number() ||
-            root[L"Version"].as_int() != 2 || !root.has_key(L"Window")) {
+        ValidateKnownKeys(
+            root,
+            L"config-default.json",
+            { L"Version", L"Settings", L"Window" },
+            errors);
+        if (!HasConfigVersion2(root) || !root.has_key(L"Window") ||
+            !root[L"Window"].is_null()) {
             AppendValidationError(
-                errors, L"config-default.json 必须使用完整的版本 2 配置结构");
+                errors,
+                L"config-default.json 必须使用完整的版本 2 配置结构，且 Window 必须为 null");
         }
         if (!settings.is_object() || !appearance.is_object()) {
             AppendValidationError(
@@ -265,21 +337,40 @@ namespace {
     }
 
     void ValidateUserConfigShape(const JsonValue& root, std::wstring& errors) {
-        if (!root.has_key(L"Version") || !root[L"Version"].is_number() ||
-            root[L"Version"].as_int() != 2 ||
+        ValidateKnownKeys(
+            root,
+            L"config-users.json",
+            { L"Version", L"Settings", L"Window" },
+            errors);
+        if (!HasConfigVersion2(root) ||
             !root.has_key(L"Settings") || !root[L"Settings"].is_object()) {
             AppendValidationError(
                 errors, L"config-users.json 必须使用版本 2 配置结构");
         }
     }
 
-    void ReadWindowObject(const JsonValue& object, StoredState& state) {
-        if (!object.is_object() || !object.has_key(L"X") || !object[L"X"].is_number() ||
-            !object.has_key(L"Y") || !object[L"Y"].is_number()) {
+    void ReadWindowObject(
+        const JsonValue& object,
+        StoredState& state,
+        std::wstring& errors)
+    {
+        if (object.is_null()) return;
+        if (!object.is_object()) {
+            AppendValidationError(errors, L"Window 必须是包含 X、Y 的对象或 null");
             return;
         }
-        state.position.x = object[L"X"].as_int();
-        state.position.y = object[L"Y"].as_int();
+        ValidateKnownKeys(object, L"Window", { L"X", L"Y" }, errors);
+        int x = 0;
+        int y = 0;
+        if (!object.has_key(L"X") || !object[L"X"].is_number() ||
+            !TryParseConfigInteger(object[L"X"].as_double(), x) ||
+            !object.has_key(L"Y") || !object[L"Y"].is_number() ||
+            !TryParseConfigInteger(object[L"Y"].as_double(), y)) {
+            AppendValidationError(errors, L"Window.X 和 Window.Y 必须是 32 位整数");
+            return;
+        }
+        state.position.x = x;
+        state.position.y = y;
         state.hasPosition = true;
     }
 
@@ -352,6 +443,24 @@ namespace {
                 AppendValidationError(errors, path + L" 必须使用 #RRGGBB 格式");
             }
         }
+        return errors.empty();
+    }
+
+    bool ValidateAppSettings(const AppSettings& settings, std::wstring& errors) {
+        if (!IsSupportedUserScale(settings.userScale)) {
+            AppendValidationError(
+                errors,
+                L"Settings.UserScale 只能是 0.75、0.875、1、1.125 或 1.25");
+        }
+        int refreshInterval = 0;
+        if (!TryParseSupportedRefreshInterval(
+                static_cast<double>(settings.refreshIntervalMinutes),
+                refreshInterval)) {
+            AppendValidationError(
+                errors,
+                L"Settings.RefreshIntervalMinutes 只能是 1、5、10、30 或 60");
+        }
+        ValidateAppearanceSettings(settings.appearance, errors);
         return errors.empty();
     }
 
@@ -461,7 +570,7 @@ namespace {
         if (userStatus == ReadStatus::Valid) {
             ValidateUserConfigShape(root, errors);
             ReadSettingsObject(root[L"Settings"], data.settings, errors);
-            ReadWindowObject(root[L"Window"], data.state);
+            ReadWindowObject(root[L"Window"], data.state, errors);
         } else if (userStatus == ReadStatus::Invalid) {
             AppendValidationError(
                 errors,
@@ -498,7 +607,7 @@ namespace {
         ReadStatus status = ReadStatus::Missing;
         std::wstring errors;
         ConfigData data = LoadData(&status, &errors);
-        ValidateAppearanceSettings(settings.appearance, errors);
+        ValidateAppSettings(settings, errors);
         if (status == ReadStatus::Invalid || !errors.empty()) {
             if (validationError) *validationError = errors;
             return false;
