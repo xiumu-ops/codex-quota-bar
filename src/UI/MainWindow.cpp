@@ -275,6 +275,7 @@ namespace CodexQuotaBar {
         m_settings.userScale = USER_SCALE_LEVELS[static_cast<std::size_t>(level)];
         SaveSettingsWithFeedback();
         ApplyUiScale();
+        OnWindowMoved();
     }
 
     void MainWindow::ApplyRefreshInterval(int level) {
@@ -430,9 +431,7 @@ namespace CodexQuotaBar {
             m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        if (!m_settings.alwaysOnTop) {
-            OnWindowMoved();
-        }
+        OnWindowMoved();
     }
 
     void MainWindow::ToggleMiniMode() {
@@ -560,13 +559,16 @@ namespace CodexQuotaBar {
             }
         }
         ApplyDpiScale(newDpi);
+        OnWindowMoved();
     }
 
     POINT MainWindow::ClampToScreens(POINT pt, SIZE sz) const {
         HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
-        const RECT area = m_settings.alwaysOnTop ? mi.rcMonitor : mi.rcWork;
+        // 置顶只控制窗口层级，不改变可停靠范围。任务栏等系统保留区域
+        // 可能覆盖同为 TOPMOST 的分层窗口，因此所有模式统一使用工作区。
+        const RECT area = mi.rcWork;
 
         POINT clamped = pt;
         if (clamped.x < area.left) clamped.x = area.left;
@@ -1002,6 +1004,16 @@ namespace CodexQuotaBar {
         case 0x02E0: // WM_DPICHANGED
             OnDpiChanged(LOWORD(wParam), reinterpret_cast<const RECT*>(lParam));
             return 0;
+
+        case WM_DISPLAYCHANGE:
+            OnWindowMoved();
+            break;
+
+        case WM_SETTINGCHANGE:
+            if (wParam == SPI_SETWORKAREA) {
+                OnWindowMoved();
+            }
+            break;
 
         case WM_TIMER:
             if (wParam == TIMER_REFRESH_ID) {

@@ -6,7 +6,7 @@
 [![Direct2D](https://img.shields.io/badge/Graphics-Direct2D%20%2F%20DirectWrite-success.svg)](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-portal)
 [![Remote Build](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml/badge.svg)](https://github.com/xiumu-ops/codex-quota-bar/actions/workflows/remote-build.yml)
 
-基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态，并可选择是否置顶显示。
+基于 **C++20 / Win32 / Direct2D / DirectWrite** 构建的原生桌面配额指示条：通过 Codex 官方 App Server 实时展示窗口额度、每周额度、额度重置时间、Token 活动统计与同步状态；支持置顶、伴随、迷你和个性外观模式，并始终避让 Windows 任务栏等系统保留区域。
 
 本项目是独立的第三方开源工具，与 OpenAI 不存在隶属或背书关系。参阅[修改日志](CHANGELOG.md)、[隐私政策](PRIVACY.md)和[代码签名政策](CODE_SIGNING_POLICY.md)。
 
@@ -22,7 +22,7 @@
   - **状态指示灯与文字**：实时反馈同步健康状态（🟢 成功 / 🟡 同步中 / 🔴 失败 / ⚪ 等待）。
 - **交互方式**：
   - **左键单击右下角箭头（Chevron）**：展开或收起详细统计面板。
-  - **左键按住主体拖动**：自由拖放至屏幕任意位置（跨多显示器、DPI 切换均保持清晰且自动持久化保存位置到 `config-users.json`）。
+  - **左键按住主体拖动**：在各显示器工作区内自由拖放（跨多显示器、DPI 切换均保持清晰，自动避让任务栏并将位置持久化到 `config-users.json`）。
   - **左键双击主体区域**：立即向 Codex 发起即时额度与使用数据刷新。
 
 迷你模式可通过右键菜单启用。双额度时使用 `112 × 28` 的横向矩形，按窗口额度、每周额度从左至右显示；只有一个额度或首次尚未返回额度时使用 `56 × 28`。迷你栏保持 8 px 基准圆角，仅显示百分比和内嵌大进度，不显示标题、重置时间、同步状态或展开控件；需要详情时使用右键菜单“展开详情”。窗口尺寸、外框圆角、内部大进度圆角、内容边距、分隔线和字体都会同时响应系统 DPI 与用户缩放。
@@ -54,7 +54,7 @@
   - **缩放大小**：支持切换 UI 缩放比例（75% / 87.5% / 100% / 112.5% / 125%）。
   - **外观配置**：切换默认 / 个性外观，或在统一编辑器中修改 19 项颜色与 0%–90% 的背景透明度；支持应用、确定和取消。
   - **迷你模式（开/关）**：在标准折叠栏与自适应 `56/112 × 28` 迷你栏之间切换，状态在重启后继续生效。
-  - **置顶模式（开/关）**：控制额度条是否保持在其他窗口上方，设置会保存并在重启后继续生效。
+  - **置顶模式（开/关）**：只控制额度条是否保持在其他普通窗口上方；开启或关闭时都不会进入任务栏等系统保留区域，设置会保存并在重启后继续生效。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
   - **退出**：彻底关闭常驻进程并释放所有系统与图形资源。
 
@@ -70,7 +70,7 @@
 - **官方账户接口**：临时启动 `codex app-server`，通过 stdio JSON-RPC 调用 `account/rateLimits/read` 与 `account/usage/read`，无需额外常驻服务或开放本地端口
 - **官方生命周期 Hook**：安装器注册 `SessionStart`、`Stop`、`SessionEnd`，新会话、每轮对话完成和会话结束时自动同步
 - **伴随模式**：可从右键菜单启用；Codex 桌面端启动时自动显示，桌面端退出后防抖隐藏，并通过当前用户启动项在登录后后台等待
-- **可选置顶模式**：可从右键菜单即时启用或关闭，状态写入用户配置并在下次启动时恢复
+- **安全置顶模式**：置顶只改变窗口层级，不扩大可停靠范围；标准栏、迷你栏及展开态始终受当前显示器工作区约束，避免被任务栏完全遮挡
 - **自适应迷你模式**：双额度横向显示，单额度自动缩减为一半宽度，并直接复用折叠栏的外观与进度逻辑
 - **当前用户安装与卸载**：单文件安装包默认写入 `%LOCALAPPDATA%\Codex-Quota-Bar\app`，程序、配置、开始菜单和“已安装的应用”入口全部限定在当前用户
 - **Win32 命名管道 IPC**：单实例守护进程，CLI / IDE / Git Hook 毫秒级通信（命令表见下）
@@ -106,14 +106,14 @@
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.7.6：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.7.8：
 
 ```powershell
-git tag -a v2.7.6 -m "Codex-Quota-Bar 2.7.6"
-git push origin v2.7.6
+git tag -a v2.7.8 -m "Codex-Quota-Bar 2.7.8"
+git push origin v2.7.8
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.7.6.exe` 与 `Codex-Quota-Bar_version_2.7.6.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.7.8.exe` 与 `Codex-Quota-Bar_version_2.7.8.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -141,7 +141,7 @@ CHANGELOG.md  各版本新增、变更与修复记录
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.7.6.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.7.8.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -185,8 +185,8 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.7.6.exe
-dist\Release\Codex-Quota-Bar_version_2.7.6.sha256
+dist\Release\Codex-Quota-Bar_version_2.7.8.exe
+dist\Release\Codex-Quota-Bar_version_2.7.8.sha256
 ```
 
 安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
@@ -327,7 +327,7 @@ $env:CODEX_QUOTA_CODEX_PATH = "D:\path\to\codex.exe"
 1. 在 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写入当前 EXE 的启动项；
 2. 每 2 秒检查一次官方 Codex 桌面端进程；
 3. Codex 启动时自动显示并立即同步；
-4. 首次轮询未发现 Codex 时立即隐藏窗口并停止额度抓取，关闭后的检测延迟约为 0～2 秒；
+4. Codex 退出后连续三次未检测到桌面端才隐藏窗口，检测延迟约为 4～6 秒；进程查询失败时保持当前显示状态；
 5. 保留轻量后台进程，以便同一登录会话内下一次启动 Codex 时重新显示。
 
 检测仅接受官方 Codex 安装路径中的桌面宿主 `ChatGPT.exe` 或启动器 `Codex.exe`，明确排除 `resources\codex.exe` 与 `%LOCALAPPDATA%\OpenAI\Codex\bin` 下的 CLI/App Server。右键“退出”或 `--exit` 仍会彻底结束后台进程；关闭伴随模式会同步移除当前用户启动项。

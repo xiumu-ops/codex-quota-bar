@@ -151,7 +151,7 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
   "Settings": {
     "UserScale": 1.0,
     "CompanionMode": false,
-    "AlwaysOnTop": false,
+    "AlwaysOnTop": true,
     "MiniMode": false,
     "RefreshIntervalMinutes": 5
   },
@@ -173,7 +173,7 @@ try {
     $configOk = $config.Version -eq 2 -and
                 $config.Settings.UserScale -eq 1.0 -and
                 $config.Settings.CompanionMode -eq $false -and
-                $config.Settings.AlwaysOnTop -eq $false -and
+                $config.Settings.AlwaysOnTop -eq $true -and
                 $config.Settings.MiniMode -eq $false -and
                 $config.Settings.RefreshIntervalMinutes -eq 5 -and
                 $config.Window.X -eq 120 -and $config.Window.Y -eq 2000000000
@@ -230,17 +230,17 @@ try {
     }
     $initialRect = Get-CqbWindowRect $hwnd
     if ($initialRect.Bottom -le $workArea.Bottom) {
-        Write-Host "  [PASS] 非置顶窗口启动位置受工作区约束" -ForegroundColor Green
+        Write-Host "  [PASS] 置顶窗口启动位置受工作区约束" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 非置顶窗口仍可被任务栏完全遮挡" -ForegroundColor Red
+        Write-Host "  [FAIL] 置顶窗口仍可被任务栏完全遮挡" -ForegroundColor Red
         $script:Failures++
     }
 
     $extendedStyle = [CqbNative]::GetWindowLongPtr($hwnd, -20).ToInt64()
-    if (($extendedStyle -band 0x8) -eq 0) {
-        Write-Host "  [PASS] 置顶模式关闭设置已应用到窗口" -ForegroundColor Green
+    if (($extendedStyle -band 0x8) -ne 0) {
+        Write-Host "  [PASS] 置顶模式开启且未改变工作区约束" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 置顶模式关闭后窗口仍为 TOPMOST" -ForegroundColor Red
+        Write-Host "  [FAIL] 置顶模式开启后窗口不是 TOPMOST" -ForegroundColor Red
         $script:Failures++
     }
 
