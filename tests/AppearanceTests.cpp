@@ -91,21 +91,21 @@ int main() {
            "single mini slot matches half of dual width at fractional scale");
 
     const MiniBarMetrics miniAt75 = ScaledMiniBarMetrics(0.75f);
-    Expect(ShouldUseSmallWindowCorner(true, 0.75f),
-           "75% mini bar uses DWM small corner preference");
+    Expect(!ShouldUseSmallWindowCorner(true, 0.75f),
+           "mini bar maintains unified standard round corner preference");
     Expect(!ShouldUseSmallWindowCorner(false, 0.75f),
-           "standard bar keeps DWM standard round corner preference");
-    Expect(miniAt75.outerCornerRadius == 4.0f,
-           "75% mini outer corner matches 96-DPI DWMWCP_ROUNDSMALL (4px)");
+           "standard bar maintains unified standard round corner preference");
+    Expect(miniAt75.outerCornerRadius == 8.0f,
+           "75% mini outer corner matches unified 96-DPI DWMWCP_ROUND (8px)");
     Expect(miniAt75.contentInset == 2.0f,
            "mini content inset follows 75% user scale");
-    Expect(miniAt75.pillCornerRadius == 2.0f,
-           "75% mini pill corner stays concentric with 4px outer corner");
+    Expect(miniAt75.pillCornerRadius == 6.0f,
+           "75% mini pill corner stays concentric with 8px outer corner");
     Expect(miniAt75.dividerThickness == 1.0f,
            "mini divider remains one visible physical pixel at 75%");
     Expect(miniAt75.outerBorderThickness == 1.0f,
            "mini border remains one visible physical pixel at 75%");
-    Expect(MiniDividerHeight(21, miniAt75) == 13.0f,
+    Expect(MiniDividerHeight(21, miniAt75) == 5.0f,
            "75% divider spans the concentric pill's straight center section");
 
     const MiniBarMetrics miniAt100 = ScaledMiniBarMetrics(1.0f);
@@ -133,12 +133,12 @@ int main() {
            "125% divider spans the concentric pill's straight center section");
 
     const MiniBarMetrics miniHiDpiSmall = ScaledMiniBarMetricsForWindow(1.5f, 0.75f, true);
-    Expect(miniHiDpiSmall.outerCornerRadius == 6.0f,
-           "150% DPI + 75% mini outer corner matches DWMWCP_ROUNDSMALL (6px)");
+    Expect(miniHiDpiSmall.outerCornerRadius == 12.0f,
+           "150% DPI + 75% mini outer corner matches unified DWMWCP_ROUND (8px * 1.5 = 12px)");
     Expect(miniHiDpiSmall.contentInset == 2.0f,
            "150% DPI + 75% mini inset rounds to 2px");
-    Expect(miniHiDpiSmall.pillCornerRadius == 4.0f,
-           "150% DPI + 75% mini pill stays concentric (6 - 2 = 4px)");
+    Expect(miniHiDpiSmall.pillCornerRadius == 10.0f,
+           "150% DPI + 75% mini pill stays concentric (12 - 2 = 10px)");
 
     const MiniBarMetrics miniHiDpiLarge = ScaledMiniBarMetricsForWindow(2.0f, 1.25f, true);
     Expect(miniHiDpiLarge.outerCornerRadius == 16.0f,

@@ -412,10 +412,9 @@ namespace CodexQuotaBar {
         float w = static_cast<float>(m_width);
         float h = static_cast<float>(m_height);
 
-        // 1. 绘制带逐像素 Alpha 的圆角悬浮卡片背景：外圆角始终与 DWM 窗口硬件圆角同步。
+        // 1. 绘制带逐像素 Alpha 的圆角悬浮卡片背景：全应用外圆角始终基于基准 8px 与 DWM 窗口硬件圆角同步。
         const bool miniVisible = miniMode && !expanded;
-        const bool smallCorner = ShouldUseSmallWindowCorner(miniVisible, m_userScale);
-        const float outerRadius = WindowOuterCornerRadius(m_monitorDpiScale, smallCorner);
+        const float outerRadius = WindowOuterCornerRadius(m_monitorDpiScale);
         const MiniBarMetrics miniMetrics = ScaledMiniBarMetrics(m_dpiScale, outerRadius);
         const D2D1_ROUNDED_RECT background = D2D1::RoundedRect(
             D2D1::RectF(0.0f, 0.0f, w, h), outerRadius, outerRadius);
@@ -506,9 +505,11 @@ namespace CodexQuotaBar {
             const float dividerHeight = MiniDividerHeight(static_cast<int>(m_height), metrics);
             const float dividerTop = std::round((h - dividerHeight) / 2.0f);
             const float dividerBottom = dividerTop + dividerHeight;
-            m_pRenderTarget->FillRectangle(
+            const float divCorner = divHalf;
+            const D2D1_ROUNDED_RECT divRect = D2D1::RoundedRect(
                 D2D1::RectF(divLeft, dividerTop, divRight, dividerBottom),
-                m_pBrushDivider.Get());
+                divCorner, divCorner);
+            m_pRenderTarget->FillRoundedRectangle(divRect, m_pBrushDivider.Get());
         }
     }
 

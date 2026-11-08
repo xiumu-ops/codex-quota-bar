@@ -488,51 +488,49 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ShowFontMenu(int screenX, int screenY) {
-        const std::vector<std::wstring> candidateFonts = {
-            L"Microsoft YaHei UI",
-            L"Segoe UI",
-            L"SimSun",
-            L"SimHei",
-            L"KaiTi",
-            L"FangSong",
-            L"DengXian",
-            L"HarmonyOS Sans SC",
-            L"PingFang SC",
-            L"Cascadia Code",
-            L"Consolas",
-            L"JetBrains Mono",
-            L"Fira Code"
+        struct FontOption {
+            std::wstring label;        // 显示在菜单上的文案
+            std::wstring applyFamily;  // 选定时应用的首选字体族名称
+            std::wstring matchFamily1; // 用于匹配当前字体的名称1
+            std::wstring matchFamily2; // 用于匹配当前字体的名称2
         };
 
-        std::vector<std::wstring> availableFonts;
-        for (const auto& candidate : candidateFonts) {
-            if (m_renderer->FontFamilyExists(candidate)) {
-                availableFonts.push_back(candidate);
-            }
-        }
-        if (availableFonts.empty()) {
-            availableFonts.push_back(L"Microsoft YaHei UI");
-        }
+        const std::vector<FontOption> presetOptions = {
+            { L"幼圆", L"YouYuan", L"YouYuan", L"幼圆" },
+            { L"楷体", L"KaiTi", L"KaiTi", L"楷体" },
+            { L"黑体", L"SimHei", L"SimHei", L"黑体" },
+            { L"仿宋", L"FangSong", L"FangSong", L"仿宋" },
+            { L"Cascadia Mono", L"Cascadia Mono", L"Cascadia Mono", L"" },
+            { L"默认", L"Microsoft YaHei UI", L"Microsoft YaHei UI", L"微软雅黑" }
+        };
+
         const std::wstring currentFont = m_renderer->FontFamily();
-        bool foundCurrent = false;
-        for (const auto& f : availableFonts) {
-            if (_wcsicmp(f.c_str(), currentFont.c_str()) == 0) {
-                foundCurrent = true;
+        int currentPresetIndex = -1;
+        for (std::size_t i = 0; i < presetOptions.size(); ++i) {
+            const auto& opt = presetOptions[i];
+            if ((!opt.matchFamily1.empty() && _wcsicmp(currentFont.c_str(), opt.matchFamily1.c_str()) == 0) ||
+                (!opt.matchFamily2.empty() && _wcsicmp(currentFont.c_str(), opt.matchFamily2.c_str()) == 0)) {
+                currentPresetIndex = static_cast<int>(i);
                 break;
             }
         }
-        if (!foundCurrent && !currentFont.empty()) {
-            availableFonts.push_back(currentFont);
+        if (currentPresetIndex < 0 && (currentFont.empty() || _wcsicmp(currentFont.c_str(), L"Microsoft YaHei UI") == 0)) {
+            currentPresetIndex = static_cast<int>(presetOptions.size() - 1);
         }
 
         std::vector<MenuItem> fontItems;
-        for (std::size_t i = 0; i < availableFonts.size(); ++i) {
-            std::wstring label = availableFonts[i];
-            if (_wcsicmp(availableFonts[i].c_str(), currentFont.c_str()) == 0) {
-                label += L" (当前)";
+        for (std::size_t i = 0; i < presetOptions.size(); ++i) {
+            std::wstring text = presetOptions[i].label;
+            if (static_cast<int>(i) == currentPresetIndex) {
+                text += L" (当前)";
             }
-            fontItems.push_back({ IDM_FONT_PRESET_BASE + static_cast<int>(i), label });
+            fontItems.push_back({ IDM_FONT_PRESET_BASE + static_cast<int>(i), text });
         }
+
+        if (currentPresetIndex < 0 && !currentFont.empty()) {
+            fontItems.push_back({ IDM_FONT_PRESET_BASE + static_cast<int>(presetOptions.size()), currentFont + L" (当前)" });
+        }
+
         fontItems.push_back({ 0, L"" });
         fontItems.push_back({ IDM_FONT_CHOOSE_SYSTEM, L"浏览全部系统字体..." });
         fontItems.push_back({ IDM_FONT_CUSTOM_DIALOG, L"自定义外观设置..." });
@@ -542,9 +540,9 @@ namespace CodexQuotaBar {
             m_renderer->Palette(), m_renderer->FontFamily());
 
         if (selected >= IDM_FONT_PRESET_BASE &&
-            selected < IDM_FONT_PRESET_BASE + static_cast<int>(availableFonts.size())) {
+            selected < IDM_FONT_PRESET_BASE + static_cast<int>(presetOptions.size())) {
             const std::size_t index = static_cast<std::size_t>(selected - IDM_FONT_PRESET_BASE);
-            ApplyFontFamily(availableFonts[index]);
+            ApplyFontFamily(presetOptions[index].applyFamily);
         } else if (selected == IDM_FONT_CHOOSE_SYSTEM) {
             LOGFONTW lf = {};
             const std::wstring currentName = m_renderer->FontFamily();
@@ -778,11 +776,7 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ApplyCurrentWindowEffects() const {
-        const float userScale = USER_SCALE_LEVELS[
-            static_cast<std::size_t>(m_userScaleLevel)];
-        const bool miniVisible = m_settings.miniMode && !m_expanded;
-        ApplyPopupWindowEffects(
-            m_hwnd, ShouldUseSmallWindowCorner(miniVisible, userScale));
+        ApplyPopupWindowEffects(m_hwnd);
     }
 
     void MainWindow::ToggleExpanded() {
@@ -935,9 +929,9 @@ namespace CodexQuotaBar {
 
     bool MainWindow::IsExpandButtonArea(POINT pt) const {
         if (m_settings.miniMode && !m_expanded) return false;
-        const int left = Scale(353.0f, m_uiScale);
+        const int left = Scale(345.0f, m_uiScale);
         const int right = Scale(static_cast<float>(BAR_WIDTH), m_uiScale);
-        const int top = Scale(68.0f, m_uiScale);
+        const int top = Scale(StandardLayout::kFooterTop - StandardLayout::kGap * 0.5f, m_uiScale);
         const int bottom = Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
         return pt.x >= left && pt.x < right && pt.y >= top && pt.y < bottom;
     }
