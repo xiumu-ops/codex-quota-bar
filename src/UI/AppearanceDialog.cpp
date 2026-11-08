@@ -186,6 +186,23 @@ namespace {
             state->brush.Get());
     }
 
+    inline void DrawCrispRoundedRect(
+        ID2D1RenderTarget* rt,
+        ID2D1Brush* brush,
+        const D2D1_RECT_F& rect,
+        float cornerRadius,
+        float strokeWidth)
+    {
+        const float inset = strokeWidth * 0.5f;
+        const D2D1_ROUNDED_RECT stroked = D2D1::RoundedRect(
+            D2D1::RectF(
+                rect.left + inset, rect.top + inset,
+                rect.right - inset, rect.bottom - inset),
+            (std::max)(0.0f, cornerRadius - inset),
+            (std::max)(0.0f, cornerRadius - inset));
+        rt->DrawRoundedRectangle(stroked, brush, strokeWidth);
+    }
+
     void DrawButton(
         AppearanceDialogState* state,
         const RECT& buttonRect,
@@ -197,12 +214,12 @@ namespace {
             static_cast<float>(buttonRect.top),
             static_cast<float>(buttonRect.right),
             static_cast<float>(buttonRect.bottom));
-        const float radius = ScaleF(6.0f, state->dpiScale);
+        const float radius = static_cast<float>(Scale(6.0f, state->dpiScale));
         const D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(rect, radius, radius);
         state->brush->SetColor(hovered ? state->palette.menuHover : state->palette.statsCardBg);
         state->renderTarget->FillRoundedRectangle(rounded, state->brush.Get());
         state->brush->SetColor(state->palette.statsCardBorder);
-        state->renderTarget->DrawRoundedRectangle(rounded, state->brush.Get(), 1.0f);
+        DrawCrispRoundedRect(state->renderTarget.Get(), state->brush.Get(), rect, radius, 2.0f);
         state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         state->bodyFont->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         DrawText(state, text, state->bodyFont.Get(), rect, state->palette.text);
@@ -270,7 +287,11 @@ namespace {
 
         DrawText(
             state, L"编辑个性外观", state->titleFont.Get(),
-            D2D1::RectF(ScaleF(16, scale), ScaleF(8, scale), width, ScaleF(42, scale)),
+            D2D1::RectF(
+                static_cast<float>(Scale(16.0f, scale)),
+                static_cast<float>(Scale(8.0f, scale)),
+                width,
+                static_cast<float>(Scale(42.0f, scale))),
             state->palette.text);
         const float dividerPadX = static_cast<float>(Scale(12.0f, scale));
         const float dividerTop = static_cast<float>(Scale(44.0f, scale));
@@ -278,6 +299,10 @@ namespace {
         state->renderTarget->FillRectangle(
             D2D1::RectF(dividerPadX, dividerTop, width - dividerPadX, dividerTop + hairline),
             state->brush.Get());
+
+        const float labelW = static_cast<float>(Scale(108.0f, scale));
+        const float leftColX = static_cast<float>(Scale(18.0f, scale));
+        const float rightColX = static_cast<float>(Scale(386.0f, scale));
 
         for (size_t index = 0; index < kColorCount; ++index) {
             ColorField& field = state->fields[index];
@@ -287,13 +312,13 @@ namespace {
                 static_cast<float>(field.outline.right),
                 static_cast<float>(field.outline.bottom));
             const int column = index < 10 ? 0 : 1;
-            const float labelLeft = ScaleF(column == 0 ? 18.0f : 386.0f, scale);
+            const float labelLeft = column == 0 ? leftColX : rightColX;
             DrawText(
                 state, kColorSpecs[index].label, state->bodyFont.Get(),
                 D2D1::RectF(
                     labelLeft,
                     static_cast<float>(field.outline.top),
-                    labelLeft + ScaleF(108.0f, scale),
+                    labelLeft + labelW,
                     static_cast<float>(field.outline.bottom)),
                 state->palette.text);
 
@@ -307,10 +332,12 @@ namespace {
                     : (field.focused
                         ? state->palette.progressGreen
                         : state->palette.statsCardBorder));
-            state->renderTarget->DrawRoundedRectangle(
-                D2D1::RoundedRect(outline, radius, radius),
+            DrawCrispRoundedRect(
+                state->renderTarget.Get(),
                 state->brush.Get(),
-                field.invalid || field.focused ? 2.0f : 1.0f);
+                outline,
+                radius,
+                2.0f);
 
             uint32_t rgb = 0;
             const std::wstring value = ReadFieldText(field.edit);
@@ -326,16 +353,20 @@ namespace {
             state->renderTarget->FillRoundedRectangle(
                 D2D1::RoundedRect(swatch, radius, radius), state->brush.Get());
             state->brush->SetColor(state->palette.statsCardBorder);
-            state->renderTarget->DrawRoundedRectangle(
-                D2D1::RoundedRect(swatch, radius, radius), state->brush.Get(), 1.0f);
+            DrawCrispRoundedRect(
+                state->renderTarget.Get(),
+                state->brush.Get(),
+                swatch,
+                radius,
+                2.0f);
         }
 
         DrawText(
             state, L"背景透明度", state->bodyFont.Get(),
             D2D1::RectF(
-                ScaleF(386.0f, scale),
+                rightColX,
                 static_cast<float>(state->transparencyOutline.top),
-                ScaleF(494.0f, scale),
+                rightColX + labelW,
                 static_cast<float>(state->transparencyOutline.bottom)),
             state->palette.text);
         const D2D1_RECT_F transparencyOutline = D2D1::RectF(
@@ -355,11 +386,12 @@ namespace {
                 : (state->transparencyFocused
                     ? state->palette.progressGreen
                     : state->palette.statsCardBorder));
-        state->renderTarget->DrawRoundedRectangle(
-            D2D1::RoundedRect(
-                transparencyOutline, transparencyRadius, transparencyRadius),
+        DrawCrispRoundedRect(
+            state->renderTarget.Get(),
             state->brush.Get(),
-            state->transparencyInvalid || state->transparencyFocused ? 2.0f : 1.0f);
+            transparencyOutline,
+            transparencyRadius,
+            2.0f);
         state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         const float percentLeft = static_cast<float>(Scale(660.0f, scale));
         const float percentWidth = static_cast<float>(Scale(36.0f, scale));
@@ -377,9 +409,9 @@ namespace {
         DrawText(
             state, L"缩放大小", state->bodyFont.Get(),
             D2D1::RectF(
-                ScaleF(386.0f, scale),
+                rightColX,
                 static_cast<float>(state->scaleOutline.top),
-                ScaleF(494.0f, scale),
+                rightColX + labelW,
                 static_cast<float>(state->scaleOutline.bottom)),
             state->palette.text);
         const D2D1_RECT_F scaleOutline = D2D1::RectF(
@@ -398,10 +430,12 @@ namespace {
                 : (state->scaleFocused
                     ? state->palette.progressGreen
                     : state->palette.statsCardBorder));
-        state->renderTarget->DrawRoundedRectangle(
-            D2D1::RoundedRect(scaleOutline, scaleRadius, scaleRadius),
+        DrawCrispRoundedRect(
+            state->renderTarget.Get(),
             state->brush.Get(),
-            state->scaleInvalid || state->scaleFocused ? 2.0f : 1.0f);
+            scaleOutline,
+            scaleRadius,
+            2.0f);
         state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         DrawText(
             state, L"%", state->bodyFont.Get(),
@@ -414,13 +448,12 @@ namespace {
 
         // 界面字体：重置为居左对齐，与“额度偏低”等左列标签严格平齐
         state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const float fontLabelLeft = ScaleF(18.0f, scale);
         DrawText(
             state, L"界面字体", state->bodyFont.Get(),
             D2D1::RectF(
-                fontLabelLeft,
+                leftColX,
                 static_cast<float>(state->fontOutline.top),
-                fontLabelLeft + ScaleF(108.0f, scale),
+                leftColX + labelW,
                 static_cast<float>(state->fontOutline.bottom)),
             state->palette.text);
         const D2D1_RECT_F fontOutline = D2D1::RectF(
@@ -438,10 +471,12 @@ namespace {
                 : (state->fontFocused
                     ? state->palette.progressGreen
                     : state->palette.statsCardBorder));
-        state->renderTarget->DrawRoundedRectangle(
-            D2D1::RoundedRect(fontOutline, fontRadius, fontRadius),
+        DrawCrispRoundedRect(
+            state->renderTarget.Get(),
             state->brush.Get(),
-            state->fontInvalid || state->fontFocused ? 2.0f : 1.0f);
+            fontOutline,
+            fontRadius,
+            2.0f);
 
         DrawButton(state, state->fontBrowseRect, L"浏览", state->hoverButton == 3);
 
@@ -449,12 +484,15 @@ namespace {
             ? state->validationMessage.c_str()
             : (state->appliedNotice
                 ? L"个性外观与字体已应用"
-                : L"透明度 0%–90%；缩放 20%–180%（间隔20%）；应用后自动启用个性外观");
+                : L"透明度 0%–90%；缩放 20%–180%（步进20%）；点击应用生效");
+        const float hintRight = static_cast<float>(state->applyRect.left - Scale(8.0f, scale));
         DrawText(
             state, hint, state->hintFont.Get(),
             D2D1::RectF(
-                ScaleF(18, scale), ScaleF(444, scale),
-                ScaleF(424, scale), ScaleF(482, scale)),
+                leftColX,
+                static_cast<float>(Scale(444.0f, scale)),
+                hintRight,
+                static_cast<float>(Scale(482.0f, scale))),
             state->invalidField >= 0
                 ? state->palette.progressRed
                 : (state->appliedNotice
@@ -825,19 +863,19 @@ namespace {
             SUCCEEDED(state.writeFactory->CreateTextFormat(
                 fontFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_BOLD,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                16.0f * scale, L"zh-cn", &state.titleFont)) &&
+                std::round(16.0f * scale), L"zh-cn", &state.titleFont)) &&
             SUCCEEDED(state.writeFactory->CreateTextFormat(
                 fontFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_REGULAR,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                14.0f * scale, L"zh-cn", &state.bodyFont)) &&
+                std::round(14.0f * scale), L"zh-cn", &state.bodyFont)) &&
             SUCCEEDED(state.writeFactory->CreateTextFormat(
                 fontFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_REGULAR,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                13.0f * scale, L"zh-cn", &state.hintFont));
+                std::round(12.0f * scale), L"zh-cn", &state.hintFont));
         if (!ok) return false;
         state.titleFont->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         state.bodyFont->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        state.hintFont->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        state.hintFont->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
         return true;
     }
 

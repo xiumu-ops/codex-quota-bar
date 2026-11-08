@@ -35,7 +35,7 @@ namespace CodexQuotaBar {
         const float safeUiScale = uiScale > 0.0f ? uiScale : 1.0f;
         const float clampedOuter = (std::max)(2.0f, std::round(outerCornerRadius));
         const float contentInset = (std::max)(1.0f, std::round(2.0f * safeUiScale));
-        const int physicalHeight = Scale(static_cast<float>(MINI_HEIGHT), safeUiScale);
+        const int physicalHeight = ScaleEven(static_cast<float>(MINI_HEIGHT), safeUiScale);
         const float maxHalfPill = std::floor(
             (std::max)(0.0f, static_cast<float>(physicalHeight) - contentInset * 2.0f) / 2.0f);
         // 内嵌胶囊圆角与外框圆角保持同心统一（R_pill = R_outer - inset），使四角与直边留白均匀一致。

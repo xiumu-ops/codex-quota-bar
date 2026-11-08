@@ -495,8 +495,8 @@ namespace CodexQuotaBar {
             const float divRight = centerX + divHalf;
 
             const float pill0Left = pad;
-            const float pill0Right = centerX - pad;
-            const float pill1Left = centerX + pad;
+            const float pill0Right = divLeft - pad;
+            const float pill1Left = divRight + pad;
             const float pill1Right = w - pad;
 
             DrawMiniQuotaSlot(pill0Left, pillTop, pill0Right, pillBottom, pillRadius, *windows[0]);
@@ -540,6 +540,7 @@ namespace CodexQuotaBar {
         if (window.available && window.remainingPercent > 0.0) {
             float fillW = (std::max)(pillRadius * 2.0f, pillW * static_cast<float>(window.remainingPercent / 100.0));
             fillW = (std::min)(fillW, pillW);
+            fillW = std::round(fillW);
             ID2D1SolidColorBrush* statusBrush = ProgressBrushFor(window.remainingPercent);
             if (statusBrush && m_pBrushHalo) {
                 const float backgroundOpacity =
@@ -585,9 +586,9 @@ namespace CodexQuotaBar {
 
     void Direct2DRenderer::DrawSyncIndicator(float centerY, SyncState state) {
         const float cx = Px(kSyncCenterX);
-        const float cy = centerY;
-        const float coreRadius = ScaleF(4.0f, m_dpiScale);
-        const float haloRadius = ScaleF(6.0f, m_dpiScale);
+        const float cy = std::round(centerY);
+        const float coreRadius = static_cast<float>(ScaleEven(4.0f, m_dpiScale));
+        const float haloRadius = static_cast<float>(ScaleEven(6.0f, m_dpiScale));
 
         ID2D1SolidColorBrush* coreBrush = m_pBrushSyncIdle.Get();
         bool hasHalo = true;
@@ -761,8 +762,9 @@ namespace CodexQuotaBar {
         } else {
             numStr = L"---";
         }
+        const float pad8 = static_cast<float>(ScaleEven(8.0f, m_dpiScale));
         const float numWidth = MeasureTextWidth(numStr, m_pFontRowValueBold.Get());
-        const float numLeft = rightX - numWidth - ScaleF(8.0f, m_dpiScale);
+        const float numLeft = std::round(rightX - numWidth - pad8);
 
         const float titleWidth = MeasureTextWidth(title, m_pFontRowTitle.Get());
 
@@ -770,7 +772,7 @@ namespace CodexQuotaBar {
         if (m_pFontRowTitle) {
             m_pFontRowTitle->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             m_pFontRowTitle->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            D2D1_RECT_F titleRect = D2D1::RectF(padX, topY, padX + titleWidth + ScaleF(8.0f, m_dpiScale), rowBottom);
+            D2D1_RECT_F titleRect = D2D1::RectF(padX, topY, std::round(padX + titleWidth + pad8), rowBottom);
             m_pRenderTarget->DrawTextW(title.c_str(), static_cast<UINT32>(title.size()), m_pFontRowTitle.Get(), titleRect, m_pBrushText.Get());
         }
 
@@ -825,6 +827,7 @@ namespace CodexQuotaBar {
         if (window.available && window.remainingPercent > 0.0) {
             float fillW = std::max(trackH, trackW * static_cast<float>(window.remainingPercent / 100.0));
             fillW = std::min(fillW, trackW);
+            fillW = std::round(fillW);
             D2D1_ROUNDED_RECT fillRect = D2D1::RoundedRect(D2D1::RectF(trackX, trackY, trackX + fillW, trackY + trackH), trackRadius, trackRadius);
             m_pRenderTarget->FillRoundedRectangle(fillRect, ProgressBrushFor(window.remainingPercent));
         }
@@ -838,7 +841,6 @@ namespace CodexQuotaBar {
 
         DrawSubCardFrame(padX, topY, cardW, height, cardCorner);
 
-        const float colW = cardW / 3.0f;
         struct ColData {
             const std::wstring& val;
             const wchar_t* label;
@@ -849,7 +851,10 @@ namespace CodexQuotaBar {
         };
 
         for (int i = 0; i < 3; ++i) {
-            const float colX = padX + i * colW;
+            const float colLeft = padX + std::round(static_cast<float>(i) * cardW / 3.0f);
+            const float colRight = (i == 2)
+                ? (padX + cardW)
+                : (padX + std::round(static_cast<float>(i + 1) * cardW / 3.0f));
             const std::wstring& val = cols[i].val;
             const wchar_t* numText = val.empty() ? L"---" : val.c_str();
             UINT32 numLen = val.empty() ? 3 : static_cast<UINT32>(val.size());
@@ -857,7 +862,7 @@ namespace CodexQuotaBar {
             if (m_pFontStatsNum) {
                 m_pFontStatsNum->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsNum->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F numRect = D2D1::RectF(colX, topY + Px(8.0f), colX + colW, topY + Px(32.0f));
+                D2D1_RECT_F numRect = D2D1::RectF(colLeft, topY + Px(8.0f), colRight, topY + Px(32.0f));
                 ID2D1SolidColorBrush* numBrush = val.empty() ? m_pBrushMuted.Get() : m_pBrushText.Get();
                 m_pRenderTarget->DrawTextW(numText, numLen, m_pFontStatsNum.Get(), numRect, numBrush);
             }
@@ -865,7 +870,7 @@ namespace CodexQuotaBar {
             if (m_pFontStatsLabel) {
                 m_pFontStatsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsLabel->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F lblRect = D2D1::RectF(colX, topY + Px(36.0f), colX + colW, topY + Px(58.0f));
+                D2D1_RECT_F lblRect = D2D1::RectF(colLeft, topY + Px(36.0f), colRight, topY + Px(58.0f));
                 m_pRenderTarget->DrawTextW(cols[i].label, static_cast<UINT32>(wcslen(cols[i].label)), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
             }
         }
@@ -909,18 +914,19 @@ namespace CodexQuotaBar {
             ? std::to_wstring(snapshot.resetCredits.availableCount) + L" 次"
             : L"--";
 
-        const float colW = cardW / 3.0f;
         const wchar_t* labels[] = { L"重置次数", L"过期时间", L"剩余天数" };
         const std::wstring* values[] = { &countText, &expiryText, &remainingDaysText };
 
         for (int i = 0; i < 3; ++i) {
-            const float colX = padX + i * colW;
-            const float colWidth = colW;
+            const float colLeft = padX + std::round(static_cast<float>(i) * cardW / 3.0f);
+            const float colRight = (i == 2)
+                ? (padX + cardW)
+                : (padX + std::round(static_cast<float>(i + 1) * cardW / 3.0f));
 
             if (m_pFontStatsNum) {
                 m_pFontStatsNum->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsNum->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F numRect = D2D1::RectF(colX, topY + Px(8.0f), colX + colWidth, topY + Px(32.0f));
+                D2D1_RECT_F numRect = D2D1::RectF(colLeft, topY + Px(8.0f), colRight, topY + Px(32.0f));
                 ID2D1SolidColorBrush* numBrush =
                     (*values[i] == L"--") ? m_pBrushMuted.Get() : m_pBrushText.Get();
                 m_pRenderTarget->DrawTextW(values[i]->c_str(), static_cast<UINT32>(values[i]->size()), m_pFontStatsNum.Get(), numRect, numBrush);
@@ -929,7 +935,7 @@ namespace CodexQuotaBar {
             if (m_pFontStatsLabel) {
                 m_pFontStatsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsLabel->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F lblRect = D2D1::RectF(colX, topY + Px(36.0f), colX + colWidth, topY + Px(58.0f));
+                D2D1_RECT_F lblRect = D2D1::RectF(colLeft, topY + Px(36.0f), colRight, topY + Px(58.0f));
                 m_pRenderTarget->DrawTextW(labels[i], static_cast<UINT32>(wcslen(labels[i])), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
             }
         }

@@ -467,7 +467,7 @@ namespace CodexQuotaBar {
 
         ShowAppearanceDialog(
             m_hwnd,
-            m_uiScale,
+            m_dpiScale,
             loaded.appearance.colors,
             loaded.appearance.backgroundTransparency,
             initialFont,
@@ -772,7 +772,7 @@ namespace CodexQuotaBar {
     SIZE MainWindow::CollapsedPhysicalWindowSize() const {
         if (m_settings.miniMode) {
             return {
-                MiniBarPhysicalWidth(m_snapshot, m_uiScale),
+                SnapEven(MiniBarPhysicalWidth(m_snapshot, m_uiScale)),
                 ScaleEven(static_cast<float>(MINI_HEIGHT), m_uiScale)
             };
         }
@@ -939,17 +939,17 @@ namespace CodexQuotaBar {
 
     bool MainWindow::IsHeaderArea(POINT pt) const {
         const int headerHeight = m_settings.miniMode && !m_expanded
-            ? Scale(static_cast<float>(MINI_HEIGHT), m_uiScale)
-            : Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
+            ? ScaleEven(static_cast<float>(MINI_HEIGHT), m_uiScale)
+            : ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
         return pt.y >= 0 && pt.y < headerHeight;
     }
 
     bool MainWindow::IsExpandButtonArea(POINT pt) const {
         if (m_settings.miniMode && !m_expanded) return false;
-        const int left = Scale(345.0f, m_uiScale);
-        const int right = Scale(static_cast<float>(BAR_WIDTH), m_uiScale);
-        const int top = Scale(68.0f, m_uiScale);
-        const int bottom = Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
+        const int left = ScaleEven(345.0f, m_uiScale);
+        const int right = ScaleEven(static_cast<float>(BAR_WIDTH), m_uiScale);
+        const int top = ScaleEven(68.0f, m_uiScale);
+        const int bottom = ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
         return pt.x >= left && pt.x < right && pt.y >= top && pt.y < bottom;
     }
 
