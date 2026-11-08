@@ -237,7 +237,7 @@ namespace {
             } else {
                 AppendValidationError(
                     errors,
-                    L"Settings.UserScale 只能是 0.75、0.875、1、1.125 或 1.25");
+                    L"Settings.UserScale 只能是 0.2 至 1.8 且为 0.2 整数倍的数值（即 20% 至 180%）");
             }
         }
         if (object.has_key(L"CompanionMode")) {
@@ -450,7 +450,7 @@ namespace {
         if (!IsSupportedUserScale(settings.userScale)) {
             AppendValidationError(
                 errors,
-                L"Settings.UserScale 只能是 0.75、0.875、1、1.125 或 1.25");
+                L"Settings.UserScale 只能是 0.2 至 1.8 且为 0.2 整数倍的数值（即 20% 至 180%）");
         }
         int refreshInterval = 0;
         if (!TryParseSupportedRefreshInterval(

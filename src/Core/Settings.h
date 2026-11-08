@@ -6,10 +6,13 @@
 
 namespace CodexQuotaBar {
 
-    inline constexpr std::array<float, 5> USER_SCALE_LEVELS = {
-        0.75f, 0.875f, 1.0f, 1.125f, 1.25f
+    inline constexpr std::array<float, 9> USER_SCALE_LEVELS = {
+        0.2f, 0.4f, 0.6f, 0.8f, 1.0f, 1.2f, 1.4f, 1.6f, 1.8f
     };
-    inline constexpr int DEFAULT_USER_SCALE_LEVEL = 2;
+    inline constexpr int DEFAULT_USER_SCALE_LEVEL = 4;
+    inline constexpr int MIN_USER_SCALE_PERCENT = 20;
+    inline constexpr int MAX_USER_SCALE_PERCENT = 180;
+    inline constexpr int USER_SCALE_PERCENT_STEP = 20;
 
     inline constexpr std::array<int, 5> REFRESH_INTERVAL_MINUTES = {
         1, 5, 10, 30, 60
@@ -17,10 +20,11 @@ namespace CodexQuotaBar {
 
     inline bool IsSupportedUserScale(double value) {
         if (!std::isfinite(value)) return false;
-        for (const float scale : USER_SCALE_LEVELS) {
-            if (value == static_cast<double>(scale)) return true;
-        }
-        return false;
+        const double roundedInt = std::round(value * 100.0);
+        if (std::fabs(value * 100.0 - roundedInt) > 1e-4) return false;
+        const int percent = static_cast<int>(roundedInt);
+        if (percent < MIN_USER_SCALE_PERCENT || percent > MAX_USER_SCALE_PERCENT) return false;
+        return (percent % USER_SCALE_PERCENT_STEP) == 0;
     }
 
     inline bool TryParseSupportedRefreshInterval(double value, int& minutes) {

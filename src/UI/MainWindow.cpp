@@ -426,22 +426,34 @@ namespace CodexQuotaBar {
         const auto applyAppearance = [this, loaded](
             const std::map<std::wstring, std::wstring>& colors,
             int backgroundTransparency,
-            const std::wstring& fontFamily)
+            const std::wstring& fontFamily,
+            int userScalePercent)
         {
             const AppearanceSettings previous = m_settings.appearance;
             const AppearanceSettings previousDefault = m_settings.defaultAppearance;
+            const float previousScale = m_settings.userScale;
+            const int previousScaleLevel = m_userScaleLevel;
+
             m_settings.appearance = loaded.appearance;
             m_settings.defaultAppearance = loaded.defaultAppearance;
             m_settings.appearance.colors = colors;
             m_settings.appearance.backgroundTransparency = backgroundTransparency;
             m_settings.appearance.fontFamily = fontFamily;
             m_settings.appearance.mode = AppearanceMode::Custom;
+
+            const float newScale = static_cast<float>(userScalePercent) / 100.0f;
+            m_settings.userScale = newScale;
+            m_userScaleLevel = ClosestScaleLevel(newScale);
+
             if (!SaveSettingsWithFeedback(false)) {
                 m_settings.appearance = previous;
                 m_settings.defaultAppearance = previousDefault;
+                m_settings.userScale = previousScale;
+                m_userScaleLevel = previousScaleLevel;
                 return false;
             }
             ApplyAppearance();
+            ApplyUiScale();
             return true;
         };
 
@@ -449,12 +461,17 @@ namespace CodexQuotaBar {
             ? loaded.appearance.fontFamily
             : m_renderer->FontFamily();
 
+        const int initialScalePercent = std::clamp(
+            static_cast<int>(std::round(m_settings.userScale * 100.0f)),
+            MIN_USER_SCALE_PERCENT, MAX_USER_SCALE_PERCENT);
+
         ShowAppearanceDialog(
             m_hwnd,
             m_uiScale,
             loaded.appearance.colors,
             loaded.appearance.backgroundTransparency,
             initialFont,
+            initialScalePercent,
             m_renderer->Palette(),
             applyAppearance);
     }
@@ -756,12 +773,12 @@ namespace CodexQuotaBar {
         if (m_settings.miniMode) {
             return {
                 MiniBarPhysicalWidth(m_snapshot, m_uiScale),
-                Scale(static_cast<float>(MINI_HEIGHT), m_uiScale)
+                ScaleEven(static_cast<float>(MINI_HEIGHT), m_uiScale)
             };
         }
         return {
-            Scale(static_cast<float>(BAR_WIDTH), m_uiScale),
-            Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale)
+            ScaleEven(static_cast<float>(BAR_WIDTH), m_uiScale),
+            ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale)
         };
     }
 
@@ -770,7 +787,7 @@ namespace CodexQuotaBar {
             return CollapsedPhysicalWindowSize();
         }
         return {
-            Scale(static_cast<float>(BAR_WIDTH), m_uiScale),
+            ScaleEven(static_cast<float>(BAR_WIDTH), m_uiScale),
             ExpandedPhysicalHeight(m_uiScale)
         };
     }
@@ -942,7 +959,6 @@ namespace CodexQuotaBar {
             { IDM_MINI_MODE, m_settings.miniMode ? L"迷你模式：开" : L"迷你模式：关" },
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
-            { IDM_SCALE_SUB, L"缩放大小" },
             { IDM_FONT_SUB, L"字体选择" },
             { IDM_APPEARANCE_SUB, L"外观配置" },
             { IDM_ALWAYS_ON_TOP, m_settings.alwaysOnTop ? L"置顶模式：开" : L"置顶模式：关" },

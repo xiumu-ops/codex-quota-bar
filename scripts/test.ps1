@@ -379,7 +379,7 @@ try {
         $env:CODEX_QUOTA_FAKE_SCENARIO = "happy"
         $miniConfig = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
         $miniConfig.Settings.MiniMode = $true
-        $miniConfig.Settings.UserScale = 1.25
+        $miniConfig.Settings.UserScale = 1.2
         $miniConfig | ConvertTo-Json -Depth 10 | Set-Content `
             -LiteralPath $ConfigFile -Encoding utf8NoBOM
 
@@ -409,8 +409,8 @@ try {
                     if ($miniHwnd -ne [IntPtr]::Zero) {
                         $miniRect = Get-CqbWindowRect $miniHwnd
                         $dpiScale = [CqbNative]::GetDpiForWindow($miniHwnd) / 96.0
-                        $expectedMiniWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.25)
-                        $expectedMiniHeight = [int][Math]::Round(28 * $dpiScale * 1.25)
+                        $expectedMiniWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.2)
+                        $expectedMiniHeight = [int][Math]::Round(28 * $dpiScale * 1.2)
                         $miniSizeOk = ($miniRect.Right - $miniRect.Left) -eq $expectedMiniWidth -and
                                       ($miniRect.Bottom - $miniRect.Top) -eq $expectedMiniHeight
                         if ($miniSizeOk) { break }
@@ -418,7 +418,7 @@ try {
                     Start-Sleep -Milliseconds 100
                 }
                 if ($miniSizeOk) {
-                    Write-Host "  [PASS] 双额度迷你栏尺寸响应 125% 用户缩放" -ForegroundColor Green
+                    Write-Host "  [PASS] 双额度迷你栏尺寸响应 120% 用户缩放" -ForegroundColor Green
                 } else {
                     Write-Host "  [FAIL] 双额度迷你栏尺寸不正确" -ForegroundColor Red
                     $script:Failures++

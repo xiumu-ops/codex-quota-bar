@@ -78,7 +78,7 @@ namespace CodexQuotaBar {
             : MINI_SINGLE_WIDTH;
     }
 
-    // 先将单个额度槽缩放到物理像素，再组合总宽度，保证双额度始终严格等宽。
+    // 先将单个额度槽缩放到物理像素，再组合总宽度，保证双额度始终严格等宽且总宽为偶数。
     inline int MiniBarPhysicalWidth(const QuotaSnapshot& snapshot, float uiScale) {
         return MiniQuotaSlotCount(snapshot) * Scale(
             static_cast<float>(MINI_SINGLE_WIDTH), uiScale);
@@ -94,7 +94,7 @@ namespace CodexQuotaBar {
     }
 
     // 标准栏与展开态布局（逻辑像素）。所有位置与尺寸都通过 SnapPx 统一取整到
-    // 物理像素后再组合：四周边距留白统一为 8px，行与卡片之间的间隔边距统一为 6px。
+    // 物理偶数像素后再组合：四周边距留白统一为 8px，行与卡片之间的间隔边距统一为 6px。
     namespace StandardLayout {
         inline constexpr float kMargin = 8.0f;          // 统一四周边距留白（左、右、上、下及展开栏底部）
         inline constexpr float kGap = 6.0f;             // 统一各行与各子卡片之间的间隔边距
@@ -122,17 +122,17 @@ namespace CodexQuotaBar {
         "展开态逻辑布局必须与 EXPANDED_HEIGHT 一致");
 
     inline float SnapPx(float logicalPx, float uiScale) {
-        return static_cast<float>(Scale(logicalPx, uiScale));
+        return static_cast<float>(ScaleEven(logicalPx, uiScale));
     }
 
-    // 展开态高度由与渲染完全相同的取整片段累加得出，保证底部留白始终等于取整后的 6px。
+    // 展开态高度由与渲染完全相同的取整片段累加得出，保证底部留白严格对应偶数像素。
     inline int ExpandedPhysicalHeight(float uiScale) {
         using namespace StandardLayout;
-        return Scale(static_cast<float>(COLLAPSED_HEIGHT), uiScale) +
-               Scale(kCardGapTop, uiScale) +
-               Scale(kCardHeight, uiScale) * 2 +
-               Scale(kCardGap, uiScale) +
-               Scale(kCardGapBottom, uiScale);
+        return static_cast<int>(SnapPx(static_cast<float>(COLLAPSED_HEIGHT), uiScale)) +
+               static_cast<int>(SnapPx(kCardGapTop, uiScale)) +
+               static_cast<int>(SnapPx(kCardHeight, uiScale)) * 2 +
+               static_cast<int>(SnapPx(kCardGap, uiScale)) +
+               static_cast<int>(SnapPx(kCardGapBottom, uiScale));
     }
 
 } // namespace CodexQuotaBar

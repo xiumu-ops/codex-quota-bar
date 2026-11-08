@@ -441,9 +441,9 @@ namespace CodexQuotaBar {
         }
 
         // 3. 外描边保留在逐像素 Alpha 画面内，确保 OuterBorder 个性配置生效。
-        //    标准栏与迷你栏统一使用取整后的描边宽度，且与 DWM 圆角同心贴合。
-        const float strokeWidth = hairline;
-        const float strokeInset = strokeWidth / 2.0f;
+        //    使用偶数像素描边宽度（>= 2px），内缩整像素，消除 0.5px 亚像素模糊。
+        const float strokeWidth = (std::max)(2.0f, static_cast<float>(SnapEven(Scale(hairline, 1.0f))));
+        const float strokeInset = strokeWidth * 0.5f;
         const float strokeRadius = (std::max)(0.0f, outerRadius - strokeInset);
         const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
             D2D1::RectF(
@@ -489,7 +489,7 @@ namespace CodexQuotaBar {
             DrawMiniQuotaSlot(pillLeft, pillTop, pillRight, pillBottom, pillRadius, *windows[0]);
         } else if (count == 2) {
             const float centerX = std::round(w * 0.5f);
-            const float divThick = (std::max)(1.0f, std::round(metrics.dividerThickness));
+            const float divThick = (std::max)(2.0f, static_cast<float>(SnapEven(Scale(metrics.dividerThickness, 1.0f))));
             const float divHalf = divThick * 0.5f;
             const float divLeft = centerX - divHalf;
             const float divRight = centerX + divHalf;
@@ -502,8 +502,11 @@ namespace CodexQuotaBar {
             DrawMiniQuotaSlot(pill0Left, pillTop, pill0Right, pillBottom, pillRadius, *windows[0]);
             DrawMiniQuotaSlot(pill1Left, pillTop, pill1Right, pillBottom, pillRadius, *windows[1]);
 
-            const float dividerHeight = MiniDividerHeight(static_cast<int>(m_height), metrics);
-            const float dividerTop = std::round((h - dividerHeight) / 2.0f);
+            int divHPx = static_cast<int>(std::round(MiniDividerHeight(static_cast<int>(m_height), metrics)));
+            if (divHPx % 2 != 0) divHPx -= 1;
+            if (divHPx < 2) divHPx = 2;
+            const float dividerHeight = static_cast<float>(divHPx);
+            const float dividerTop = std::round((h - dividerHeight) * 0.5f);
             const float dividerBottom = dividerTop + dividerHeight;
             const float divCorner = divHalf;
             const D2D1_ROUNDED_RECT divRect = D2D1::RoundedRect(
@@ -696,10 +699,10 @@ namespace CodexQuotaBar {
 
     void Direct2DRenderer::DrawChevron(float centerY, bool expanded) {
         const float cx = Px(kChevronCenterX);
-        const float cy = centerY;
-        const float halfW = ScaleF(6.0f, m_dpiScale);
-        const float halfH = ScaleF(4.0f, m_dpiScale);
-        const float strokeW = ScaleF(2.0f, m_dpiScale);
+        const float cy = std::round(centerY);
+        const float halfW = static_cast<float>(ScaleEven(6.0f, m_dpiScale));
+        const float halfH = static_cast<float>(ScaleEven(4.0f, m_dpiScale));
+        const float strokeW = static_cast<float>(ScaleEven(2.0f, m_dpiScale));
 
         const bool pointsUp = expanded;
 
@@ -811,7 +814,10 @@ namespace CodexQuotaBar {
         float trackH = customHeight > 0.0f
             ? customHeight
             : (std::max)(4.0f, Px(kTrackHeight));
-        float trackRadius = trackH / 2.0f;
+        int trackHPx = static_cast<int>(std::round(trackH));
+        if (trackHPx % 2 != 0) trackHPx += 1;
+        trackH = static_cast<float>(trackHPx);
+        float trackRadius = trackH * 0.5f;
 
         D2D1_ROUNDED_RECT trackBgRect = D2D1::RoundedRect(D2D1::RectF(trackX, trackY, trackX + trackW, trackY + trackH), trackRadius, trackRadius);
         m_pRenderTarget->FillRoundedRectangle(trackBgRect, m_pBrushTrackBg.Get());
@@ -871,8 +877,8 @@ namespace CodexQuotaBar {
         const D2D1_ROUNDED_RECT fillRect = D2D1::RoundedRect(
             D2D1::RectF(left, top, left + width, top + height), corner, corner);
         m_pRenderTarget->FillRoundedRectangle(fillRect, m_pBrushStatsCardBg.Get());
-        // 细描边按整像素宽度内缩半个线宽，在各 DPI 下均精确落在物理像素格上。
-        const float strokeWidth = (std::max)(1.0f, std::round(m_dpiScale));
+        // 细描边按偶数像素宽度（>= 2px）内缩整像素，在各 DPI 下均精确落在物理像素格上，避免 0.5px 亚像素模糊。
+        const float strokeWidth = (std::max)(2.0f, static_cast<float>(SnapEven(Scale(1.0f, m_dpiScale))));
         const float inset = strokeWidth * 0.5f;
         const D2D1_ROUNDED_RECT strokeRect = D2D1::RoundedRect(
             D2D1::RectF(left + inset, top + inset, left + width - inset, top + height - inset),

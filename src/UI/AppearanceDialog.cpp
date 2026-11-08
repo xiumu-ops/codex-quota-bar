@@ -4,6 +4,7 @@
 #include "Core/Constants.h"
 #include "Core/DpiHelper.h"
 #include "Core/Layout.h"
+#include "Core/Settings.h"
 #include "UI/WindowEffects.h"
 
 #include <commdlg.h>
@@ -24,6 +25,7 @@ namespace {
     constexpr int kEditControlBase = 100;
     constexpr int kTransparencyEditControlId = 200;
     constexpr int kFontEditControlId = 201;
+    constexpr int kScaleEditControlId = 202;
     constexpr size_t kColorCount = 19;
 
     struct ColorSpec {
@@ -77,6 +79,10 @@ namespace {
         HWND transparencyEdit = nullptr;
         bool transparencyFocused = false;
         bool transparencyInvalid = false;
+        RECT scaleOutline = {};
+        HWND scaleEdit = nullptr;
+        bool scaleFocused = false;
+        bool scaleInvalid = false;
         RECT fontOutline = {};
         HWND fontEdit = nullptr;
         bool fontFocused = false;
@@ -226,6 +232,21 @@ namespace {
         return IsValidBackgroundTransparency(transparency);
     }
 
+    bool TryReadScale(HWND edit, int& scalePercent) {
+        const std::wstring value = ReadFieldText(edit);
+        if (value.empty()) return false;
+        wchar_t* end = nullptr;
+        errno = 0;
+        const long parsed = std::wcstol(value.c_str(), &end, 10);
+        if (errno != 0 || end == value.c_str() || *end != L'\0' ||
+            parsed < MIN_USER_SCALE_PERCENT || parsed > MAX_USER_SCALE_PERCENT ||
+            (parsed % USER_SCALE_PERCENT_STEP) != 0) {
+            return false;
+        }
+        scalePercent = static_cast<int>(parsed);
+        return true;
+    }
+
     bool RenderDialog(HDC hdc, const RECT& clientRect, AppearanceDialogState* state) {
         if (!hdc || !EnsureRenderTarget(state)) return false;
         RECT bound = clientRect;
@@ -351,6 +372,46 @@ namespace {
                 static_cast<float>(state->transparencyOutline.bottom)),
             state->palette.muted);
 
+        // 缩放大小：放置于背景透明度下，与原本UI（Label/Edit/Percent）严格对齐
+        state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        DrawText(
+            state, L"缩放大小", state->bodyFont.Get(),
+            D2D1::RectF(
+                ScaleF(386.0f, scale),
+                static_cast<float>(state->scaleOutline.top),
+                ScaleF(494.0f, scale),
+                static_cast<float>(state->scaleOutline.bottom)),
+            state->palette.text);
+        const D2D1_RECT_F scaleOutline = D2D1::RectF(
+            static_cast<float>(state->scaleOutline.left),
+            static_cast<float>(state->scaleOutline.top),
+            static_cast<float>(state->scaleOutline.right),
+            static_cast<float>(state->scaleOutline.bottom));
+        const float scaleRadius = static_cast<float>(Scale(5.0f, scale));
+        state->brush->SetColor(state->palette.trackBg);
+        state->renderTarget->FillRoundedRectangle(
+            D2D1::RoundedRect(scaleOutline, scaleRadius, scaleRadius),
+            state->brush.Get());
+        state->brush->SetColor(
+            state->scaleInvalid
+                ? state->palette.progressRed
+                : (state->scaleFocused
+                    ? state->palette.progressGreen
+                    : state->palette.statsCardBorder));
+        state->renderTarget->DrawRoundedRectangle(
+            D2D1::RoundedRect(scaleOutline, scaleRadius, scaleRadius),
+            state->brush.Get(),
+            state->scaleInvalid || state->scaleFocused ? 2.0f : 1.0f);
+        state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        DrawText(
+            state, L"%", state->bodyFont.Get(),
+            D2D1::RectF(
+                percentLeft,
+                static_cast<float>(state->scaleOutline.top),
+                percentLeft + percentWidth,
+                static_cast<float>(state->scaleOutline.bottom)),
+            state->palette.muted);
+
         // 界面字体：重置为居左对齐，与“额度偏低”等左列标签严格平齐
         state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         const float fontLabelLeft = ScaleF(18.0f, scale);
@@ -388,7 +449,7 @@ namespace {
             ? state->validationMessage.c_str()
             : (state->appliedNotice
                 ? L"个性外观与字体已应用"
-                : L"透明度 0%–90%；支持自定义字体；应用后自动启用个性外观");
+                : L"透明度 0%–90%；缩放 20%–180%（间隔20%）；应用后自动启用个性外观");
         DrawText(
             state, hint, state->hintFont.Get(),
             D2D1::RectF(
@@ -404,14 +465,15 @@ namespace {
         DrawButton(state, state->confirmRect, L"确定", state->hoverButton == 1);
         DrawButton(state, state->cancelRect, L"取消", state->hoverButton == 2);
 
-        const float borderInset = hairline * 0.5f;
+        const float borderStroke = (std::max)(2.0f, static_cast<float>(SnapEven(Scale(1.0f, scale))));
+        const float borderInset = borderStroke * 0.5f;
         const float outerCorner = (std::max)(0.0f, state->windowCornerRadius - borderInset);
         state->brush->SetColor(state->palette.statsCardBorder);
         state->renderTarget->DrawRoundedRectangle(
             D2D1::RoundedRect(
                 D2D1::RectF(borderInset, borderInset, width - borderInset, height - borderInset),
                 outerCorner, outerCorner),
-            state->brush.Get(), hairline);
+            state->brush.Get(), borderStroke);
 
         const HRESULT result = state->renderTarget->EndDraw();
         if (result == D2DERR_RECREATE_TARGET) {
@@ -458,6 +520,12 @@ namespace {
             state->invalidField = static_cast<int>(kColorCount) + 1;
         }
 
+        int scalePercent = 100;
+        state->scaleInvalid = !TryReadScale(state->scaleEdit, scalePercent);
+        if (state->invalidField < 0 && state->scaleInvalid) {
+            state->invalidField = static_cast<int>(kColorCount) + 2;
+        }
+
         if (state->invalidField >= 0) {
             HWND edit = nullptr;
             if (state->invalidField < static_cast<int>(kColorCount)) {
@@ -468,13 +536,16 @@ namespace {
             } else if (state->invalidField == static_cast<int>(kColorCount)) {
                 state->validationMessage = L"背景透明度必须是 0 至 90 的整数";
                 edit = state->transparencyEdit;
-            } else {
+            } else if (state->invalidField == static_cast<int>(kColorCount) + 1) {
                 if (fontName.empty()) {
                     state->validationMessage = L"界面字体名称不能为空";
                 } else {
                     state->validationMessage = L"未找到字体族“" + fontName + L"”，请确认已安装";
                 }
                 edit = state->fontEdit;
+            } else {
+                state->validationMessage = L"缩放大小必须是 20 至 180 且为 20 倍数的整数";
+                edit = state->scaleEdit;
             }
             SetFocus(edit);
             SendMessageW(edit, EM_SETSEL, 0, static_cast<LPARAM>(-1));
@@ -482,7 +553,7 @@ namespace {
             return;
         }
         if (!state->applyCallback ||
-            !state->applyCallback(colors, transparency, fontName)) {
+            !state->applyCallback(colors, transparency, fontName, scalePercent)) {
             return;
         }
 
@@ -500,6 +571,7 @@ namespace {
                 SendMessageW(state->fields[i].edit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
             }
             SendMessageW(state->transparencyEdit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
+            SendMessageW(state->scaleEdit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
             SendMessageW(state->fontEdit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
         }
 
@@ -590,6 +662,30 @@ namespace {
                 }
                 if (HIWORD(wParam) == EN_CHANGE) {
                     state->transparencyInvalid = false;
+                    state->appliedNotice = false;
+                    state->invalidField = -1;
+                    for (size_t index = 0; index < kColorCount; ++index) {
+                        if (state->fields[index].invalid) {
+                            state->invalidField = static_cast<int>(index);
+                            state->validationMessage = L"“";
+                            state->validationMessage += kColorSpecs[index].label;
+                            state->validationMessage += L"”必须使用 #RRGGBB 格式";
+                            break;
+                        }
+                    }
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (controlId == kScaleEditControlId) {
+                if (HIWORD(wParam) == EN_SETFOCUS) {
+                    state->scaleFocused = true;
+                }
+                if (HIWORD(wParam) == EN_KILLFOCUS) {
+                    state->scaleFocused = false;
+                }
+                if (HIWORD(wParam) == EN_CHANGE) {
+                    state->scaleInvalid = false;
                     state->appliedNotice = false;
                     state->invalidField = -1;
                     for (size_t index = 0; index < kColorCount; ++index) {
@@ -778,6 +874,7 @@ namespace {
         const std::map<std::wstring, std::wstring>& currentColors,
         int currentBackgroundTransparency,
         const std::wstring& currentFontFamily,
+        int currentUserScalePercent,
         const ThemePalette& palette,
         const AppearanceApplyCallback& applyCallback)
     {
@@ -934,6 +1031,34 @@ namespace {
             state.transparencyEdit, WM_SETFONT,
             reinterpret_cast<WPARAM>(state.editFont), TRUE);
         SendMessageW(state.transparencyEdit, EM_SETLIMITTEXT, 2, 0);
+
+        const int scaleLeft = Scale(498.0f, scale);
+        const int scaleTop = Scale(398.0f, scale);
+        state.scaleOutline = {
+            scaleLeft, scaleTop,
+            scaleLeft + outlineWidth, scaleTop + outlineHeight
+        };
+        state.scaleEdit = CreateWindowExW(
+            0, L"EDIT", std::to_wstring(currentUserScalePercent).c_str(),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_NUMBER | ES_AUTOHSCROLL,
+            state.scaleOutline.left + editPadX,
+            state.scaleOutline.top + editOffsetY,
+            outlineWidth - editPadX * 2,
+            editHeight,
+            dialog,
+            reinterpret_cast<HMENU>(
+                static_cast<INT_PTR>(kScaleEditControlId)),
+            GetModuleHandleW(nullptr), nullptr);
+        if (!state.scaleEdit) {
+            DestroyWindow(dialog);
+            DeleteObject(state.editFont);
+            DeleteObject(state.editBrush);
+            return false;
+        }
+        SendMessageW(
+            state.scaleEdit, WM_SETFONT,
+            reinterpret_cast<WPARAM>(state.editFont), TRUE);
+        SendMessageW(state.scaleEdit, EM_SETLIMITTEXT, 3, 0);
 
         const int fontOutlineLeft = Scale(130.0f, scale);
         const int fontOutlineTop = Scale(398.0f, scale);

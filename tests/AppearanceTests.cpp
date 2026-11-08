@@ -90,23 +90,21 @@ int main() {
     Expect(MiniBarPhysicalWidth(oneQuota, 1.5625f) == 88,
            "single mini slot matches half of dual width at fractional scale");
 
-    const MiniBarMetrics miniAt75 = ScaledMiniBarMetrics(0.75f);
-    Expect(!ShouldUseSmallWindowCorner(true, 0.75f),
+    const MiniBarMetrics miniAt80 = ScaledMiniBarMetrics(0.8f);
+    Expect(!ShouldUseSmallWindowCorner(true, 0.8f),
            "mini bar maintains unified standard round corner preference");
-    Expect(!ShouldUseSmallWindowCorner(false, 0.75f),
+    Expect(!ShouldUseSmallWindowCorner(false, 0.8f),
            "standard bar maintains unified standard round corner preference");
-    Expect(miniAt75.outerCornerRadius == 8.0f,
-           "75% mini outer corner matches unified 96-DPI DWMWCP_ROUND (8px)");
-    Expect(miniAt75.contentInset == 2.0f,
-           "mini content inset follows 75% user scale");
-    Expect(miniAt75.pillCornerRadius == 6.0f,
-           "75% mini pill corner stays concentric with 8px outer corner");
-    Expect(miniAt75.dividerThickness == 1.0f,
-           "mini divider remains one visible physical pixel at 75%");
-    Expect(miniAt75.outerBorderThickness == 1.0f,
-           "mini border remains one visible physical pixel at 75%");
-    Expect(MiniDividerHeight(21, miniAt75) == 5.0f,
-           "75% divider spans the concentric pill's straight center section");
+    Expect(miniAt80.outerCornerRadius == 8.0f,
+           "80% mini outer corner matches unified 96-DPI DWMWCP_ROUND (8px)");
+    Expect(miniAt80.contentInset == 2.0f,
+           "mini content inset follows 80% user scale");
+    Expect(miniAt80.pillCornerRadius == 6.0f,
+           "80% mini pill corner stays concentric with 8px outer corner");
+    Expect(miniAt80.dividerThickness == 1.0f,
+           "mini divider remains one visible physical pixel at 80%");
+    Expect(miniAt80.outerBorderThickness == 1.0f,
+           "mini border remains one visible physical pixel at 80%");
 
     const MiniBarMetrics miniAt100 = ScaledMiniBarMetrics(1.0f);
     Expect(miniAt100.outerCornerRadius == 8.0f,
@@ -118,35 +116,29 @@ int main() {
     Expect(MiniDividerHeight(28, miniAt100) == 12.0f,
            "100% divider spans the concentric pill's straight center section");
 
-    const MiniBarMetrics miniAt125 = ScaledMiniBarMetrics(1.25f);
-    Expect(miniAt125.outerCornerRadius == 8.0f,
-           "125% user scale at 96 DPI keeps 8px outer corner aligned with DWM");
-    Expect(miniAt125.contentInset == 3.0f,
-           "mini content inset follows 125% user scale");
-    Expect(miniAt125.pillCornerRadius == 5.0f,
-           "125% mini pill corner stays concentric with 8px outer corner and 3px inset");
-    Expect(miniAt125.dividerThickness == 1.0f,
-           "mini divider snaps to a physical pixel at 125%");
-    Expect(miniAt125.outerBorderThickness == 1.0f,
-           "mini border snaps to a physical pixel at 125%");
-    Expect(MiniDividerHeight(35, miniAt125) == 19.0f,
-           "125% divider spans the concentric pill's straight center section");
+    const MiniBarMetrics miniAt120 = ScaledMiniBarMetrics(1.2f);
+    Expect(miniAt120.outerCornerRadius == 8.0f,
+           "120% user scale at 96 DPI keeps 8px outer corner aligned with DWM");
+    Expect(miniAt120.contentInset == 2.0f,
+           "mini content inset follows 120% user scale");
+    Expect(miniAt120.pillCornerRadius == 6.0f,
+           "120% mini pill corner stays concentric with 8px outer corner");
 
-    const MiniBarMetrics miniHiDpiSmall = ScaledMiniBarMetricsForWindow(1.5f, 0.75f, true);
+    const MiniBarMetrics miniHiDpiSmall = ScaledMiniBarMetricsForWindow(1.5f, 0.8f, true);
     Expect(miniHiDpiSmall.outerCornerRadius == 12.0f,
-           "150% DPI + 75% mini outer corner matches unified DWMWCP_ROUND (8px * 1.5 = 12px)");
+           "150% DPI + 80% mini outer corner matches unified DWMWCP_ROUND (8px * 1.5 = 12px)");
     Expect(miniHiDpiSmall.contentInset == 2.0f,
-           "150% DPI + 75% mini inset rounds to 2px");
+           "150% DPI + 80% mini inset rounds to 2px");
     Expect(miniHiDpiSmall.pillCornerRadius == 10.0f,
-           "150% DPI + 75% mini pill stays concentric (12 - 2 = 10px)");
+           "150% DPI + 80% mini pill stays concentric (12 - 2 = 10px)");
 
-    const MiniBarMetrics miniHiDpiLarge = ScaledMiniBarMetricsForWindow(2.0f, 1.25f, true);
+    const MiniBarMetrics miniHiDpiLarge = ScaledMiniBarMetricsForWindow(2.0f, 1.2f, true);
     Expect(miniHiDpiLarge.outerCornerRadius == 16.0f,
-           "200% DPI + 125% mini outer corner matches DWMWCP_ROUND (16px)");
+           "200% DPI + 120% mini outer corner matches DWMWCP_ROUND (16px)");
     Expect(miniHiDpiLarge.contentInset == 5.0f,
-           "200% DPI + 125% mini inset rounds to 5px");
+           "200% DPI + 120% mini inset rounds to 5px");
     Expect(miniHiDpiLarge.pillCornerRadius == 11.0f,
-           "200% DPI + 125% mini pill stays concentric (16 - 5 = 11px)");
+           "200% DPI + 120% mini pill stays concentric (16 - 5 = 11px)");
 
     const float monitorDpis[] = { 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
     for (float dpi : monitorDpis) {
@@ -164,10 +156,15 @@ int main() {
         }
     }
 
-    Expect(IsSupportedUserScale(0.75), "minimum UI scale accepted");
-    Expect(IsSupportedUserScale(1.25), "maximum UI scale accepted");
-    Expect(!IsSupportedUserScale(0.8), "unsupported UI scale rejected");
-    Expect(!IsSupportedUserScale(2.0), "out-of-menu UI scale rejected");
+    Expect(IsSupportedUserScale(0.2), "minimum UI scale accepted (20%)");
+    Expect(IsSupportedUserScale(1.8), "maximum UI scale accepted (180%)");
+    Expect(IsSupportedUserScale(1.0), "default UI scale accepted (100%)");
+    Expect(IsSupportedUserScale(0.8), "80% UI scale accepted");
+    Expect(IsSupportedUserScale(1.2), "120% UI scale accepted");
+    Expect(!IsSupportedUserScale(0.75), "unsupported fractional UI scale rejected");
+    Expect(!IsSupportedUserScale(0.3), "odd 10% interval UI scale rejected");
+    Expect(!IsSupportedUserScale(0.1), "below 20% UI scale rejected");
+    Expect(!IsSupportedUserScale(2.0), "above 180% UI scale rejected");
 
     int interval = 0;
     Expect(TryParseSupportedRefreshInterval(30.0, interval) && interval == 30,
