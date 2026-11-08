@@ -931,7 +931,7 @@ namespace CodexQuotaBar {
         if (m_settings.miniMode && !m_expanded) return false;
         const int left = Scale(345.0f, m_uiScale);
         const int right = Scale(static_cast<float>(BAR_WIDTH), m_uiScale);
-        const int top = Scale(StandardLayout::kFooterTop - StandardLayout::kGap * 0.5f, m_uiScale);
+        const int top = Scale(68.0f, m_uiScale);
         const int bottom = Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
         return pt.x >= left && pt.x < right && pt.y >= top && pt.y < bottom;
     }

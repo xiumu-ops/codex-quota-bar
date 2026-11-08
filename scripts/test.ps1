@@ -246,8 +246,8 @@ try {
 
     $collapsedBefore = Get-CqbWindowRect $hwnd
     $uiScale = ($collapsedBefore.Right - $collapsedBefore.Left) / 380.0
-    $expandX = [int][Math]::Round(366.0 * $uiScale)
-    $expandY = [int][Math]::Round(76.0 * $uiScale)
+    $expandX = [int][Math]::Round(364.0 * $uiScale)
+    $expandY = [int][Math]::Round(88.0 * $uiScale)
     [void][CqbNative]::SendMessage($hwnd, 0x0201, [IntPtr]::new(1), (New-CqbLParam $expandX $expandY))
     [void][CqbNative]::SendMessage($hwnd, 0x0202, [IntPtr]::Zero, (New-CqbLParam $expandX $expandY))
     Start-Sleep -Milliseconds 150
