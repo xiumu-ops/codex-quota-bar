@@ -12,9 +12,12 @@
 #include "UI/WindowEffects.h"
 #include "resources/resource.h"
 
+#include <commdlg.h>
+#pragma comment(lib, "comdlg32.lib")
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
+#include <cwchar>
 #include <system_error>
 #include <limits>
 #include <thread>
@@ -38,6 +41,10 @@ namespace CodexQuotaBar {
     constexpr int IDM_APPEARANCE_DEFAULT = 2301;
     constexpr int IDM_APPEARANCE_CUSTOM = 2302;
     constexpr int IDM_APPEARANCE_EDIT = 2303;
+    constexpr int IDM_FONT_SUB = 2400;
+    constexpr int IDM_FONT_PRESET_BASE = 2401;
+    constexpr int IDM_FONT_CHOOSE_SYSTEM = 2498;
+    constexpr int IDM_FONT_CUSTOM_DIALOG = 2499;
 
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
@@ -118,7 +125,7 @@ namespace CodexQuotaBar {
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
-    bool MainWindow::Create(bool forceInitialRefresh) {
+    bool MainWindow::Create() {
         HINSTANCE hInstance = GetModuleHandleW(NULL);
 
         WNDCLASSEXW wc = { 0 };
@@ -181,32 +188,36 @@ namespace CodexQuotaBar {
         }
         ApplyAppearance(settingsErrors);
 
-        // 获取当前屏幕 DPI 并适配
+        // 获取当前屏幕 DPI 并确定初始窗口坐标，再统一完成缩放渲染与分层提交
         UINT dpi = GetDpiForWindow(m_hwnd);
         if (dpi == 0) dpi = BASE_DPI;
-        ApplyDpiScale(dpi);
+        m_currentDpi = static_cast<int>(dpi);
+        m_dpiScale = m_currentDpi / static_cast<float>(BASE_DPI);
+        m_uiScale = m_dpiScale * USER_SCALE_LEVELS[
+            static_cast<std::size_t>(m_userScaleLevel)];
 
-        // 读取持久化窗口位置
+        const SIZE initialPhysical = PhysicalWindowSize();
+        POINT initialPosition = {};
         auto stored = ConfigStore::LoadState();
         if (stored.hasPosition) {
-            const SIZE sz = PhysicalWindowSize();
-            POINT clamped = ClampToScreens(stored.position, sz);
-            SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
-                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-            m_collapsedLocation = clamped;
+            initialPosition = ClampToScreens(stored.position, initialPhysical);
         } else {
-            RECT rcWork;
+            RECT rcWork = {};
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
-            const SIZE physical = PhysicalWindowSize();
-            int w = physical.cx;
-            int h = physical.cy;
-            int x = rcWork.left + (rcWork.right - rcWork.left - w) / 2;
-            int y = rcWork.top + 34;
-            SetWindowPos(m_hwnd, NULL, x, y, w, h,
-                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-            m_collapsedLocation = { x, y };
+            const int x = rcWork.left +
+                (rcWork.right - rcWork.left - initialPhysical.cx) / 2;
+            const int y = rcWork.top + 34;
+            initialPosition = ClampToScreens({ x, y }, initialPhysical);
         }
+        m_collapsedLocation = initialPosition;
         m_hasCollapsedLocation = true;
+        SetWindowPos(
+            m_hwnd, NULL,
+            initialPosition.x, initialPosition.y,
+            initialPhysical.cx, initialPhysical.cy,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+
+        ApplyDpiScale(static_cast<int>(dpi));
 
         // 自动刷新定时器
         SetTimer(m_hwnd, TIMER_REFRESH_ID,
@@ -217,7 +228,7 @@ namespace CodexQuotaBar {
             PollCompanionMode();
         }
 
-        if (forceInitialRefresh || !m_companionMode || m_codexDesktopRunning) {
+        if (!m_companionMode || m_codexDesktopRunning) {
             RefreshQuota();
         }
 
@@ -228,7 +239,7 @@ namespace CodexQuotaBar {
         if (m_hwnd) {
             if (m_companionMode && !m_codexDesktopRunning) return;
             ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
-            UpdateWindow(m_hwnd);
+            RenderLayeredWindow();
         }
     }
 
@@ -252,20 +263,38 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ApplyUiScale() {
-        m_uiScale = m_dpiScale * USER_SCALE_LEVELS[
+        const float userScale = USER_SCALE_LEVELS[
             static_cast<std::size_t>(m_userScaleLevel)];
-        m_renderer->SetDpiScale(m_uiScale);
+        m_uiScale = m_dpiScale * userScale;
+        m_renderer->SetScales(m_dpiScale, userScale);
 
         const SIZE physical = PhysicalWindowSize();
-        int targetW = physical.cx;
-        int targetH = physical.cy;
+        const int targetW = physical.cx;
+        const int targetH = physical.cy;
+        // 必须先更新渲染器目标尺寸并丢弃旧位图，防止 SetWindowPos 期间重入绘制把旧尺寸写回分层窗口。
+        m_renderer->Resize(
+            static_cast<UINT>(targetW),
+            static_cast<UINT>(targetH));
 
-        SetWindowPos(m_hwnd, NULL, 0, 0, targetW, targetH,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
-                     SWP_NOCOPYBITS | SWP_FRAMECHANGED);
-        m_renderer->Resize(targetW, targetH);
+        RECT rc = {};
+        GetWindowRect(m_hwnd, &rc);
+        POINT clamped = {};
+        if (m_expanded && m_hasCollapsedLocation) {
+            m_collapsedLocation = ClampToScreens(
+                m_collapsedLocation, CollapsedPhysicalWindowSize());
+            clamped = ClampToScreens(m_collapsedLocation, physical);
+        } else {
+            clamped = ClampToScreens({ rc.left, rc.top }, physical);
+            m_collapsedLocation = clamped;
+            m_hasCollapsedLocation = true;
+        }
+
+        SetWindowPos(
+            m_hwnd, NULL, clamped.x, clamped.y, targetW, targetH,
+            SWP_NOZORDER | SWP_NOACTIVATE |
+            SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_FRAMECHANGED);
         ApplyCurrentWindowEffects();
-        RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
+        RenderLayeredWindow();
         DwmFlush();
     }
 
@@ -275,7 +304,9 @@ namespace CodexQuotaBar {
         m_settings.userScale = USER_SCALE_LEVELS[static_cast<std::size_t>(level)];
         SaveSettingsWithFeedback();
         ApplyUiScale();
-        OnWindowMoved();
+        if (m_hasCollapsedLocation) {
+            ConfigStore::SavePosition(m_collapsedLocation);
+        }
     }
 
     void MainWindow::ApplyRefreshInterval(int level) {
@@ -344,7 +375,13 @@ namespace CodexQuotaBar {
                 L"Codex-Quota-Bar 配置校验",
                 MB_OK | MB_ICONWARNING);
         }
-        if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+        if (m_hwnd) {
+            if (IsWindowVisible(m_hwnd)) {
+                RenderLayeredWindow();
+            } else {
+                InvalidateRect(m_hwnd, NULL, FALSE);
+            }
+        }
     }
 
     void MainWindow::SetAppearanceMode(AppearanceMode mode) {
@@ -388,7 +425,8 @@ namespace CodexQuotaBar {
 
         const auto applyAppearance = [this, loaded](
             const std::map<std::wstring, std::wstring>& colors,
-            int backgroundTransparency)
+            int backgroundTransparency,
+            const std::wstring& fontFamily)
         {
             const AppearanceSettings previous = m_settings.appearance;
             const AppearanceSettings previousDefault = m_settings.defaultAppearance;
@@ -396,6 +434,7 @@ namespace CodexQuotaBar {
             m_settings.defaultAppearance = loaded.defaultAppearance;
             m_settings.appearance.colors = colors;
             m_settings.appearance.backgroundTransparency = backgroundTransparency;
+            m_settings.appearance.fontFamily = fontFamily;
             m_settings.appearance.mode = AppearanceMode::Custom;
             if (!SaveSettingsWithFeedback(false)) {
                 m_settings.appearance = previous;
@@ -406,14 +445,121 @@ namespace CodexQuotaBar {
             return true;
         };
 
+        const std::wstring initialFont = !loaded.appearance.fontFamily.empty()
+            ? loaded.appearance.fontFamily
+            : m_renderer->FontFamily();
+
         ShowAppearanceDialog(
             m_hwnd,
             m_uiScale,
             loaded.appearance.colors,
             loaded.appearance.backgroundTransparency,
+            initialFont,
             m_renderer->Palette(),
-            m_renderer->FontFamily(),
             applyAppearance);
+    }
+
+    void MainWindow::ApplyFontFamily(const std::wstring& font) {
+        if (font.empty()) return;
+        std::wstring loadErrors;
+        bool readable = false;
+        const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
+        if (!readable || !loadErrors.empty()) {
+            MessageBoxW(
+                m_hwnd,
+                (L"无法切换字体，请先修正配置文件：\n\n" + loadErrors).c_str(),
+                L"Codex-Quota-Bar 配置错误",
+                MB_OK | MB_ICONWARNING);
+            return;
+        }
+
+        const AppearanceSettings previous = m_settings.appearance;
+        const AppearanceSettings previousDefault = m_settings.defaultAppearance;
+        m_settings.appearance = loaded.appearance;
+        m_settings.defaultAppearance = loaded.defaultAppearance;
+        m_settings.appearance.fontFamily = font;
+        m_settings.appearance.mode = AppearanceMode::Custom;
+        if (!SaveSettingsWithFeedback(false)) {
+            m_settings.appearance = previous;
+            m_settings.defaultAppearance = previousDefault;
+            return;
+        }
+        ApplyAppearance();
+    }
+
+    void MainWindow::ShowFontMenu(int screenX, int screenY) {
+        const std::vector<std::wstring> candidateFonts = {
+            L"Microsoft YaHei UI",
+            L"Segoe UI",
+            L"SimSun",
+            L"SimHei",
+            L"KaiTi",
+            L"FangSong",
+            L"DengXian",
+            L"HarmonyOS Sans SC",
+            L"PingFang SC",
+            L"Cascadia Code",
+            L"Consolas",
+            L"JetBrains Mono",
+            L"Fira Code"
+        };
+
+        std::vector<std::wstring> availableFonts;
+        for (const auto& candidate : candidateFonts) {
+            if (m_renderer->FontFamilyExists(candidate)) {
+                availableFonts.push_back(candidate);
+            }
+        }
+        if (availableFonts.empty()) {
+            availableFonts.push_back(L"Microsoft YaHei UI");
+        }
+        const std::wstring currentFont = m_renderer->FontFamily();
+        bool foundCurrent = false;
+        for (const auto& f : availableFonts) {
+            if (_wcsicmp(f.c_str(), currentFont.c_str()) == 0) {
+                foundCurrent = true;
+                break;
+            }
+        }
+        if (!foundCurrent && !currentFont.empty()) {
+            availableFonts.push_back(currentFont);
+        }
+
+        std::vector<MenuItem> fontItems;
+        for (std::size_t i = 0; i < availableFonts.size(); ++i) {
+            std::wstring label = availableFonts[i];
+            if (_wcsicmp(availableFonts[i].c_str(), currentFont.c_str()) == 0) {
+                label += L" (当前)";
+            }
+            fontItems.push_back({ IDM_FONT_PRESET_BASE + static_cast<int>(i), label });
+        }
+        fontItems.push_back({ 0, L"" });
+        fontItems.push_back({ IDM_FONT_CHOOSE_SYSTEM, L"浏览全部系统字体..." });
+        fontItems.push_back({ IDM_FONT_CUSTOM_DIALOG, L"自定义外观设置..." });
+
+        const int selected = CustomMenu::Show(
+            m_hwnd, m_uiScale, screenX, screenY, fontItems,
+            m_renderer->Palette(), m_renderer->FontFamily());
+
+        if (selected >= IDM_FONT_PRESET_BASE &&
+            selected < IDM_FONT_PRESET_BASE + static_cast<int>(availableFonts.size())) {
+            const std::size_t index = static_cast<std::size_t>(selected - IDM_FONT_PRESET_BASE);
+            ApplyFontFamily(availableFonts[index]);
+        } else if (selected == IDM_FONT_CHOOSE_SYSTEM) {
+            LOGFONTW lf = {};
+            const std::wstring currentName = m_renderer->FontFamily();
+            wcsncpy_s(lf.lfFaceName, currentName.c_str(), _TRUNCATE);
+            lf.lfCharSet = DEFAULT_CHARSET;
+            CHOOSEFONTW cf = { sizeof(CHOOSEFONTW) };
+            cf.hwndOwner = m_hwnd;
+            cf.lpLogFont = &lf;
+            cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_EFFECTS;
+            if (ChooseFontW(&cf)) {
+                ApplyFontFamily(lf.lfFaceName);
+            }
+        } else if (selected == IDM_FONT_CUSTOM_DIALOG) {
+            ConfigureCustomAppearance();
+        }
     }
 
     void MainWindow::ToggleAlwaysOnTop() {
@@ -431,7 +577,7 @@ namespace CodexQuotaBar {
             m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        OnWindowMoved();
+        SyncWindowPosition(false);
     }
 
     void MainWindow::ToggleMiniMode() {
@@ -448,7 +594,9 @@ namespace CodexQuotaBar {
         }
         if (!m_expanded) {
             ApplyUiScale();
-            OnWindowMoved();
+            if (m_hasCollapsedLocation) {
+                ConfigStore::SavePosition(m_collapsedLocation);
+            }
         }
     }
 
@@ -479,7 +627,7 @@ namespace CodexQuotaBar {
             KillTimer(m_hwnd, TIMER_COMPANION_ID);
             m_codexDesktopRunning = false;
             ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
-            UpdateWindow(m_hwnd);
+            RenderLayeredWindow();
         }
     }
 
@@ -528,7 +676,7 @@ namespace CodexQuotaBar {
             m_codexMissingPolls = 0;
             if (!IsWindowVisible(m_hwnd)) {
                 ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
-                UpdateWindow(m_hwnd);
+                RenderLayeredWindow();
                 if (!wasRunning) RefreshQuota();
             }
             return;
@@ -549,17 +697,33 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::OnDpiChanged(int newDpi, const RECT* suggestedRect) {
+        const float previousUiScale = m_uiScale > 0.0f ? m_uiScale : 1.0f;
         if (suggestedRect) {
-            SetWindowPos(m_hwnd, NULL, suggestedRect->left, suggestedRect->top,
-                suggestedRect->right - suggestedRect->left,
-                suggestedRect->bottom - suggestedRect->top,
-                SWP_NOZORDER | SWP_NOACTIVATE);
-            if (m_dragging) {
-                m_dragWindowPos = { suggestedRect->left, suggestedRect->top };
+            SetWindowPos(
+                m_hwnd, NULL,
+                suggestedRect->left, suggestedRect->top,
+                0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                SWP_NOCOPYBITS | SWP_NOREDRAW);
+            if (!m_expanded || !m_hasCollapsedLocation) {
+                m_collapsedLocation = { suggestedRect->left, suggestedRect->top };
+                m_hasCollapsedLocation = true;
             }
         }
         ApplyDpiScale(newDpi);
-        OnWindowMoved();
+        if (m_dragging) {
+            RECT currentRect = {};
+            if (GetWindowRect(m_hwnd, &currentRect)) {
+                m_dragWindowPos = { currentRect.left, currentRect.top };
+            }
+            GetCursorPos(&m_dragOrigin);
+            const float ratio = m_uiScale / previousUiScale;
+            m_dragClickPoint.x = static_cast<LONG>(std::lround(m_dragClickPoint.x * ratio));
+            m_dragClickPoint.y = static_cast<LONG>(std::lround(m_dragClickPoint.y * ratio));
+        }
+        if (m_hasCollapsedLocation) {
+            ConfigStore::SavePosition(m_collapsedLocation);
+        }
     }
 
     POINT MainWindow::ClampToScreens(POINT pt, SIZE sz) const {
@@ -573,8 +737,11 @@ namespace CodexQuotaBar {
         POINT clamped = pt;
         if (clamped.x < area.left) clamped.x = area.left;
         if (clamped.x + sz.cx > area.right) clamped.x = area.right - sz.cx;
+        if (clamped.x < area.left) clamped.x = area.left;
+
         if (clamped.y < area.top) clamped.y = area.top;
         if (clamped.y + sz.cy > area.bottom) clamped.y = area.bottom - sz.cy;
+        if (clamped.y < area.top) clamped.y = area.top;
 
         return clamped;
     }
@@ -587,32 +754,42 @@ namespace CodexQuotaBar {
         return { BAR_WIDTH, COLLAPSED_HEIGHT };
     }
 
-    SIZE MainWindow::PhysicalWindowSize() const {
-        if (m_settings.miniMode && !m_expanded) {
+    SIZE MainWindow::CollapsedPhysicalWindowSize() const {
+        if (m_settings.miniMode) {
             return {
                 MiniBarPhysicalWidth(m_snapshot, m_uiScale),
                 Scale(static_cast<float>(MINI_HEIGHT), m_uiScale)
             };
         }
-        const SIZE logical = LogicalWindowSize();
         return {
-            Scale(static_cast<float>(logical.cx), m_uiScale),
-            Scale(static_cast<float>(logical.cy), m_uiScale)
+            Scale(static_cast<float>(BAR_WIDTH), m_uiScale),
+            Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale)
+        };
+    }
+
+    SIZE MainWindow::PhysicalWindowSize() const {
+        if (!m_expanded) {
+            return CollapsedPhysicalWindowSize();
+        }
+        return {
+            Scale(static_cast<float>(BAR_WIDTH), m_uiScale),
+            ExpandedPhysicalHeight(m_uiScale)
         };
     }
 
     void MainWindow::ApplyCurrentWindowEffects() const {
         const float userScale = USER_SCALE_LEVELS[
             static_cast<std::size_t>(m_userScaleLevel)];
-        const bool useSmallCorner = m_settings.miniMode && !m_expanded && userScale < 1.0f;
-        ApplyPopupWindowEffects(m_hwnd, useSmallCorner);
+        const bool miniVisible = m_settings.miniMode && !m_expanded;
+        ApplyPopupWindowEffects(
+            m_hwnd, ShouldUseSmallWindowCorner(miniVisible, userScale));
     }
 
     void MainWindow::ToggleExpanded() {
         HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
-        RECT area = mi.rcMonitor;
+        RECT area = mi.rcWork;
 
         RECT rc;
         GetWindowRect(m_hwnd, &rc);
@@ -631,8 +808,12 @@ namespace CodexQuotaBar {
         }
 
         const SIZE physical = PhysicalWindowSize();
-        int targetW = physical.cx;
-        int targetH = physical.cy;
+        const int targetW = physical.cx;
+        const int targetH = physical.cy;
+        m_renderer->Resize(
+            static_cast<UINT>(targetW),
+            static_cast<UINT>(targetH));
+
         if (m_expanded && rc.top + targetH > area.bottom) {
             targetTop = std::max<int>(area.top, area.bottom - targetH);
         }
@@ -652,46 +833,43 @@ namespace CodexQuotaBar {
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS |
             SWP_NOREDRAW | SWP_FRAMECHANGED);
 
-        m_renderer->Resize(targetW, targetH);
         ApplyCurrentWindowEffects();
-        RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        RenderLayeredWindow();
         DwmFlush();
     }
 
     void MainWindow::OnWindowMoved() {
-        RECT rc;
-        GetWindowRect(m_hwnd, &rc);
-        POINT pt = { rc.left, rc.top };
-        SIZE sz = { rc.right - rc.left, rc.bottom - rc.top };
-        POINT clamped = ClampToScreens(pt, sz);
-        SetWindowPos(m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
-
-        m_collapsedLocation = clamped;
-        m_hasCollapsedLocation = true;
-        ConfigStore::SavePosition(m_collapsedLocation);
+        SyncWindowPosition(true);
     }
 
-    void MainWindow::SetStats(const TokenStats& stats) {
-        m_snapshot.stats = stats;
-        if (m_hwnd) {
-            InvalidateRect(m_hwnd, NULL, FALSE);
-        }
-    }
+    void MainWindow::SyncWindowPosition(bool updateCollapsedFromWindow) {
+        if (!m_hwnd) return;
+        RECT rc = {};
+        if (!GetWindowRect(m_hwnd, &rc)) return;
 
-    bool MainWindow::PostStats(TokenStats stats) {
-        if (m_shuttingDown.load()) return false;
-        const HWND hwnd = m_hwnd.load();
-        if (!hwnd) return false;
-        {
-            const std::lock_guard<std::mutex> lock(m_statsMutex);
-            if (m_shuttingDown.load()) return false;
-            m_pendingStats = std::move(stats);
+        const SIZE sz = PhysicalWindowSize();
+        POINT clamped = {};
+        if (!updateCollapsedFromWindow && m_expanded && m_hasCollapsedLocation) {
+            m_collapsedLocation = ClampToScreens(
+                m_collapsedLocation, CollapsedPhysicalWindowSize());
+            clamped = ClampToScreens(m_collapsedLocation, sz);
+        } else {
+            clamped = ClampToScreens({ rc.left, rc.top }, sz);
+            m_collapsedLocation = clamped;
+            m_hasCollapsedLocation = true;
         }
-        if (PostMessageW(hwnd, WM_CQB_STATS, 0, 0)) return true;
-        const std::lock_guard<std::mutex> lock(m_statsMutex);
-        m_pendingStats.reset();
-        return false;
+
+        if (clamped.x != rc.left || clamped.y != rc.top ||
+            (rc.right - rc.left) != sz.cx || (rc.bottom - rc.top) != sz.cy) {
+            SetWindowPos(
+                m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+            RenderLayeredWindow();
+        }
+
+        if (m_hasCollapsedLocation) {
+            ConfigStore::SavePosition(m_collapsedLocation);
+        }
     }
 
     void MainWindow::BeginShutdown() {
@@ -703,10 +881,6 @@ namespace CodexQuotaBar {
         }
         if (m_companionPollState) {
             m_companionPollState->canceled = true;
-        }
-        {
-            const std::lock_guard<std::mutex> lock(m_statsMutex);
-            m_pendingStats.reset();
         }
         if (m_fetchThread.joinable()) {
             m_fetchThread.detach();
@@ -753,21 +927,19 @@ namespace CodexQuotaBar {
     }
 
     bool MainWindow::IsHeaderArea(POINT pt) const {
-        int logicalY = static_cast<int>(std::round(pt.y / m_uiScale));
         const int headerHeight = m_settings.miniMode && !m_expanded
-            ? MINI_HEIGHT
-            : COLLAPSED_HEIGHT;
-        return logicalY < headerHeight;
+            ? Scale(static_cast<float>(MINI_HEIGHT), m_uiScale)
+            : Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
+        return pt.y >= 0 && pt.y < headerHeight;
     }
 
     bool MainWindow::IsExpandButtonArea(POINT pt) const {
         if (m_settings.miniMode && !m_expanded) return false;
-        int logicalX = static_cast<int>(std::round(pt.x / m_uiScale));
-        int logicalY = static_cast<int>(std::round(pt.y / m_uiScale));
-
-        if (logicalX < 354 || logicalX >= BAR_WIDTH) return false;
-
-        return logicalY >= 66 && logicalY < COLLAPSED_HEIGHT;
+        const int left = Scale(353.0f, m_uiScale);
+        const int right = Scale(static_cast<float>(BAR_WIDTH), m_uiScale);
+        const int top = Scale(68.0f, m_uiScale);
+        const int bottom = Scale(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
+        return pt.x >= left && pt.x < right && pt.y >= top && pt.y < bottom;
     }
 
     void MainWindow::HandleContextMenu(int screenX, int screenY) {
@@ -777,6 +949,7 @@ namespace CodexQuotaBar {
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_SCALE_SUB, L"缩放大小" },
+            { IDM_FONT_SUB, L"字体选择" },
             { IDM_APPEARANCE_SUB, L"外观配置" },
             { IDM_ALWAYS_ON_TOP, m_settings.alwaysOnTop ? L"置顶模式：开" : L"置顶模式：关" },
             { IDM_COMPANION_MODE, m_companionMode ? L"伴随模式：开" : L"伴随模式：关" },
@@ -827,13 +1000,16 @@ namespace CodexQuotaBar {
                     static_cast<int>(USER_SCALE_LEVELS.size())) {
                 ApplyUserScale(level - IDM_SCALE_LEVEL_BASE);
             }
+        } else if (cmd == IDM_FONT_SUB) {
+            ShowFontMenu(screenX, screenY);
         } else if (cmd == IDM_APPEARANCE_SUB) {
             const bool custom =
                 m_settings.appearance.mode == AppearanceMode::Custom;
             const std::vector<MenuItem> appearanceItems = {
                 { IDM_APPEARANCE_DEFAULT, custom ? L"使用默认外观" : L"使用默认外观 (当前)" },
                 { IDM_APPEARANCE_CUSTOM, custom ? L"使用个性外观 (当前)" : L"使用个性外观" },
-                { IDM_APPEARANCE_EDIT, L"编辑个性外观" },
+                { IDM_FONT_SUB, L"选择界面字体" },
+                { IDM_APPEARANCE_EDIT, L"编辑个性外观与字体" },
             };
             const int appearance = CustomMenu::Show(
                 m_hwnd, m_uiScale, screenX, screenY, appearanceItems,
@@ -842,6 +1018,8 @@ namespace CodexQuotaBar {
                 SetAppearanceMode(AppearanceMode::Default);
             } else if (appearance == IDM_APPEARANCE_CUSTOM) {
                 SetAppearanceMode(AppearanceMode::Custom);
+            } else if (appearance == IDM_FONT_SUB) {
+                ShowFontMenu(screenX, screenY);
             } else if (appearance == IDM_APPEARANCE_EDIT) {
                 ConfigureCustomAppearance();
             }
@@ -900,9 +1078,12 @@ namespace CodexQuotaBar {
                     deltaX = clientPt.x - m_dragClickPoint.x;
                     deltaY = clientPt.y - m_dragClickPoint.y;
                 }
+                const SIZE sz = PhysicalWindowSize();
+                POINT targetPos = { m_dragWindowPos.x + deltaX, m_dragWindowPos.y + deltaY };
+                POINT clamped = ClampToScreens(targetPos, sz);
                 SetWindowPos(m_hwnd, NULL,
-                    m_dragWindowPos.x + deltaX,
-                    m_dragWindowPos.y + deltaY,
+                    clamped.x,
+                    clamped.y,
                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
                 return 0;
             }
@@ -948,16 +1129,6 @@ namespace CodexQuotaBar {
             RefreshQuota();
             return 0;
 
-        case WM_CQB_STATS: {
-            std::optional<TokenStats> stats;
-            {
-                const std::lock_guard<std::mutex> lock(m_statsMutex);
-                stats.swap(m_pendingStats);
-            }
-            if (stats) SetStats(*stats);
-            return 0;
-        }
-
         case WM_CQB_SHOW:
             Show();
             return 0;
@@ -985,7 +1156,11 @@ namespace CodexQuotaBar {
                     previousMiniWidth != MiniBarLogicalWidth(m_snapshot);
                 if (miniWidthChanged) {
                     ApplyUiScale();
-                    OnWindowMoved();
+                    if (m_hasCollapsedLocation) {
+                        ConfigStore::SavePosition(m_collapsedLocation);
+                    }
+                } else if (IsWindowVisible(m_hwnd)) {
+                    RenderLayeredWindow();
                 } else {
                     InvalidateRect(m_hwnd, NULL, FALSE);
                 }
@@ -1006,12 +1181,12 @@ namespace CodexQuotaBar {
             return 0;
 
         case WM_DISPLAYCHANGE:
-            OnWindowMoved();
+            SyncWindowPosition(false);
             break;
 
         case WM_SETTINGCHANGE:
             if (wParam == SPI_SETWORKAREA) {
-                OnWindowMoved();
+                SyncWindowPosition(false);
             }
             break;
 
@@ -1051,14 +1226,18 @@ namespace CodexQuotaBar {
     void MainWindow::OnPaint() {
         PAINTSTRUCT ps;
         BeginPaint(m_hwnd, &ps);
+        EndPaint(m_hwnd, &ps);
+        RenderLayeredWindow();
+    }
 
+    HRESULT MainWindow::RenderLayeredWindow() {
+        if (!m_hwnd) return E_UNEXPECTED;
         HRESULT hr = m_renderer->Render(
             m_expanded, m_settings.miniMode, m_snapshot, m_syncState);
-        EndPaint(m_hwnd, &ps);
-
         if (SUCCEEDED(hr)) {
             m_renderFailureCount = 0;
-            return;
+            ValidateRect(m_hwnd, NULL);
+            return hr;
         }
 
         ++m_renderFailureCount;
@@ -1075,6 +1254,7 @@ namespace CodexQuotaBar {
         } else if (m_renderFailureCount == kRenderRetryLimit + 1) {
             WriteLog(LogLevel::Error, L"分层窗口连续渲染失败，已停止自动重试。");
         }
+        return hr;
     }
 
 } // namespace CodexQuotaBar

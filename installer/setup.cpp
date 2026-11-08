@@ -18,7 +18,6 @@
 #include <string>
 #include <vector>
 
-#include "HookConfig.h"
 #include "resource.h"
 
 namespace {
@@ -323,7 +322,6 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
                          const std::filesystem::path& appPath,
                          const std::filesystem::path& uninstallPath,
                          const std::filesystem::path& defaultConfigPath,
-                         const std::filesystem::path& hookFilePath,
                          const std::filesystem::path& userDataDir) {
     HKEY key = nullptr;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, kUninstallKey, 0, nullptr, 0,
@@ -335,10 +333,9 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
     const std::wstring quietCommand = uninstallCommand + L" /quiet";
     bool ok =
         SetRegistryString(key, L"DisplayName", kProductName) &&
-        SetRegistryString(key, L"DisplayVersion", L"2.7.8") &&
+        SetRegistryString(key, L"DisplayVersion", L"2.8.0") &&
         SetRegistryString(key, L"Publisher", L"xiumu-ops") &&
         SetRegistryString(key, L"InstallLocation", installDir.wstring()) &&
-        SetRegistryString(key, L"HookFilePath", hookFilePath.wstring()) &&
         SetRegistryString(key, L"UserDataDir", userDataDir.wstring()) &&
         SetRegistryString(key, L"DisplayIcon", Quote(appPath.wstring()) + L",0") &&
         SetRegistryString(key, L"UninstallString", uninstallCommand) &&
@@ -435,7 +432,6 @@ void RollBackInstall(const FileRollback& appRollback,
                      const std::filesystem::path& appPath,
                      const std::filesystem::path& uninstallPath,
                      const std::filesystem::path& defaultConfigPath,
-                     const std::filesystem::path& hookFilePath,
                      const std::filesystem::path& userDataDir) {
     RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
     RestoreFileRollback(shortcutRollback);
@@ -444,8 +440,7 @@ void RollBackInstall(const FileRollback& appRollback,
     RestoreFileRollback(appRollback);
     if (existingUserInstall) {
         RegisterUninstaller(
-            installDir, appPath, uninstallPath, defaultConfigPath,
-            hookFilePath, userDataDir);
+            installDir, appPath, uninstallPath, defaultConfigPath, userDataDir);
     } else {
         std::error_code error;
         if (std::filesystem::is_empty(installDir, error) && !error) {
@@ -484,7 +479,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     if (HasLegacySystemInstallation()) {
         ReportFailure(
             L"检测到旧的系统级安装。请先从 Windows“已安装的应用”中卸载旧版，"
-            L"然后重新运行本安装包。\n\n新版本不会静默保留旧目录、Hook 或启动项。",
+            L"然后重新运行本安装包。\n\n新版本不会静默保留旧目录或启动项。",
             quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 7;
@@ -575,14 +570,12 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         return 3;
     }
 
-    const std::filesystem::path hookFilePath =
-        CodexQuotaBarInstaller::HookConfig::ResolveHookFilePath();
     if (!ReplacePayload(IDR_APP_PAYLOAD, appPath) ||
         !ReplacePayload(IDR_UNINSTALL_PAYLOAD, uninstallPath) ||
         !ReplacePayload(IDR_DEFAULT_CONFIG_PAYLOAD, defaultConfigPath)) {
         RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, userDataDir);
         ReportFailure(L"无法写入程序文件。请退出正在运行的旧版本后重试。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 3;
@@ -591,35 +584,20 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     if (!CreateStartMenuShortcut(shortcut, appPath)) {
         RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, userDataDir);
         ReportFailure(L"无法创建当前用户的开始菜单快捷方式，安装已回滚。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 4;
     }
 
     if (!RegisterUninstaller(
-            installDir, appPath, uninstallPath, defaultConfigPath,
-            hookFilePath, userDataDir)) {
+            installDir, appPath, uninstallPath, defaultConfigPath, userDataDir)) {
         RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
                         existingUserInstall, installDir, appPath,
-                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
+                        uninstallPath, defaultConfigPath, userDataDir);
         ReportFailure(L"无法注册当前用户的卸载入口，安装已回滚。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 5;
-    }
-
-    // Hook 是最后一个可能失败的步骤。HookConfig 使用同目录临时文件原子替换；
-    // 失败时原文件不变，因此文件与注册表可以安全回滚。
-    const auto hookResult =
-        CodexQuotaBarInstaller::HookConfig::Install(hookFilePath, appPath);
-    if (!hookResult.success) {
-        RollBackInstall(appRollback, uninstallRollback, defaultConfigRollback, shortcutRollback,
-                        existingUserInstall, installDir, appPath,
-                        uninstallPath, defaultConfigPath, hookFilePath, userDataDir);
-        ReportFailure(L"无法注册 Codex 会话同步 Hook，安装已回滚：\n\n" +
-                      hookResult.error, quiet);
-        if (SUCCEEDED(comResult)) CoUninitialize();
-        return 6;
     }
 
     CommitFileRollback(appRollback);
@@ -632,8 +610,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     if (!quiet) {
         launch = MessageBoxW(
             nullptr,
-            L"Codex-Quota-Bar 已安装完成，并已添加会话同步 Hook。\n\n"
-            L"首次使用请在 Codex 中输入 /hooks，审核并信任新增 Hook。\n\n"
+            L"Codex-Quota-Bar 已安装完成。\n\n"
             L"是否立即启动额度条？",
             L"安装完成", MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND) == IDYES;
     }

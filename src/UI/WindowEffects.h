@@ -11,8 +11,8 @@
 
 namespace CodexQuotaBar {
 
-    // 主窗口与右键菜单均由 DWM 提供原生投影。不要叠加 CS_DROPSHADOW：它的固定向下
-    // 偏移会在低高度迷你栏两侧形成明显的上下阴影断层。
+    // 主窗口、右键菜单与个性外观弹窗均统一使用 DWM 窗口圆角与合成效果。
+    // 不叠加 CS_DROPSHADOW：它的固定向下偏移会在低高度迷你栏两侧形成明显的上下阴影断层，且无法贴合抗锯齿圆角。
     inline void ApplyPopupWindowEffects(HWND hwnd, bool useSmallCorner = false) {
         const int cornerPreference = useSmallCorner
             ? DWMWCP_ROUNDSMALL

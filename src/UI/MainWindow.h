@@ -17,7 +17,6 @@ namespace CodexQuotaBar {
 
     // 跨线程消息：工作线程通过 PostMessage 投递，全部由 UI 线程消费
     constexpr UINT WM_CQB_REFRESH = WM_APP + 1;      // wParam=0
-    constexpr UINT WM_CQB_STATS = WM_APP + 3;        // 数据从线程安全待处理槽读取
     constexpr UINT WM_CQB_SHOW = WM_APP + 4;
     constexpr UINT WM_CQB_HIDE = WM_APP + 5;
     constexpr UINT WM_CQB_TOGGLE = WM_APP + 6;
@@ -29,11 +28,10 @@ namespace CodexQuotaBar {
         MainWindow();
         ~MainWindow();
 
-        bool Create(bool forceInitialRefresh = false);
+        bool Create();
         void Show();
         void BeginShutdown();
         HWND GetHwnd() const { return m_hwnd.load(); }
-        bool PostStats(TokenStats stats);
 
     private:
         static LRESULT CALLBACK WndProcSetup(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -41,6 +39,7 @@ namespace CodexQuotaBar {
         LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
         void OnPaint();
+        HRESULT RenderLayeredWindow();
         void OnDpiChanged(int newDpi, const RECT* suggestedRect);
         void ApplyDpiScale(int dpi);
         void ApplyUiScale();
@@ -49,22 +48,25 @@ namespace CodexQuotaBar {
         void ApplyAppearance(const std::wstring& validationErrors = L"");
         void SetAppearanceMode(AppearanceMode mode);
         void ConfigureCustomAppearance();
+        void ShowFontMenu(int screenX, int screenY);
+        void ApplyFontFamily(const std::wstring& font);
         bool SaveSettingsWithFeedback(bool preserveDiskAppearance = true);
         void Hide();
         void ToggleVisible();
         void ToggleExpanded();
         void ToggleMiniMode();
         void RefreshQuota();
-        void SetStats(const TokenStats& stats);
         void ToggleAlwaysOnTop();
         void ToggleCompanionMode();
         void PollCompanionMode();
         void HandleCompanionResult(DesktopProcessState state);
         void OnWindowMoved();
+        void SyncWindowPosition(bool updateCollapsedFromWindow);
         void HandleContextMenu(int screenX, int screenY);
         bool IsHeaderArea(POINT pt) const;
         bool IsExpandButtonArea(POINT pt) const;
         SIZE LogicalWindowSize() const;
+        SIZE CollapsedPhysicalWindowSize() const;
         SIZE PhysicalWindowSize() const;
         void ApplyCurrentWindowEffects() const;
         POINT ClampToScreens(POINT pt, SIZE sz) const;
@@ -104,8 +106,6 @@ namespace CodexQuotaBar {
         std::atomic<bool> m_refreshQueued{ false };
         std::thread m_fetchThread;
         std::shared_ptr<FetchResultState> m_fetchState = std::make_shared<FetchResultState>();
-        std::mutex m_statsMutex;
-        std::optional<TokenStats> m_pendingStats;
         std::shared_ptr<CompanionPollState> m_companionPollState =
             std::make_shared<CompanionPollState>();
 

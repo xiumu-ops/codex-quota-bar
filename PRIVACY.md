@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: August 26, 2026
+Last updated: November 7, 2026
 
 ## Summary
 
@@ -50,14 +50,11 @@ features:
 
 - locate and launch the locally installed official Codex executable;
 - enumerate relevant local processes when companion mode is enabled;
-- read and structurally update the current user's Codex `hooks.json` to add three
-  lifecycle handlers;
 - create a current-user Start menu shortcut and HKCU uninstall registration; and
 - add or remove an HKCU `Run` value when the user enables or disables companion mode.
 
-The installer does not read or modify Codex `config.toml`. Hook updates preserve
-unrelated handlers and metadata. The application does not inspect Codex conversation
-files or upload local files.
+The installer and application do not read or modify Codex configuration files (such as
+`config.toml` or `hooks.json`), inspect Codex conversation files, or upload local files.
 
 ## Network communication
 
@@ -72,8 +69,8 @@ OpenAI are governed by those providers' respective policies.
 All application-managed persistent data remains on the user's computer. Interactive
 uninstallation offers a choice to retain or delete the `data` directory. Quiet
 uninstallation retains it by default. The user can delete the directory manually after
-the application has exited. Disabling companion mode removes its startup value, and
-uninstallation removes the lifecycle Hook entries managed by Codex-Quota-Bar.
+the application has exited. Disabling companion mode or uninstalling the application
+removes its startup value.
 
 ## Third parties and children
 

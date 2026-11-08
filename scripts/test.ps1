@@ -107,7 +107,7 @@ Write-Host "==========================================" -ForegroundColor Cyan
 # 1. 使用真正的子进程/stdin/stdout 跑完整 App Server 协议回归测试。
 # FakeCodexAppServer 会严格校验 initialize -> initialized -> rateLimits -> usage
 # 的顺序，并提供完整、全 null、usage 失败三种响应。
-Write-Host "[1/10] 官方 App Server 协议集成测试..." -ForegroundColor Yellow
+Write-Host "[1/9] 官方 App Server 协议集成测试..." -ForegroundColor Yellow
 $CMakeBuildDir = Join-Path $ProjectRoot ".build\tests"
 $protocolTestsBuilt = $true
 & cmake -S $ProjectRoot -B $CMakeBuildDir -DBUILD_TESTING=ON
@@ -117,7 +117,7 @@ if ($LASTEXITCODE -ne 0) {
     $protocolTestsBuilt = $false
 }
 if ($protocolTestsBuilt) {
-    & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests HookConfigTests SimpleJsonTests AppearanceTests PipeServerTests
+    & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests SimpleJsonTests AppearanceTests PipeServerTests
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [FAIL] App Server 测试程序构建失败" -ForegroundColor Red
         $script:Failures++
@@ -126,16 +126,16 @@ if ($protocolTestsBuilt) {
 }
 if ($protocolTestsBuilt) {
     & ctest --test-dir $CMakeBuildDir -C Release --output-on-failure `
-        -R "^(CodexAppServerIntegration|HookConfig|SimpleJson|Appearance|PipeServer)$"
+        -R "^(CodexAppServerIntegration|SimpleJson|Appearance|PipeServer)$"
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  [PASS] App Server、IPC 安全、JSON 边界、Hook 与异常兼容路径" -ForegroundColor Green
+        Write-Host "  [PASS] App Server、IPC 安全、JSON 边界与异常兼容路径" -ForegroundColor Green
     } else {
         Write-Host "  [FAIL] App Server 协议集成测试失败" -ForegroundColor Red
         $script:Failures++
     }
 }
 
-# 测试实例（尤其拖动与无实例 Hook 段）会写入窗口位置；
+# 测试实例（如拖动与迷你栏缩放测试段）会写入窗口位置；
 # 先备份用户配置，结束后原样恢复，避免测试数据污染真实状态。
 if ($ConfigExisted) {
     Copy-Item $ConfigFile $ConfigBackup -Force
@@ -160,7 +160,7 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
 '@
 
 # 2. 启动
-Write-Host "[2/10] 进程启动..." -ForegroundColor Yellow
+Write-Host "[2/9] 进程启动..." -ForegroundColor Yellow
 $proc = Start-Process -FilePath $ExePath -PassThru
 Start-Sleep -Milliseconds 800
 if (-not $proc -or $proc.HasExited) {
@@ -189,7 +189,7 @@ try {
 }
 
 # 3. 展开态主动拖动后，收起位置必须保持在拖动后的左上角。
-Write-Host "[3/10] 展开拖动后收起位置..." -ForegroundColor Yellow
+Write-Host "[3/9] 展开拖动后收起位置..." -ForegroundColor Yellow
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -300,37 +300,20 @@ try {
 }
 
 # 4. 单实例互斥：第二实例裸启动应返回 0
-Write-Host "[4/10] 单实例互斥..." -ForegroundColor Yellow
+Write-Host "[4/9] 单实例互斥..." -ForegroundColor Yellow
 Expect-ExitCode "第二实例裸启动" "" 0
 
 # 5. 合法命令
-Write-Host "[5/10] 合法 IPC 命令..." -ForegroundColor Yellow
-Expect-ExitCode "--worker BUSY" '"--worker" "BUSY"' 0
-Expect-ExitCode "--worker STATUS 自然分参" '"--worker" "STATUS" "Compiling" "project..."' 0
-Expect-ExitCode "--worker DONE" '"--worker" "DONE"' 0
-Expect-ExitCode "--worker IDLE" '"--worker" "IDLE"' 0
-Expect-ExitCode "--worker TOGGLE" '"--worker" "TOGGLE"' 0
-Expect-ExitCode "--worker STATS 自然分参" '"--worker" "STATS" "12.5B" "2.1B" "10h45m" "25d"' 0
-Expect-ExitCode "--worker REFRESH" '"--worker" "REFRESH"' 0
+Write-Host "[5/9] 合法 IPC 命令..." -ForegroundColor Yellow
 Expect-ExitCode "--refresh" '"--refresh"' 0
+Expect-ExitCode "-r" '"-r"' 0
 Expect-ExitCode "--toggle" '"--toggle"' 0
+Expect-ExitCode "-t" '"-t"' 0
 Expect-ExitCode "--show" '"--show"' 0
 Expect-ExitCode "--hide" '"--hide"' 0
-Expect-ExitCode "--hook SessionStart（已有实例）" '"--hook" "SessionStart"' 0
-Expect-ExitCode "--hook Stop（完成一轮对话）" '"--hook" "Stop"' 0
-Expect-ExitCode "--hook SessionEnd（结束会话）" '"--hook" "SessionEnd"' 0
 
-# 6. 长消息（>4094 字节触发 ERROR_MORE_DATA 累积读取路径）
-Write-Host "[6/10] 长 STATUS 消息..." -ForegroundColor Yellow
-$longText = "汉" * 2040  # (7 + 2040 + 1) * 2 = 4096 字节，恰好超过单次读取上限
-Expect-ExitCode "长 STATUS 消息 (4096 字节)" ('"--worker" "STATUS" "' + $longText + '"') 0
-$longerText = "汉" * 3000  # (7 + 3000 + 1) * 2 = 6016 字节
-Expect-ExitCode "长 STATUS 消息 (6016 字节)" ('"--worker" "STATUS" "' + $longerText + '"') 0
-# 说明：服务端 64KB 命令上限（TOO_LONG 回复）无法经 CLI 覆盖测试——
-# CreateProcess 命令行上限为 32767 字符（UTF-16 约 65534 字节），刚好低于 64KB。
-
-# 7. 客户端发送命令后不读取回复，不得占住唯一服务线程。
-Write-Host "[7/10] 管道客户端不读取回复..." -ForegroundColor Yellow
+# 6. 客户端发送命令后不读取回复，不得占住唯一服务线程。
+Write-Host "[6/9] 管道客户端不读取回复..." -ForegroundColor Yellow
 $stalledClient = New-Object System.IO.Pipes.NamedPipeClientStream(
     ".", $PipeName, [System.IO.Pipes.PipeDirection]::InOut)
 try {
@@ -344,7 +327,7 @@ try {
     $stalledClient.Dispose()
 }
 
-# 完全不写入数据的连接也必须在服务端 I/O 超时后释放，避免阻塞后续 Hook。
+# 完全不写入数据的连接也必须在服务端 I/O 超时后释放，避免阻塞后续 IPC 请求。
 $silentClient = New-Object System.IO.Pipes.NamedPipeClientStream(
     ".", $PipeName, [System.IO.Pipes.PipeDirection]::InOut)
 try {
@@ -363,14 +346,14 @@ try {
     $silentClient.Dispose()
 }
 
-# 8. 错误路径
-Write-Host "[8/10] 错误路径退出码..." -ForegroundColor Yellow
-Expect-ExitCode "--worker BOGUS (未知命令)" '"--worker" "BOGUS"' 1
-Expect-ExitCode "--hook BOGUS (未知事件)" '"--hook" "BOGUS"' 1
+# 7. 错误路径（包括已移除的 --hook 与 --worker 参数）
+Write-Host "[7/9] 错误路径退出码..." -ForegroundColor Yellow
+Expect-ExitCode "--worker 已移除应拒绝" '"--worker" "REFRESH"' 1
+Expect-ExitCode "--hook 已移除应拒绝" '"--hook" "SessionStart"' 1
 Expect-ExitCode "--garbage (未知参数)" '"--garbage"' 1
 
-# 9. EXIT 优雅退出
-Write-Host "[9/10] EXIT 优雅退出..." -ForegroundColor Yellow
+# 8. EXIT 优雅退出
+Write-Host "[8/9] EXIT 优雅退出..." -ForegroundColor Yellow
 Expect-ExitCode "--exit" '"--exit"' 0
 Start-Sleep -Milliseconds 800
 if (@(Get-TargetProcesses).Count -gt 0) {
@@ -381,9 +364,8 @@ if (@(Get-TargetProcesses).Count -gt 0) {
 }
 Expect-ExitCode "退出后 --refresh 应失败" '"--refresh"' 1
 
-# 10. 无实例时，SessionStart Hook 应快速返回并派生长驻实例。
-# 使用 stdio FakeCodexAppServer，覆盖真实 App Server 进程而不触碰用户配置。
-Write-Host "[10/10] SessionStart Hook 无实例启动..." -ForegroundColor Yellow
+# 9. 使用 stdio FakeCodexAppServer 验证主程序冷启动自动同步与迷你栏双额度缩放。
+Write-Host "[9/9] App Server 冷启动同步与迷你栏缩放..." -ForegroundColor Yellow
 $fakeCodexPath = Join-Path $CMakeBuildDir "Release\FakeCodexAppServer.exe"
 $oldCodexPath = $env:CODEX_QUOTA_CODEX_PATH
 $oldScenario = $env:CODEX_QUOTA_FAKE_SCENARIO
@@ -400,33 +382,11 @@ try {
         $miniConfig.Settings.UserScale = 1.25
         $miniConfig | ConvertTo-Json -Depth 10 | Set-Content `
             -LiteralPath $ConfigFile -Encoding utf8NoBOM
-        # 由 SessionStart Hook 在无实例时派生长驻 GUI。外层 Hook 必须在
-        # SessionEnd 的官方 3 秒上限内快速退出，同时子进程继承测试环境。
-        $hookTimer = [Diagnostics.Stopwatch]::StartNew()
-        $hookProcess = Start-Process -FilePath $ExePath -ArgumentList '"--hook" "SessionStart"' -PassThru
-        # Start-Process -Wait 在 Windows 上会等待整个派生进程树；这里必须像
-        # Codex Hook 运行器一样，只等待直接命令进程。
-        $hookExited = $hookProcess.WaitForExit(3000)
-        $hookTimer.Stop()
-        $hookExitCode = if ($hookExited) { $hookProcess.ExitCode } else { -1 }
-        if (-not $hookExited -or $hookExitCode -ne 0 -or $hookTimer.ElapsedMilliseconds -ge 3000) {
-            Write-Host "  [FAIL] 无实例 Hook 未快速返回（exit=$hookExitCode, $($hookTimer.ElapsedMilliseconds)ms）" -ForegroundColor Red
-            $script:Failures++
-        } else {
-            Write-Host "  [PASS] 无实例 Hook 快速返回并派生同步进程（$($hookTimer.ElapsedMilliseconds)ms）" -ForegroundColor Green
-        }
 
-        $hostDeadline = (Get-Date).AddSeconds(5)
-        while ((Get-Date) -lt $hostDeadline) {
-            $hosts = @(Get-TargetProcesses)
-            if ($hosts.Count -gt 0) {
-                $appB = $hosts[0]
-                break
-            }
-            Start-Sleep -Milliseconds 100
-        }
+        $appB = Start-Process -FilePath $ExePath -PassThru
+        Start-Sleep -Milliseconds 300
         if (-not $appB -or $appB.HasExited) {
-            Write-Host "  [FAIL] SessionStart Hook 未启动长驻实例" -ForegroundColor Red
+            Write-Host "  [FAIL] 迷你栏实例启动失败" -ForegroundColor Red
             $script:Failures++
         } else {
             $pipeReady = $false

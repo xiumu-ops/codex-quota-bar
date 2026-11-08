@@ -49,10 +49,13 @@ try {
         throw "Installer exited with code $($setup.ExitCode)."
     }
 
-    foreach ($requiredFile in $appPath, $uninstallPath, $defaultConfigPath, $shortcut, $hooksFile) {
+    foreach ($requiredFile in $appPath, $uninstallPath, $defaultConfigPath, $shortcut) {
         if (-not (Test-Path -LiteralPath $requiredFile)) {
             throw "Installer did not create: $requiredFile"
         }
+    }
+    if (Test-Path -LiteralPath $hooksFile) {
+        throw "The installer unexpectedly created or touched Codex hooks.json."
     }
     if (Test-Path -LiteralPath $dataDir) {
         throw "The installer created mutable data before the application needed it."
@@ -79,11 +82,8 @@ try {
             [StringComparison]::OrdinalIgnoreCase)) {
         throw "UserDataDir does not point to the data directory."
     }
-
-    $hookContent = Get-Content -LiteralPath $hooksFile -Raw
-    if ($hookContent -notmatch "Codex-Quota-Bar\.exe" -or
-        $hookContent -notmatch "--hook") {
-        throw "The installed Hook does not target Codex-Quota-Bar."
+    if ($registration.PSObject.Properties.Name -contains "HookFilePath") {
+        throw "Uninstall registration unexpectedly contains HookFilePath."
     }
 
     Write-Host "Uninstalling and validating cleanup..." -ForegroundColor Cyan
@@ -100,10 +100,7 @@ try {
         throw "The current-user Start menu shortcut was not removed."
     }
     if (Test-Path -LiteralPath $hooksFile) {
-        $remainingHooks = Get-Content -LiteralPath $hooksFile -Raw
-        if ($remainingHooks -match "Codex-Quota-Bar\.exe") {
-            throw "The Codex lifecycle Hook was not removed."
-        }
+        throw "The uninstaller unexpectedly created Codex hooks.json."
     }
 
     Write-Host "Installer integration tests passed." -ForegroundColor Green

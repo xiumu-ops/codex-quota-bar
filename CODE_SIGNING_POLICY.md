@@ -41,7 +41,7 @@ Official releases must meet all of the following requirements:
    Windows runner.
 3. The semantic release tag `vX.Y.Z` exactly matches the project version declared in
    `CMakeLists.txt`.
-4. Automated unit, integration, IPC, Hook, installation, and uninstallation tests pass.
+4. Automated unit, integration, IPC, installation, and uninstallation tests pass.
 5. The installer SHA-256 checksum is calculated after all signing operations finish.
 6. Every production signing request requires explicit approval by the signing approver.
 7. Signed assets are published only through the repository's GitHub Releases page.
@@ -69,14 +69,13 @@ The installer and application make only the documented current-user changes:
 - install application and uninstaller files under the selected `Codex-Quota-Bar`
   directory;
 - create a current-user Start menu shortcut and HKCU uninstall registration;
-- add three managed lifecycle handlers to the user's Codex `hooks.json`;
 - optionally add an HKCU `Run` value when the user enables companion mode; and
 - store settings and bounded diagnostic logs in the installation's `data` directory.
 
-The uninstaller removes the managed Hook entries and companion startup value before
-removing program files. The user may choose whether local settings and logs are retained.
-Existing unrelated Codex Hooks and metadata are preserved. See [PRIVACY.md](PRIVACY.md)
-for the complete data-handling statement.
+The uninstaller removes the companion startup value before removing program files.
+The user may choose whether local settings and logs are retained. Neither the installer
+nor the uninstaller modifies the user's Codex configuration files. See
+[PRIVACY.md](PRIVACY.md) for the complete data-handling statement.
 
 ## Incident response
 

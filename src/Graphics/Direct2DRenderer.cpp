@@ -11,11 +11,10 @@
 
 namespace CodexQuotaBar {
 
-    namespace {
-        // 两条额度详情与底部同步状态值共用同一条视觉中心线。
-        constexpr float kDetailCenterX = 222.0f;
-        constexpr float kDetailHalfWidth = 105.0f;
+    // 标准栏 / 展开态的全部几何位置统一由 StandardLayout 定义。
+    using namespace StandardLayout;
 
+    namespace {
         // 子卡片用的紧凑本地时间：M月D日 时:分（秒级时间戳）
         std::wstring FormatCompactTime(int64_t timestampSec) {
             if (timestampSec <= 0) return L"--";
@@ -47,6 +46,13 @@ namespace CodexQuotaBar {
         HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory), &options, &m_pD2DFactory);
         if (FAILED(hr)) return hr;
 
+        D2D1_STROKE_STYLE_PROPERTIES strokeProps = D2D1::StrokeStyleProperties(
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_LINE_JOIN_ROUND);
+        m_pD2DFactory->CreateStrokeStyle(&strokeProps, nullptr, 0, &m_pRoundStrokeStyle);
+
         hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &m_pDWriteFactory);
         if (FAILED(hr)) return hr;
 
@@ -55,7 +61,22 @@ namespace CodexQuotaBar {
     }
 
     void Direct2DRenderer::SetDpiScale(float dpiScale) {
-        m_dpiScale = dpiScale;
+        SetScales(dpiScale, 1.0f);
+    }
+
+    void Direct2DRenderer::SetScales(float monitorDpiScale, float userScale) {
+        const float safeDpi = monitorDpiScale > 0.0f ? monitorDpiScale : 1.0f;
+        const float safeUser = userScale > 0.0f ? userScale : 1.0f;
+        const float combined = safeDpi * safeUser;
+        if (std::fabs(m_monitorDpiScale - safeDpi) < 1e-6f &&
+            std::fabs(m_userScale - safeUser) < 1e-6f &&
+            std::fabs(m_dpiScale - combined) < 1e-6f) {
+            return;
+        }
+        m_monitorDpiScale = safeDpi;
+        m_userScale = safeUser;
+        m_dpiScale = combined;
+        DiscardDeviceResources();
         DiscardTextFormats();
         CreateTextFormats();
     }
@@ -68,8 +89,30 @@ namespace CodexQuotaBar {
         }
         UINT32 index = 0;
         BOOL exists = FALSE;
-        return SUCCEEDED(collection->FindFamilyName(fontFamily.c_str(), &index, &exists)) &&
-               exists;
+        if (SUCCEEDED(collection->FindFamilyName(fontFamily.c_str(), &index, &exists)) && exists) {
+            return true;
+        }
+        const UINT32 familyCount = collection->GetFontFamilyCount();
+        for (UINT32 i = 0; i < familyCount; ++i) {
+            ComPtr<IDWriteFontFamily> family;
+            if (FAILED(collection->GetFontFamily(i, &family)) || !family) continue;
+            ComPtr<IDWriteLocalizedStrings> names;
+            if (FAILED(family->GetFamilyNames(&names)) || !names) continue;
+            const UINT32 nameCount = names->GetCount();
+            for (UINT32 j = 0; j < nameCount; ++j) {
+                UINT32 length = 0;
+                if (FAILED(names->GetStringLength(j, &length)) || length == 0) continue;
+                std::wstring localizedName;
+                localizedName.resize(length + 1);
+                if (SUCCEEDED(names->GetString(j, &localizedName[0], length + 1))) {
+                    localizedName.resize(length);
+                    if (_wcsicmp(fontFamily.c_str(), localizedName.c_str()) == 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     bool Direct2DRenderer::SetAppearance(
@@ -100,8 +143,10 @@ namespace CodexQuotaBar {
 
     void Direct2DRenderer::DiscardTextFormats() {
         m_pFontRowTitle.Reset();
+        m_pFontRowDetail.Reset();
         m_pFontRowValue.Reset();
         m_pFontRowValueBold.Reset();
+        m_pFontMiniValue.Reset();
         m_pFontFooter.Reset();
         m_pFontStatsNum.Reset();
         m_pFontStatsLabel.Reset();
@@ -113,53 +158,52 @@ namespace CodexQuotaBar {
         const wchar_t* fontFamily = m_fontFamily.c_str();
         float s = m_dpiScale;
 
-        // 全卡片统一 16px，字号层级仅靠字重区分
-        m_pDWriteFactory->CreateTextFormat(
-            fontFamily, NULL,
-            DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            16.0f * s, L"zh-cn", &m_pFontRowTitle);
+        auto createSingleLineFormat = [&](
+            DWRITE_FONT_WEIGHT weight,
+            float baseSize,
+            ComPtr<IDWriteTextFormat>& target)
+        {
+            if (SUCCEEDED(m_pDWriteFactory->CreateTextFormat(
+                    fontFamily, NULL,
+                    weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                    baseSize * s, L"zh-cn", &target)) && target) {
+                target->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            }
+        };
 
-        // 右侧数值 / 未返回状态（16px；百分比为加粗变体）
-        m_pDWriteFactory->CreateTextFormat(
-            fontFamily, NULL,
-            DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            16.0f * s, L"zh-cn", &m_pFontRowValue);
-
-        m_pDWriteFactory->CreateTextFormat(
-            fontFamily, NULL,
-            DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            16.0f * s, L"zh-cn", &m_pFontRowValueBold);
-
-        // 常驻卡片底部说明文本
-        m_pDWriteFactory->CreateTextFormat(
-            fontFamily, NULL,
-            DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            16.0f * s, L"zh-cn", &m_pFontFooter);
-
-        // 统计子卡片数值（加粗）与标签
-        m_pDWriteFactory->CreateTextFormat(
-            fontFamily, NULL,
-            DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            16.0f * s, L"zh-cn", &m_pFontStatsNum);
-
-        m_pDWriteFactory->CreateTextFormat(
-            fontFamily, NULL,
-            DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            16.0f * s, L"zh-cn", &m_pFontStatsLabel);
+        // 标题：14px 半粗体（单行禁止折行，杜绝分数缩放下尾字跳行）
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_SEMI_BOLD, 14.0f, m_pFontRowTitle);
+        // 每行重置时间与状态说明：12px 常规体
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, m_pFontRowDetail);
+        // 右侧数值 / 未返回状态（常规体备用）：16px
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 16.0f, m_pFontRowValue);
+        // 右侧百分比数值：16px 粗体
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontRowValueBold);
+        // 迷你模式百分比文字：16px 粗体（偶数字号，具体行距与基线在 DrawMiniQuotaSlot 动态绑定胶囊槽物理高度）
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontMiniValue);
+        // 常驻卡片底部说明文本：12px 常规体
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, m_pFontFooter);
+        // 统计子卡片数值（加粗）：16px 粗体
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontStatsNum);
+        // 统计子卡片标签：12px 常规体
+        createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, m_pFontStatsLabel);
     }
 
     HRESULT Direct2DRenderer::CreateDeviceResources() {
         if (m_pRenderTarget) return S_OK;
         if (!m_pD2DFactory || !m_hwnd) return E_UNEXPECTED;
 
-        RECT rc = {};
-        if (!GetClientRect(m_hwnd, &rc)) return HRESULT_FROM_WIN32(GetLastError());
-        D2D1_SIZE_U size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
-        if (size.width == 0 || size.height == 0) return E_INVALIDARG;
-        m_width = size.width;
-        m_height = size.height;
+        if (m_width == 0 || m_height == 0) {
+            RECT clientRect = {};
+            if (!GetClientRect(m_hwnd, &clientRect)) {
+                return HRESULT_FROM_WIN32(GetLastError());
+            }
+            m_width = static_cast<UINT>((std::max)(0L, clientRect.right - clientRect.left));
+            m_height = static_cast<UINT>((std::max)(0L, clientRect.bottom - clientRect.top));
+        }
+        if (m_width == 0 || m_height == 0) return E_INVALIDARG;
 
-        HRESULT hr = CreateBackingSurface(size.width, size.height);
+        HRESULT hr = CreateBackingSurface(m_width, m_height);
         if (FAILED(hr)) return hr;
 
         D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
@@ -176,7 +220,12 @@ namespace CodexQuotaBar {
             return hr;
         }
 
-        hr = m_pRenderTarget->BindDC(m_memoryDc, &rc);
+        RECT bindRect = {
+            0, 0,
+            static_cast<LONG>(m_width),
+            static_cast<LONG>(m_height)
+        };
+        hr = m_pRenderTarget->BindDC(m_memoryDc, &bindRect);
         if (FAILED(hr)) {
             DiscardDeviceResources();
             return hr;
@@ -191,6 +240,8 @@ namespace CodexQuotaBar {
         surface.a *= backgroundOpacity;
         D2D1_COLOR_F statsCardBackground = m_palette.statsCardBg;
         statsCardBackground.a *= backgroundOpacity;
+        D2D1_COLOR_F trackBg = m_palette.trackBg;
+        trackBg.a *= backgroundOpacity;
 
         // 创建画刷：任一失败即整体回滚
         struct BrushSpec {
@@ -203,7 +254,7 @@ namespace CodexQuotaBar {
             { m_palette.statsCardBorder, &m_pBrushStatsCardBorder },
             { m_palette.text, &m_pBrushText },
             { m_palette.muted, &m_pBrushMuted },
-            { m_palette.trackBg, &m_pBrushTrackBg },
+            { trackBg, &m_pBrushTrackBg },
             { m_palette.progressBlue, &m_pBrushProgressBlue },
             { m_palette.progressGreen, &m_pBrushProgressGreen },
             { m_palette.progressYellow, &m_pBrushProgressYellow },
@@ -361,38 +412,38 @@ namespace CodexQuotaBar {
         float w = static_cast<float>(m_width);
         float h = static_cast<float>(m_height);
 
-        // 1. 绘制带逐像素 Alpha 的圆角悬浮卡片背景
+        // 1. 绘制带逐像素 Alpha 的圆角悬浮卡片背景：外圆角始终与 DWM 窗口硬件圆角同步。
         const bool miniVisible = miniMode && !expanded;
-        const float outerRadius = miniVisible
-            ? ScaledMiniBarMetrics(m_dpiScale).outerCornerRadius
-            : ScaleF(static_cast<float>(CORNER_RADIUS), m_dpiScale);
+        const bool smallCorner = ShouldUseSmallWindowCorner(miniVisible, m_userScale);
+        const float outerRadius = WindowOuterCornerRadius(m_monitorDpiScale, smallCorner);
+        const MiniBarMetrics miniMetrics = ScaledMiniBarMetrics(m_dpiScale, outerRadius);
         const D2D1_ROUNDED_RECT background = D2D1::RoundedRect(
             D2D1::RectF(0.0f, 0.0f, w, h), outerRadius, outerRadius);
         m_pRenderTarget->FillRoundedRectangle(background, m_pBrushSurface.Get());
 
         // 2. 迷你态只呈现额度与缩短的进度条；标准展开态追加详情卡片。
+        const float hairline = miniMetrics.outerBorderThickness;
         if (miniVisible) {
-            DrawMiniBar(snapshot);
+            DrawMiniBar(snapshot, miniMetrics);
         } else {
-            const float collapsedH = ScaleF(static_cast<float>(COLLAPSED_HEIGHT), m_dpiScale);
+            const float collapsedH = Px(static_cast<float>(COLLAPSED_HEIGHT));
             DrawCollapsedBar(0.0f, expanded, snapshot, syncState);
             if (expanded) {
-                const float padX = ScaleF(8.0f, m_dpiScale);
-                m_pRenderTarget->DrawLine(
-                    D2D1::Point2F(padX, collapsedH), D2D1::Point2F(w - padX, collapsedH),
-                    m_pBrushDivider.Get(), 1.0f);
-                const float cardH = ScaleF(66.0f, m_dpiScale);
-                DrawStatsSubCard(collapsedH + ScaleF(8.0f, m_dpiScale), cardH, snapshot.stats);
-                DrawResetSubCard(
-                    collapsedH + ScaleF(8.0f, m_dpiScale) + cardH + ScaleF(5.0f, m_dpiScale),
-                    cardH, snapshot);
+                const float padX = Px(kPadX);
+                // 分隔线以整像素矩形填充，避免 1px 线条跨两个像素发虚。
+                m_pRenderTarget->FillRectangle(
+                    D2D1::RectF(padX, collapsedH, w - padX, collapsedH + hairline),
+                    m_pBrushDivider.Get());
+                const float cardH = Px(kCardHeight);
+                const float statsTop = collapsedH + Px(kCardGapTop);
+                DrawStatsSubCard(statsTop, cardH, snapshot.stats);
+                DrawResetSubCard(statsTop + cardH + Px(kCardGap), cardH, snapshot);
             }
         }
 
         // 3. 外描边保留在逐像素 Alpha 画面内，确保 OuterBorder 个性配置生效。
-        const float strokeWidth = miniVisible
-            ? ScaledMiniBarMetrics(m_dpiScale).outerBorderThickness
-            : ScaleF(1.0f, m_dpiScale);
+        //    标准栏与迷你栏统一使用取整后的描边宽度，且与 DWM 圆角同心贴合。
+        const float strokeWidth = hairline;
         const float strokeInset = strokeWidth / 2.0f;
         const float strokeRadius = (std::max)(0.0f, outerRadius - strokeInset);
         const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
@@ -415,8 +466,10 @@ namespace CodexQuotaBar {
         return hr;
     }
 
-    void Direct2DRenderer::DrawMiniBar(const QuotaSnapshot& snapshot) {
-        const MiniBarMetrics metrics = ScaledMiniBarMetrics(m_dpiScale);
+    void Direct2DRenderer::DrawMiniBar(
+        const QuotaSnapshot& snapshot,
+        const MiniBarMetrics& metrics)
+    {
         QuotaWindow unavailable;
         const QuotaWindow* windows[2] = {};
         int count = 0;
@@ -424,55 +477,71 @@ namespace CodexQuotaBar {
         if (snapshot.weekly.available) windows[count++] = &snapshot.weekly;
         if (count == 0) windows[count++] = &unavailable;
 
-        const float segmentWidth = static_cast<float>(m_width / count);
-        for (int i = 0; i < count; ++i) {
-            DrawMiniQuota(segmentWidth * i, segmentWidth, *windows[i]);
-        }
+        const float w = static_cast<float>(m_width);
+        const float h = static_cast<float>(m_height);
+        const float pad = metrics.contentInset;
+        const float pillTop = pad;
+        const float pillBottom = h - pad;
+        const float pillRadius = metrics.pillCornerRadius;
 
-        if (count == 2) {
-            const float dividerX = segmentWidth;
-            const float dividerHeight = MiniDividerHeight(m_height, metrics);
-            const float dividerTop =
-                (static_cast<float>(m_height) - dividerHeight) / 2.0f;
-            m_pRenderTarget->DrawLine(
-                D2D1::Point2F(dividerX, dividerTop),
-                D2D1::Point2F(dividerX, dividerTop + dividerHeight),
-                m_pBrushDivider.Get(), metrics.dividerThickness);
+        if (count == 1) {
+            const float pillLeft = pad;
+            const float pillRight = w - pad;
+            DrawMiniQuotaSlot(pillLeft, pillTop, pillRight, pillBottom, pillRadius, *windows[0]);
+        } else if (count == 2) {
+            const float centerX = std::round(w * 0.5f);
+            const float divThick = (std::max)(1.0f, std::round(metrics.dividerThickness));
+            const float divHalf = divThick * 0.5f;
+            const float divLeft = centerX - divHalf;
+            const float divRight = centerX + divHalf;
+
+            const float pill0Left = pad;
+            const float pill0Right = centerX - pad;
+            const float pill1Left = centerX + pad;
+            const float pill1Right = w - pad;
+
+            DrawMiniQuotaSlot(pill0Left, pillTop, pill0Right, pillBottom, pillRadius, *windows[0]);
+            DrawMiniQuotaSlot(pill1Left, pillTop, pill1Right, pillBottom, pillRadius, *windows[1]);
+
+            const float dividerHeight = MiniDividerHeight(static_cast<int>(m_height), metrics);
+            const float dividerTop = std::round((h - dividerHeight) / 2.0f);
+            const float dividerBottom = dividerTop + dividerHeight;
+            m_pRenderTarget->FillRectangle(
+                D2D1::RectF(divLeft, dividerTop, divRight, dividerBottom),
+                m_pBrushDivider.Get());
         }
     }
 
-    void Direct2DRenderer::DrawMiniQuota(
-        float left,
-        float width,
+    void Direct2DRenderer::DrawMiniQuotaSlot(
+        float pillLeft,
+        float pillTop,
+        float pillRight,
+        float pillBottom,
+        float pillRadius,
         const QuotaWindow& window)
     {
         const std::wstring value = window.available
             ? std::to_wstring(static_cast<int>(std::round(window.remainingPercent))) + L"%"
             : L"---";
 
-        const MiniBarMetrics metrics = ScaledMiniBarMetrics(m_dpiScale);
-        const float pillLeft = left + metrics.contentInset;
-        const float pillRight = left + width - metrics.contentInset;
-        const float pillTop = metrics.contentInset;
-        const float pillBottom =
-            static_cast<float>(m_height) - metrics.contentInset;
         const float pillW = (std::max)(0.0f, pillRight - pillLeft);
-        const float pillRadius = metrics.pillCornerRadius;
 
-        // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观逻辑）
+        // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观与透明度逻辑）
         const D2D1_ROUNDED_RECT pillRect = D2D1::RoundedRect(
             D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),
             pillRadius, pillRadius);
         m_pRenderTarget->FillRoundedRectangle(pillRect, m_pBrushTrackBg.Get());
 
-        // 2. 拓宽内部进度条（接入已有 ProgressBrushFor 色彩梯度与自定义外观逻辑）
+        // 2. 拓宽内部进度条（接入已有 ProgressBrushFor 色彩梯度与透明度继承）
         if (window.available && window.remainingPercent > 0.0) {
-            float fillW = std::max(pillRadius * 2.0f, pillW * static_cast<float>(window.remainingPercent / 100.0));
-            fillW = std::min(fillW, pillW);
+            float fillW = (std::max)(pillRadius * 2.0f, pillW * static_cast<float>(window.remainingPercent / 100.0));
+            fillW = (std::min)(fillW, pillW);
             ID2D1SolidColorBrush* statusBrush = ProgressBrushFor(window.remainingPercent);
             if (statusBrush && m_pBrushHalo) {
+                const float backgroundOpacity =
+                    1.0f - static_cast<float>(m_backgroundTransparency) / 100.0f;
                 D2D1_COLOR_F tintColor = statusBrush->GetColor();
-                tintColor.a = 0.32f;
+                tintColor.a = 0.32f * backgroundOpacity;
                 m_pBrushHalo->SetColor(tintColor);
 
                 m_pRenderTarget->PushAxisAlignedClip(
@@ -486,25 +555,35 @@ namespace CodexQuotaBar {
             }
         }
 
-        // 3. 百分比文字（大小保持 16px Bold 不变，在胶囊内实现像素级水平与垂直双向绝对居中）
-        if (m_pFontRowValueBold) {
-            m_pFontRowValueBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            m_pFontRowValueBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        // 3. 百分比文字（动态绑定实际胶囊槽物理高度与基线，杜绝缩放时行高溢出导致的错位）
+        if (m_pFontMiniValue) {
+            const float pillH = pillBottom - pillTop;
+            const float baseline = std::round(pillH * 0.75f);
+            m_pFontMiniValue->SetLineSpacing(
+                DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                pillH,
+                baseline);
+            m_pFontMiniValue->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_pFontMiniValue->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             const D2D1_RECT_F textRect = D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom);
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
             m_pRenderTarget->DrawTextW(
                 value.c_str(), static_cast<UINT32>(value.size()),
-                m_pFontRowValueBold.Get(), textRect, brush);
+                m_pFontMiniValue.Get(), textRect, brush);
         }
     }
 
-    void Direct2DRenderer::DrawSyncIndicator(float topY, SyncState state) {
-        float cx = ScaleF(349.0f, m_dpiScale);
-        float cy = topY + ScaleF(76.5f, m_dpiScale);
-        float coreRadius = ScaleF(4.0f, m_dpiScale);
-        float haloRadius = ScaleF(6.0f, m_dpiScale);
+    float Direct2DRenderer::Px(float logicalPx) const {
+        return SnapPx(logicalPx, m_dpiScale);
+    }
+
+    void Direct2DRenderer::DrawSyncIndicator(float centerY, SyncState state) {
+        const float cx = Px(kSyncCenterX);
+        const float cy = centerY;
+        const float coreRadius = ScaleF(4.0f, m_dpiScale);
+        const float haloRadius = ScaleF(6.0f, m_dpiScale);
 
         ID2D1SolidColorBrush* coreBrush = m_pBrushSyncIdle.Get();
         bool hasHalo = true;
@@ -558,11 +637,11 @@ namespace CodexQuotaBar {
         };
 
         DrawQuotaRow(
-            topY + static_cast<float>(Scale(3.0f, m_dpiScale)),
+            topY + Px(kRowTops[0]),
             L"窗口使用限额", quotaDetail(snapshot.window), snapshot.window);
 
         DrawQuotaRow(
-            topY + static_cast<float>(Scale(33.0f, m_dpiScale)),
+            topY + Px(kRowTops[1]),
             L"每周使用限额", quotaDetail(snapshot.weekly), snapshot.weekly);
 
         const wchar_t* syncDetail = L"等待";
@@ -582,40 +661,44 @@ namespace CodexQuotaBar {
             break;
         }
 
+        // 底部状态行：标题、状态值、同步点与展开箭头共用同一取整后的中线。
+        const float footerTop = topY + Px(kFooterTop);
+        const float footerBottom = footerTop + Px(kFooterHeight);
+        const float footerCenterY = (footerTop + footerBottom) / 2.0f;
+
         if (m_pFontFooter) {
             const std::wstring footerTitle = L"同步服务状态";
             const float titleWidth = MeasureTextWidth(footerTitle, m_pFontFooter.Get());
+            const float padX = Px(kPadX);
 
             m_pFontFooter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             m_pFontFooter->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             D2D1_RECT_F footerTitleRect = D2D1::RectF(
-                ScaleF(8.0f, m_dpiScale), topY + ScaleF(64.0f, m_dpiScale),
-                ScaleF(8.0f, m_dpiScale) + titleWidth + ScaleF(4.0f, m_dpiScale),
-                topY + ScaleF(86.0f, m_dpiScale));
+                padX, footerTop,
+                padX + titleWidth + ScaleF(8.0f, m_dpiScale),
+                footerBottom);
             m_pRenderTarget->DrawTextW(
                 footerTitle.c_str(), static_cast<UINT32>(footerTitle.size()),
                 m_pFontFooter.Get(), footerTitleRect, m_pBrushMuted.Get());
 
             m_pFontFooter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             D2D1_RECT_F syncDetailRect = D2D1::RectF(
-                ScaleF(kDetailCenterX - kDetailHalfWidth, m_dpiScale),
-                topY + ScaleF(64.0f, m_dpiScale),
-                ScaleF(kDetailCenterX + kDetailHalfWidth, m_dpiScale),
-                topY + ScaleF(86.0f, m_dpiScale));
+                Px(kDetailLeft), footerTop, Px(kDetailRight), footerBottom);
             m_pRenderTarget->DrawTextW(
                 syncDetail, static_cast<UINT32>(wcslen(syncDetail)),
                 m_pFontFooter.Get(), syncDetailRect, m_pBrushMuted.Get());
         }
 
-        DrawSyncIndicator(topY, syncState);
-        DrawChevron(topY, expanded);
+        DrawSyncIndicator(footerCenterY, syncState);
+        DrawChevron(footerCenterY, expanded);
     }
 
-    void Direct2DRenderer::DrawChevron(float topY, bool expanded) {
-        float cx = ScaleF(366.0f, m_dpiScale);
-        float cy = topY + ScaleF(76.5f, m_dpiScale);
-        float halfW = ScaleF(6.0f, m_dpiScale);
-        float halfH = ScaleF(4.0f, m_dpiScale);
+    void Direct2DRenderer::DrawChevron(float centerY, bool expanded) {
+        const float cx = Px(kChevronCenterX);
+        const float cy = centerY;
+        const float halfW = ScaleF(6.0f, m_dpiScale);
+        const float halfH = ScaleF(4.0f, m_dpiScale);
+        const float strokeW = ScaleF(2.0f, m_dpiScale);
 
         const bool pointsUp = expanded;
 
@@ -630,8 +713,10 @@ namespace CodexQuotaBar {
             p3 = D2D1::Point2F(cx + halfW, cy - halfH);
         }
 
-        m_pRenderTarget->DrawLine(p1, p2, m_pBrushChevron.Get(), ScaleF(2.0f, m_dpiScale));
-        m_pRenderTarget->DrawLine(p2, p3, m_pBrushChevron.Get(), ScaleF(2.0f, m_dpiScale));
+        m_pRenderTarget->DrawLine(
+            p1, p2, m_pBrushChevron.Get(), strokeW, m_pRoundStrokeStyle.Get());
+        m_pRenderTarget->DrawLine(
+            p2, p3, m_pBrushChevron.Get(), strokeW, m_pRoundStrokeStyle.Get());
     }
 
     ID2D1SolidColorBrush* Direct2DRenderer::ProgressBrushFor(double remainingPercent) const {
@@ -660,9 +745,10 @@ namespace CodexQuotaBar {
         const std::wstring& detail,
         const QuotaWindow& window)
     {
-        float padX = static_cast<float>(Scale(8.0f, m_dpiScale));
-        float w = static_cast<float>(m_width);
-        float rightX = w - padX;
+        const float padX = Px(kPadX);
+        const float w = static_cast<float>(m_width);
+        const float rightX = w - padX;
+        const float rowBottom = topY + Px(kRowTextHeight);
 
         std::wstring numStr;
         if (window.available) {
@@ -672,30 +758,27 @@ namespace CodexQuotaBar {
             numStr = L"---";
         }
         const float numWidth = MeasureTextWidth(numStr, m_pFontRowValueBold.Get());
-        const float numLeft = rightX - numWidth;
+        const float numLeft = rightX - numWidth - ScaleF(8.0f, m_dpiScale);
 
         const float titleWidth = MeasureTextWidth(title, m_pFontRowTitle.Get());
 
-        // 1. 标题
+        // 1. 标题（与详情、数值共用同一取整后的行框，保证垂直中线一致）
         if (m_pFontRowTitle) {
             m_pFontRowTitle->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             m_pFontRowTitle->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            D2D1_RECT_F titleRect = D2D1::RectF(padX, topY, padX + titleWidth + ScaleF(4.0f, m_dpiScale), topY + ScaleF(24.0f, m_dpiScale));
+            D2D1_RECT_F titleRect = D2D1::RectF(padX, topY, padX + titleWidth + ScaleF(8.0f, m_dpiScale), rowBottom);
             m_pRenderTarget->DrawTextW(title.c_str(), static_cast<UINT32>(title.size()), m_pFontRowTitle.Get(), titleRect, m_pBrushText.Get());
         }
 
-        // 每行中部辅助信息
-        if (m_pFontFooter && !detail.empty()) {
-            m_pFontFooter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            m_pFontFooter->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            const float center = ScaleF(kDetailCenterX, m_dpiScale);
-            const float boxHalfW = ScaleF(kDetailHalfWidth, m_dpiScale);
+        // 每行中部辅助信息（使用 12px 字体与居中对齐）
+        if (m_pFontRowDetail && !detail.empty()) {
+            m_pFontRowDetail->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_pFontRowDetail->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             D2D1_RECT_F detailRect = D2D1::RectF(
-                center - boxHalfW, topY,
-                center + boxHalfW, topY + ScaleF(24.0f, m_dpiScale));
+                Px(kDetailLeft), topY, Px(kDetailRight), rowBottom);
             m_pRenderTarget->DrawTextW(
                 detail.c_str(), static_cast<UINT32>(detail.size()),
-                m_pFontFooter.Get(), detailRect, m_pBrushMuted.Get());
+                m_pFontRowDetail.Get(), detailRect, m_pBrushMuted.Get());
         }
 
         // 2. 右侧数值 / 状态
@@ -703,19 +786,17 @@ namespace CodexQuotaBar {
         if (numFormat) {
             numFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
             numFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            D2D1_RECT_F valRect = D2D1::RectF(
-                numLeft, topY, rightX,
-                topY + static_cast<float>(Scale(24.0f, m_dpiScale)));
+            D2D1_RECT_F valRect = D2D1::RectF(numLeft, topY, rightX, rowBottom);
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
             m_pRenderTarget->DrawTextW(numStr.c_str(), static_cast<UINT32>(numStr.size()), numFormat, valRect, brush);
         }
 
-        // 3. 满宽细胶囊进度条
+        // 3. 满宽圆角细胶囊进度条（起点与高度均为整像素，两行完全一致）
         const float trackX = padX;
         const float trackW = w - padX * 2.0f;
-        const float trackY = topY + ScaleF(25.0f, m_dpiScale);
+        const float trackY = topY + Px(kTrackOffset);
         DrawProgressTrack(trackX, trackY, trackW, window);
     }
 
@@ -728,7 +809,7 @@ namespace CodexQuotaBar {
     {
         float trackH = customHeight > 0.0f
             ? customHeight
-            : std::max(4.0f, ScaleF(5.0f, m_dpiScale));
+            : (std::max)(4.0f, Px(kTrackHeight));
         float trackRadius = trackH / 2.0f;
 
         D2D1_ROUNDED_RECT trackBgRect = D2D1::RoundedRect(D2D1::RectF(trackX, trackY, trackX + trackW, trackY + trackH), trackRadius, trackRadius);
@@ -743,16 +824,14 @@ namespace CodexQuotaBar {
     }
 
     void Direct2DRenderer::DrawStatsSubCard(float topY, float height, const TokenStats& stats) {
-        float padX = ScaleF(8.0f, m_dpiScale);
-        float w = static_cast<float>(m_width);
-        float cardW = w - padX * 2.0f;
-        float cardCorner = ScaleF(6.0f, m_dpiScale);
+        const float padX = Px(kPadX);
+        const float w = static_cast<float>(m_width);
+        const float cardW = w - padX * 2.0f;
+        const float cardCorner = Px(6.0f);
 
-        D2D1_ROUNDED_RECT subCardRect = D2D1::RoundedRect(D2D1::RectF(padX, topY, padX + cardW, topY + height), cardCorner, cardCorner);
-        m_pRenderTarget->FillRoundedRectangle(subCardRect, m_pBrushStatsCardBg.Get());
-        m_pRenderTarget->DrawRoundedRectangle(subCardRect, m_pBrushStatsCardBorder.Get(), 0.75f);
+        DrawSubCardFrame(padX, topY, cardW, height, cardCorner);
 
-        float colW = cardW / 3.0f;
+        const float colW = cardW / 3.0f;
         struct ColData {
             const std::wstring& val;
             const wchar_t* label;
@@ -763,7 +842,7 @@ namespace CodexQuotaBar {
         };
 
         for (int i = 0; i < 3; ++i) {
-            float colX = padX + i * colW;
+            const float colX = padX + i * colW;
             const std::wstring& val = cols[i].val;
             const wchar_t* numText = val.empty() ? L"---" : val.c_str();
             UINT32 numLen = val.empty() ? 3 : static_cast<UINT32>(val.size());
@@ -771,7 +850,7 @@ namespace CodexQuotaBar {
             if (m_pFontStatsNum) {
                 m_pFontStatsNum->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsNum->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F numRect = D2D1::RectF(colX, topY + ScaleF(8.0f, m_dpiScale), colX + colW, topY + ScaleF(32.0f, m_dpiScale));
+                D2D1_RECT_F numRect = D2D1::RectF(colX, topY + Px(8.0f), colX + colW, topY + Px(32.0f));
                 ID2D1SolidColorBrush* numBrush = val.empty() ? m_pBrushMuted.Get() : m_pBrushText.Get();
                 m_pRenderTarget->DrawTextW(numText, numLen, m_pFontStatsNum.Get(), numRect, numBrush);
             }
@@ -779,21 +858,34 @@ namespace CodexQuotaBar {
             if (m_pFontStatsLabel) {
                 m_pFontStatsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsLabel->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F lblRect = D2D1::RectF(colX, topY + ScaleF(36.0f, m_dpiScale), colX + colW, topY + ScaleF(58.0f, m_dpiScale));
+                D2D1_RECT_F lblRect = D2D1::RectF(colX, topY + Px(36.0f), colX + colW, topY + Px(58.0f));
                 m_pRenderTarget->DrawTextW(cols[i].label, static_cast<UINT32>(wcslen(cols[i].label)), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
             }
         }
     }
 
-    void Direct2DRenderer::DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot) {
-        float padX = ScaleF(8.0f, m_dpiScale);
-        float w = static_cast<float>(m_width);
-        float cardW = w - padX * 2.0f;
-        float cardCorner = ScaleF(6.0f, m_dpiScale);
+    void Direct2DRenderer::DrawSubCardFrame(
+        float left, float top, float width, float height, float corner)
+    {
+        const D2D1_ROUNDED_RECT fillRect = D2D1::RoundedRect(
+            D2D1::RectF(left, top, left + width, top + height), corner, corner);
+        m_pRenderTarget->FillRoundedRectangle(fillRect, m_pBrushStatsCardBg.Get());
+        // 细描边按整像素宽度内缩半个线宽，在各 DPI 下均精确落在物理像素格上。
+        const float strokeWidth = (std::max)(1.0f, std::round(m_dpiScale));
+        const float inset = strokeWidth * 0.5f;
+        const D2D1_ROUNDED_RECT strokeRect = D2D1::RoundedRect(
+            D2D1::RectF(left + inset, top + inset, left + width - inset, top + height - inset),
+            (std::max)(0.0f, corner - inset), (std::max)(0.0f, corner - inset));
+        m_pRenderTarget->DrawRoundedRectangle(strokeRect, m_pBrushStatsCardBorder.Get(), strokeWidth);
+    }
 
-        D2D1_ROUNDED_RECT subCardRect = D2D1::RoundedRect(D2D1::RectF(padX, topY, padX + cardW, topY + height), cardCorner, cardCorner);
-        m_pRenderTarget->FillRoundedRectangle(subCardRect, m_pBrushStatsCardBg.Get());
-        m_pRenderTarget->DrawRoundedRectangle(subCardRect, m_pBrushStatsCardBorder.Get(), 0.75f);
+    void Direct2DRenderer::DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot) {
+        const float padX = Px(kPadX);
+        const float w = static_cast<float>(m_width);
+        const float cardW = w - padX * 2.0f;
+        const float cardCorner = Px(6.0f);
+
+        DrawSubCardFrame(padX, topY, cardW, height, cardCorner);
 
         const int64_t expiry = snapshot.resetCredits.earliestExpiresAt;
         const std::wstring expiryText = expiry > 0 ? FormatCompactTime(expiry) : L"--";
@@ -821,7 +913,7 @@ namespace CodexQuotaBar {
             if (m_pFontStatsNum) {
                 m_pFontStatsNum->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsNum->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F numRect = D2D1::RectF(colX, topY + ScaleF(8.0f, m_dpiScale), colX + colWidth, topY + ScaleF(32.0f, m_dpiScale));
+                D2D1_RECT_F numRect = D2D1::RectF(colX, topY + Px(8.0f), colX + colWidth, topY + Px(32.0f));
                 ID2D1SolidColorBrush* numBrush =
                     (*values[i] == L"--") ? m_pBrushMuted.Get() : m_pBrushText.Get();
                 m_pRenderTarget->DrawTextW(values[i]->c_str(), static_cast<UINT32>(values[i]->size()), m_pFontStatsNum.Get(), numRect, numBrush);
@@ -830,7 +922,7 @@ namespace CodexQuotaBar {
             if (m_pFontStatsLabel) {
                 m_pFontStatsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsLabel->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                D2D1_RECT_F lblRect = D2D1::RectF(colX, topY + ScaleF(36.0f, m_dpiScale), colX + colWidth, topY + ScaleF(58.0f, m_dpiScale));
+                D2D1_RECT_F lblRect = D2D1::RectF(colX, topY + Px(36.0f), colX + colWidth, topY + Px(58.0f));
                 m_pRenderTarget->DrawTextW(labels[i], static_cast<UINT32>(wcslen(labels[i])), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
             }
         }

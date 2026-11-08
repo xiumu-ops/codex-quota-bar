@@ -56,7 +56,8 @@ namespace CodexQuotaBar {
 
             D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
                 D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+                96.0f, 96.0f);
             if (FAILED(st->pD2DFactory->CreateDCRenderTarget(&props, &st->pMenuRenderTarget)) ||
                 FAILED(st->pMenuRenderTarget->CreateSolidColorBrush(
                     st->palette.surface, &st->pMenuBrush))) {
@@ -64,6 +65,7 @@ namespace CodexQuotaBar {
                 st->pMenuRenderTarget.Reset();
                 return false;
             }
+            st->pMenuRenderTarget->SetDpi(96.0f, 96.0f);
             st->pMenuRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
             return true;
         }
@@ -76,10 +78,12 @@ namespace CodexQuotaBar {
 
             const float w = static_cast<float>(clientRect.right - clientRect.left);
             const float h = static_cast<float>(clientRect.bottom - clientRect.top);
-            const float padX = ScaleF(12.0f, st->dpiScale);
-            const float hoverRadius = ScaleF(6.0f, st->dpiScale);
+            const float padX = static_cast<float>(Scale(12.0f, st->dpiScale));
+            const float hoverRadius = static_cast<float>(Scale(4.0f, st->dpiScale));
+            const float hairline = (std::max)(1.0f, std::round(st->dpiScale));
 
             st->pMenuRenderTarget->BeginDraw();
+            st->pMenuRenderTarget->SetDpi(96.0f, 96.0f);
 
             // 背景与主面板 surface 完全一致；窗口外形由 DWM 圆角裁剪
             st->pMenuBrush->SetColor(st->palette.surface);
@@ -97,12 +101,12 @@ namespace CodexQuotaBar {
                     static_cast<float>(row.rect.right), static_cast<float>(row.rect.bottom));
 
                 if (row.text.empty()) {
-                    // 分隔线（浅灰，与折叠栏 divider 同色）
-                    const float midY = (rc.top + rc.bottom) / 2.0f;
+                    // 分隔线按整像素矩形填充，避免 1px 线条落在偶数行高中心跨两行发虚
+                    const float lineTop = std::floor((rc.top + rc.bottom - hairline) * 0.5f);
                     st->pMenuBrush->SetColor(st->palette.menuDivider);
-                    st->pMenuRenderTarget->DrawLine(
-                        D2D1::Point2F(padX, midY), D2D1::Point2F(w - padX, midY),
-                        st->pMenuBrush.Get(), 1.0f);
+                    st->pMenuRenderTarget->FillRectangle(
+                        D2D1::RectF(padX, lineTop, w - padX, lineTop + hairline),
+                        st->pMenuBrush.Get());
                     continue;
                 }
 
@@ -236,9 +240,10 @@ namespace CodexQuotaBar {
         if (FAILED(st.pDWriteFactory->CreateTextFormat(
                 fontFamily.c_str(), NULL,
                 DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                16.0f * dpiScale, L"zh-cn", &st.pFontMenu))) {
+                14.0f * dpiScale, L"zh-cn", &st.pFontMenu))) {
             return 0;
         }
+        st.pFontMenu->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
         // 1. 测量与行几何
         float maxTextW = 0.0f;
@@ -251,9 +256,10 @@ namespace CodexQuotaBar {
         }
 
         const int surfacePad = Scale(4.0f, dpiScale);   // 菜单内容到窗口边
-        const int itemHPad = Scale(10.0f, dpiScale);    // 文字上下留白
-        const int sepH = Scale(9.0f, dpiScale);         // 分隔线行高
-        const int menuW = static_cast<int>(std::ceil(maxTextW)) + Scale(24.0f + 8.0f, dpiScale) + Scale(8.0f, dpiScale);
+        const int itemHPad = Scale(8.0f, dpiScale);     // 文字上下留白
+        const int sepH = Scale(8.0f, dpiScale);         // 分隔线行高
+        int menuW = static_cast<int>(std::ceil(maxTextW)) + Scale(24.0f + 8.0f, dpiScale) + Scale(8.0f, dpiScale);
+        if (menuW % 2 != 0) menuW++;
 
         int y = surfacePad;
         for (const auto& it : items) {
@@ -265,14 +271,16 @@ namespace CodexQuotaBar {
             } else {
                 SIZE sz = {};
                 MeasureMenuText(st.pDWriteFactory.Get(), st.pFontMenu.Get(), it.text.c_str(), sz);
-                const int rowH = static_cast<int>(sz.cy) + itemHPad;
+                int rowH = static_cast<int>(sz.cy) + itemHPad;
+                if (rowH % 2 != 0) rowH++;
                 row.rect = { surfacePad, y, menuW - surfacePad, y + rowH };
                 y += rowH;
             }
             st.rows.push_back(std::move(row));
             st.ids.push_back(it.id);
         }
-        const int menuH = y + surfacePad;
+        int menuH = y + surfacePad;
+        if (menuH % 2 != 0) menuH++;
 
         // 2. 屏幕钳制
         HMONITOR hMon = MonitorFromPoint({ screenX, screenY }, MONITOR_DEFAULTTONEAREST);

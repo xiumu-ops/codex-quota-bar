@@ -24,7 +24,7 @@ namespace CodexQuotaBar {
     };
 
     struct TokenStats {
-        // 统计字段默认空：未收到 STATS 数据时渲染 "--"，绝不展示占位假数值
+        // 统计字段默认空：服务未返回有效统计值时渲染 "--"，绝不展示占位假数值
         std::wstring totalTokens;
         std::wstring peakTokens;
         std::wstring longestTask;

@@ -6,6 +6,8 @@
 
 namespace CodexQuotaBar {
 
+    struct MiniBarMetrics;
+
     class Direct2DRenderer {
     public:
         Direct2DRenderer();
@@ -13,6 +15,7 @@ namespace CodexQuotaBar {
 
         HRESULT Initialize(HWND hwnd);
         void SetDpiScale(float dpiScale);
+        void SetScales(float monitorDpiScale, float userScale);
         bool SetAppearance(
             const ThemePalette& palette,
             const std::wstring& fontFamily,
@@ -20,6 +23,7 @@ namespace CodexQuotaBar {
             std::wstring* validationError = nullptr);
         const ThemePalette& Palette() const { return m_palette; }
         const std::wstring& FontFamily() const { return m_fontFamily; }
+        bool FontFamilyExists(const std::wstring& fontFamily) const;
         HRESULT Resize(UINT width, UINT height);
 
         HRESULT Render(
@@ -36,20 +40,26 @@ namespace CodexQuotaBar {
         HRESULT PresentLayeredWindow();
         void CreateTextFormats();
         void DiscardTextFormats();
-        bool FontFamilyExists(const std::wstring& fontFamily) const;
 
         void DrawCollapsedBar(
             float topY,
             bool expanded,
             const QuotaSnapshot& snapshot,
             SyncState syncState);
-        void DrawMiniBar(const QuotaSnapshot& snapshot);
-        void DrawMiniQuota(
-            float left,
-            float width,
+        void DrawMiniBar(
+            const QuotaSnapshot& snapshot,
+            const MiniBarMetrics& metrics);
+        void DrawMiniQuotaSlot(
+            float pillLeft,
+            float pillTop,
+            float pillRight,
+            float pillBottom,
+            float pillRadius,
             const QuotaWindow& window);
-        void DrawSyncIndicator(float topY, SyncState state);
-        void DrawChevron(float topY, bool expanded);
+        void DrawSyncIndicator(float centerY, SyncState state);
+        void DrawChevron(float centerY, bool expanded);
+        // 逻辑像素 → 统一取整的物理像素，所有矩形边缘与派生坐标均经过它。
+        float Px(float logicalPx) const;
         void DrawQuotaRow(
             float topY,
             const std::wstring& title,
@@ -63,6 +73,7 @@ namespace CodexQuotaBar {
             float customHeight = 0.0f);
         void DrawStatsSubCard(float topY, float height, const TokenStats& stats);
         void DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot);
+        void DrawSubCardFrame(float left, float top, float width, float height, float corner);
 
         ID2D1SolidColorBrush* ProgressBrushFor(double remainingPercent) const;
         float MeasureTextWidth(
@@ -70,6 +81,8 @@ namespace CodexQuotaBar {
             IDWriteTextFormat* format) const;
 
         HWND m_hwnd = NULL;
+        float m_monitorDpiScale = 1.0f;
+        float m_userScale = 1.0f;
         float m_dpiScale = 1.0f;
         UINT m_width = 0;
         UINT m_height = 0;
@@ -80,10 +93,13 @@ namespace CodexQuotaBar {
 
         // 设备无关资源 (Device-Independent Resources)
         ComPtr<ID2D1Factory> m_pD2DFactory;
+        ComPtr<ID2D1StrokeStyle> m_pRoundStrokeStyle;
         ComPtr<IDWriteFactory> m_pDWriteFactory;
         ComPtr<IDWriteTextFormat> m_pFontRowTitle;
+        ComPtr<IDWriteTextFormat> m_pFontRowDetail;
         ComPtr<IDWriteTextFormat> m_pFontRowValue;
         ComPtr<IDWriteTextFormat> m_pFontRowValueBold;
+        ComPtr<IDWriteTextFormat> m_pFontMiniValue;
         ComPtr<IDWriteTextFormat> m_pFontFooter;
         ComPtr<IDWriteTextFormat> m_pFontStatsNum;
         ComPtr<IDWriteTextFormat> m_pFontStatsLabel;

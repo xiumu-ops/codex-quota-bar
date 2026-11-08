@@ -16,8 +16,6 @@
 #include <string>
 #include <vector>
 
-#include "HookConfig.h"
-
 namespace {
 
 constexpr wchar_t kProductName[] = L"Codex-Quota-Bar";
@@ -155,7 +153,7 @@ bool QuarantineAppExecutable(const std::filesystem::path& installDir,
         if (!std::filesystem::exists(appPath, error)) return true;
         if (MoveFileExW(appPath.c_str(), quarantined.c_str(),
                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            // 活动 Codex 会话即使缓存了旧 Hook，也无法再通过原路径派生实例。
+            // 隔离原主程序路径，防止卸载期间再次启动新实例。
             return true;
         }
         errorCode = GetLastError();
@@ -200,16 +198,34 @@ std::filesystem::path RegisteredPath(const wchar_t* valueName) {
     return value;
 }
 
-std::filesystem::path RegisteredHookFilePath() {
-    return RegisteredPath(L"HookFilePath");
+bool IsValidInstallDirectory(const std::filesystem::path& installDir) {
+    if (installDir.empty()) return false;
+    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0) return false;
+    const auto installRoot = installDir.parent_path();
+    if (_wcsicmp(installRoot.filename().c_str(), kProductName) != 0) return false;
+    if (installRoot.parent_path().empty()) return false;
+
+    // 1. 优先校验当前用户的卸载注册表登记位置
+    const std::filesystem::path registered = RegisteredPath(L"InstallLocation");
+    if (!registered.empty() && EqualPath(installDir, registered)) {
+        return true;
+    }
+
+    // 2. 校验是否位于当前用户的 LocalAppData 默认安装路径
+    const std::wstring localAppData = KnownFolder(FOLDERID_LocalAppData);
+    if (!localAppData.empty()) {
+        const std::filesystem::path expected =
+            std::filesystem::path(localAppData) / kProductName / kAppDirectoryName;
+        if (EqualPath(installDir, expected)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool IsRegisteredInstallDirectory(const std::filesystem::path& installDir) {
-    const std::filesystem::path registered = RegisteredPath(L"InstallLocation");
-    return !registered.empty() && EqualPath(installDir, registered) &&
-           _wcsicmp(installDir.filename().c_str(), kAppDirectoryName) == 0 &&
-           _wcsicmp(installDir.parent_path().filename().c_str(), kProductName) == 0 &&
-           !installDir.parent_path().parent_path().empty();
+    return IsValidInstallDirectory(installDir);
 }
 
 void DeleteRegistrationAndShortcut() {
@@ -230,7 +246,7 @@ bool SafeRemoveInstallDirectory(const std::filesystem::path& installDir,
         return false;
     }
 
-    // 最长重试约 20 秒，应对父卸载器、Hook 子进程以及安全软件的短暂扫描锁。
+    // 最长重试约 20 秒，应对父卸载器以及安全软件的短暂扫描锁。
     for (int attempt = 0; attempt < 100; ++attempt) {
         std::error_code error;
         if (!std::filesystem::exists(installDir, error)) return true;
@@ -365,24 +381,7 @@ int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet
 
     const std::filesystem::path appPath = installDir / L"Codex-Quota-Bar.exe";
 
-    // 1. 先精确撤销本软件写入的 Hook，保留用户已有 Hook 与其他元数据。
-    std::filesystem::path hookFilePath = RegisteredHookFilePath();
-    if (hookFilePath.empty()) {
-        hookFilePath = CodexQuotaBarInstaller::HookConfig::ResolveHookFilePath();
-    }
-    const auto hookResult = CodexQuotaBarInstaller::HookConfig::Remove(hookFilePath);
-    if (!hookResult.success) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        (L"无法安全移除 Codex 会话同步 Hook，卸载已中止：\n\n" +
-                         hookResult.error).c_str(),
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 4;
-    }
-
-    // 2. 再关闭伴随模式的自动启动来源；失败时不进入文件删除阶段。
+    // 1. 先关闭伴随模式的自动启动来源；失败时不进入文件删除阶段。
     if (!DeleteStartupValue()) {
         if (!quiet) {
             MessageBoxW(nullptr,
@@ -393,7 +392,7 @@ int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet
         return 5;
     }
 
-    // 3. 所有重新启动来源均已切断后，退出并确认安装目录内不再有进程。
+    // 2. 自动启动来源已切断后，退出并确认安装目录内不再有进程。
     if (!StopInstalledApp(installDir, appPath)) {
         if (!quiet) {
             MessageBoxW(nullptr,
@@ -417,7 +416,7 @@ int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet
         return 7;
     }
 
-    // 4. 最后删除程序与依赖。持久的 Windows 映像锁使用系统标准的
+    // 3. 最后删除程序与依赖。持久的 Windows 映像锁使用系统标准的
     // MOVEFILE_DELAY_UNTIL_REBOOT 兜底，在下次启动阶段完成清理。
     DWORD removalError = ERROR_SUCCESS;
     const bool removed = SafeRemoveInstallDirectory(installDir, removalError);
@@ -434,7 +433,7 @@ int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet
 
     if (!quiet) {
         const std::wstring message = removed
-            ? L"Codex-Quota-Bar 已卸载完成，Hook 与伴随模式已关闭。"
+            ? L"Codex-Quota-Bar 已卸载完成，伴随模式已关闭。"
             : scheduled
                 ? L"Codex-Quota-Bar 已卸载。Windows 正在占用残留文件，已登记在下次系统启动时自动删除；请重启一次电脑。"
                 : L"无法删除安装目录，卸载入口已保留。\n\nWindows 错误 " +
@@ -448,6 +447,96 @@ int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet
     return removed ? 0 : (scheduled ? ERROR_SUCCESS_REBOOT_REQUIRED : 3);
 }
 
+void ScheduleTempSelfDelete(const std::filesystem::path& tempExePath) {
+    MoveFileExW(tempExePath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+
+    wchar_t systemDir[MAX_PATH] = {};
+    const UINT len = GetSystemDirectoryW(systemDir, MAX_PATH);
+    const std::wstring cmdExe = (len > 0 && len < MAX_PATH)
+        ? (std::filesystem::path(systemDir) / L"cmd.exe").wstring()
+        : L"cmd.exe";
+
+    const std::wstring cmdLine =
+        Quote(cmdExe) + L" /c (ping 127.0.0.1 -n 2 > nul & del /f /q " +
+        Quote(tempExePath.wstring()) + L")";
+    std::vector<wchar_t> cmdBuffer(cmdLine.begin(), cmdLine.end());
+    cmdBuffer.push_back(L'\0');
+
+    STARTUPINFOW si = { sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(nullptr, cmdBuffer.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr,
+                       (len > 0 && len < MAX_PATH) ? systemDir : nullptr,
+                       &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
+int RunStage2(const std::filesystem::path& installDir, DWORD waitPid, bool removeData, bool quiet) {
+    if (!IsValidInstallDirectory(installDir)) {
+        if (!quiet) {
+            MessageBoxW(nullptr,
+                        L"安装目录与当前用户注册信息不一致，卸载已中止。",
+                        L"Codex-Quota-Bar 卸载程序",
+                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+        }
+        return 3;
+    }
+
+    // 1. 等待 Stage 1 进程完全退出并释放 Uninstall.exe 镜像锁
+    if (waitPid > 0) {
+        HANDLE hProcess = OpenProcess(SYNCHRONIZE, FALSE, waitPid);
+        if (hProcess) {
+            WaitForSingleObject(hProcess, 10000);
+            CloseHandle(hProcess);
+        }
+        Sleep(100);
+    }
+
+    // 2. 幂等清理注册表和快捷方式
+    DeleteStartupValue();
+    if (removeData) {
+        RemoveSettingsData(installDir);
+    }
+    DeleteRegistrationAndShortcut();
+
+    // 3. 删除安装目录文件
+    DWORD removalError = ERROR_SUCCESS;
+    const bool removed = SafeRemoveInstallDirectory(installDir, removalError);
+    const bool scheduled = !removed && ScheduleInstallDirectoryRemoval(installDir);
+    if (removed) {
+        RemoveEmptyInstallRoot(installDir);
+    } else if (scheduled) {
+        ScheduleInstallRootRemoval(installDir);
+    }
+
+    // 4. 用户交互反馈
+    if (!quiet) {
+        const std::wstring message = removed
+            ? L"Codex-Quota-Bar 已卸载完成，伴随模式已关闭。"
+            : scheduled
+                ? L"Codex-Quota-Bar 已卸载。Windows 正在占用残留文件，已登记在下次系统启动时自动删除；请重启一次电脑。"
+                : L"无法删除安装目录，卸载入口已保留。\n\nWindows 错误 " +
+                      std::to_wstring(removalError) + L"：" +
+                      WindowsErrorText(removalError);
+        MessageBoxW(nullptr, message.c_str(),
+                    L"Codex-Quota-Bar 卸载程序",
+                    MB_OK | ((removed || scheduled) ? MB_ICONINFORMATION : MB_ICONERROR) |
+                        MB_SETFOREGROUND);
+    }
+
+    // 5. 调度清理位于 %TEMP% 的自身副本
+    const std::wstring self = ModulePath();
+    if (!self.empty()) {
+        ScheduleTempSelfDelete(self);
+    }
+
+    return removed ? 0 : (scheduled ? ERROR_SUCCESS_REBOOT_REQUIRED : 3);
+}
+
 } // namespace
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
@@ -456,10 +545,47 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     if (!argv) return 1;
 
     bool quiet = false;
+    bool isStage2 = false;
+    bool removeData = false;
+    DWORD waitPid = 0;
+    std::filesystem::path stage2InstallDir;
+
     for (int i = 1; i < argc; ++i) {
-        if (_wcsicmp(argv[i], L"/quiet") == 0) quiet = true;
+        if (_wcsicmp(argv[i], L"/quiet") == 0 || _wcsicmp(argv[i], L"--quiet") == 0) {
+            quiet = true;
+        } else if (_wcsicmp(argv[i], L"--stage2") == 0) {
+            isStage2 = true;
+            if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                stage2InstallDir = FullPath(argv[++i]);
+            }
+        } else if (_wcsicmp(argv[i], L"--wait-pid") == 0) {
+            if (i + 1 < argc) {
+                waitPid = static_cast<DWORD>(_wtoi(argv[++i]));
+            }
+        } else if (_wcsicmp(argv[i], L"--remove-data") == 0) {
+            removeData = true;
+        }
     }
     LocalFree(argv);
+
+    if (isStage2) {
+        return RunStage2(stage2InstallDir, waitPid, removeData, quiet);
+    }
+
+    // Stage 1: 从主安装目录执行
+    const std::wstring self = ModulePath();
+    if (self.empty()) return 1;
+    const std::filesystem::path installDir = FullPath(std::filesystem::path(self).parent_path());
+
+    if (!IsValidInstallDirectory(installDir)) {
+        if (!quiet) {
+            MessageBoxW(nullptr,
+                        L"安装目录与当前用户注册信息不一致，卸载已中止。",
+                        L"Codex-Quota-Bar 卸载程序",
+                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+        }
+        return 3;
+    }
 
     if (!quiet && MessageBoxW(
             nullptr, L"确定要卸载 Codex-Quota-Bar 吗？",
@@ -468,7 +594,6 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         return 0;
     }
 
-    bool removeData = false;
     if (!quiet) {
         removeData = MessageBoxW(
             nullptr,
@@ -478,9 +603,87 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
             MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) == IDYES;
     }
 
-    const std::wstring self = ModulePath();
-    if (self.empty()) return 1;
-    const std::filesystem::path installDir = std::filesystem::path(self).parent_path();
+    const std::filesystem::path appPath = installDir / L"Codex-Quota-Bar.exe";
 
+    // 1. 先关闭伴随模式的自动启动来源
+    if (!DeleteStartupValue()) {
+        if (!quiet) {
+            MessageBoxW(nullptr,
+                        L"无法关闭伴随模式启动项，卸载入口已保留。",
+                        L"Codex-Quota-Bar 卸载程序",
+                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+        }
+        return 5;
+    }
+
+    // 2. 终止主程序运行并隔离主程序二进制
+    if (!StopInstalledApp(installDir, appPath)) {
+        if (!quiet) {
+            MessageBoxW(nullptr,
+                        L"Codex-Quota-Bar 进程无法结束，卸载入口已保留，请稍后重试。",
+                        L"Codex-Quota-Bar 卸载程序",
+                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+        }
+        return 6;
+    }
+
+    DWORD quarantineError = ERROR_SUCCESS;
+    if (!QuarantineAppExecutable(installDir, appPath, quarantineError)) {
+        if (!quiet) {
+            const std::wstring message =
+                L"无法隔离正在使用的主程序，卸载入口已保留。\n\nWindows 错误 " +
+                std::to_wstring(quarantineError) + L"：" +
+                WindowsErrorText(quarantineError);
+            MessageBoxW(nullptr, message.c_str(), L"Codex-Quota-Bar 卸载程序",
+                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+        }
+        return 7;
+    }
+
+    // 3. 删除用户配置（若选择）以及卸载注册表与快捷方式
+    if (removeData) {
+        RemoveSettingsData(installDir);
+    }
+    DeleteRegistrationAndShortcut();
+
+    // 4. 将自身克隆到 %TEMP% 并启动 Stage 2 完成安装目录清理
+    std::error_code ec;
+    const std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
+    if (!ec && !tempDir.empty()) {
+        const std::filesystem::path tempExe =
+            tempDir / (L"Codex-Quota-Bar-Uninstall-" +
+                       std::to_wstring(GetCurrentProcessId()) + L".exe");
+
+        std::filesystem::copy_file(self, tempExe,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            std::wstring command = Quote(tempExe.wstring()) +
+                                   L" --stage2 " + Quote(installDir.wstring()) +
+                                   L" --wait-pid " + std::to_wstring(GetCurrentProcessId());
+            if (quiet) {
+                command += L" /quiet";
+            }
+            if (removeData) {
+                command += L" --remove-data";
+            }
+
+            // 切换工作目录至临时目录，释放安装目录的目录句柄
+            SetCurrentDirectoryW(tempDir.c_str());
+
+            STARTUPINFOW si = { sizeof(si) };
+            PROCESS_INFORMATION pi = {};
+            std::vector<wchar_t> cmdBuffer(command.begin(), command.end());
+            cmdBuffer.push_back(L'\0');
+
+            if (CreateProcessW(tempExe.c_str(), cmdBuffer.data(), nullptr, nullptr,
+                               FALSE, 0, nullptr, tempDir.c_str(), &si, &pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                return 0; // Stage 1 顺利完成，立即退出释放 app/Uninstall.exe 镜像锁
+            }
+        }
+    }
+
+    // 若临时克隆或启动失败，回退到原位执行
     return Cleanup(installDir, removeData, quiet);
 }

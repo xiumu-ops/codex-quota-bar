@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
-project(Codex-Quota-Bar VERSION 2.7.8 LANGUAGES CXX)
+project(Codex-Quota-Bar VERSION 2.8.0 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Codex-Quota-Bar supports Windows 11 x64 with MSVC only.")
@@ -143,6 +143,7 @@ target_link_libraries(CodexQuotaBarApp
     gdi32
     shell32
     ole32
+    comdlg32
     d2d1
     dwrite
     dwmapi
@@ -165,19 +166,6 @@ if(BUILD_TESTING)
     )
     cqb_configure_target(CodexAppServerIntegrationTests)
     target_link_libraries(CodexAppServerIntegrationTests advapi32 shell32 ole32)
-
-    add_executable(HookConfigTests
-        tests/HookConfigTests.cpp
-        installer/HookConfig.cpp
-    )
-    cqb_configure_target(HookConfigTests)
-    target_include_directories(HookConfigTests PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/installer"
-    )
-    target_link_libraries(HookConfigTests
-        shell32
-        ole32
-    )
 
     add_executable(SimpleJsonTests tests/SimpleJsonTests.cpp)
     cqb_configure_target(SimpleJsonTests)
@@ -202,12 +190,10 @@ if(BUILD_TESTING)
         NAME CodexAppServerIntegration
         COMMAND CodexAppServerIntegrationTests $<TARGET_FILE:FakeCodexAppServer>
     )
-    add_test(NAME HookConfig COMMAND HookConfigTests)
     add_test(NAME SimpleJson COMMAND SimpleJsonTests)
     add_test(NAME Appearance COMMAND AppearanceTests)
     add_test(NAME PipeServer COMMAND PipeServerTests)
     set_tests_properties(CodexAppServerIntegration PROPERTIES TIMEOUT 30)
-    set_tests_properties(HookConfig PROPERTIES TIMEOUT 10)
     set_tests_properties(SimpleJson PROPERTIES TIMEOUT 10)
     set_tests_properties(Appearance PROPERTIES TIMEOUT 10)
     set_tests_properties(PipeServer PROPERTIES TIMEOUT 10)

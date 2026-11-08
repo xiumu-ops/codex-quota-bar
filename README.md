@@ -25,7 +25,7 @@
   - **左键按住主体拖动**：在各显示器工作区内自由拖放（跨多显示器、DPI 切换均保持清晰，自动避让任务栏并将位置持久化到 `config-users.json`）。
   - **左键双击主体区域**：立即向 Codex 发起即时额度与使用数据刷新。
 
-迷你模式可通过右键菜单启用。双额度时使用 `112 × 28` 的横向矩形，按窗口额度、每周额度从左至右显示；只有一个额度或首次尚未返回额度时使用 `56 × 28`。迷你栏保持 8 px 基准圆角，仅显示百分比和内嵌大进度，不显示标题、重置时间、同步状态或展开控件；需要详情时使用右键菜单“展开详情”。窗口尺寸、外框圆角、内部大进度圆角、内容边距、分隔线和字体都会同时响应系统 DPI 与用户缩放。
+迷你模式可通过右键菜单启用。双额度时使用 `112 × 28` 的横向矩形，按窗口额度、每周额度从左至右显示；只有一个额度或首次尚未返回额度时使用 `56 × 28`。迷你栏保持 8 px 基准圆角，支持背景透明度联动继承，采用 18px 粗体百分比文字与内嵌大进度槽呈现极佳的可读性；需要详情时使用右键菜单“展开详情”。窗口尺寸、外框圆角、内部大进度圆角、内容边距、分隔线和字体都会同时响应系统 DPI 与用户缩放。
 
 ---
 
@@ -52,7 +52,8 @@
   - **立即刷新**：手动唤起临时 Codex App Server 进行即时额度与 Token 统计同步。
   - **刷新间隔**：支持切换自动刷新周期（1分钟 / 5分钟 / 10分钟 / 30分钟 / 60分钟）。
   - **缩放大小**：支持切换 UI 缩放比例（75% / 87.5% / 100% / 112.5% / 125%）。
-  - **外观配置**：切换默认 / 个性外观，或在统一编辑器中修改 19 项颜色与 0%–90% 的背景透明度；支持应用、确定和取消。
+  - **字体选择**：支持一键切换常用高品质系统字体（如微软雅黑 UI、Segoe UI、宋体、黑体、楷体、仿宋、等线、HarmonyOS Sans SC、PingFang SC、Cascadia Code、Consolas、JetBrains Mono、Fira Code 等），支持直接调出系统字体库选择器（“浏览全部系统字体...”）或在个性外观中输入任意自定义字体族并实时预览效果。
+  - **外观配置**：切换默认 / 个性外观，或在统一编辑器中修改 19 项颜色、0%–90% 的背景透明度以及界面字体；界面严格栅格对齐，提供原生系统字体浏览（“浏览”按钮）与实时字体预览卡片、安装校验、应用、确定和取消。
   - **迷你模式（开/关）**：在标准折叠栏与自适应 `56/112 × 28` 迷你栏之间切换，状态在重启后继续生效。
   - **置顶模式（开/关）**：只控制额度条是否保持在其他普通窗口上方；开启或关闭时都不会进入任务栏等系统保留区域，设置会保存并在重启后继续生效。
   - **伴随模式（开/关）**：开启后，仅在官方 Codex 桌面端启动时自动显示并同步；Codex 退出后自动静默隐藏并于后台超轻量驻留。
@@ -68,12 +69,11 @@
 - **DirectWrite 现代排版**：Microsoft YaHei UI 中文字体渲染
 - **固定向下展开**：详情面板始终追加在折叠栏下方（统计卡片 + 限额重置卡片）；底部空间不足时整体上移窗口
 - **官方账户接口**：临时启动 `codex app-server`，通过 stdio JSON-RPC 调用 `account/rateLimits/read` 与 `account/usage/read`，无需额外常驻服务或开放本地端口
-- **官方生命周期 Hook**：安装器注册 `SessionStart`、`Stop`、`SessionEnd`，新会话、每轮对话完成和会话结束时自动同步
 - **伴随模式**：可从右键菜单启用；Codex 桌面端启动时自动显示，桌面端退出后防抖隐藏，并通过当前用户启动项在登录后后台等待
 - **安全置顶模式**：置顶只改变窗口层级，不扩大可停靠范围；标准栏、迷你栏及展开态始终受当前显示器工作区约束，避免被任务栏完全遮挡
 - **自适应迷你模式**：双额度横向显示，单额度自动缩减为一半宽度，并直接复用折叠栏的外观与进度逻辑
 - **当前用户安装与卸载**：单文件安装包默认写入 `%LOCALAPPDATA%\Codex-Quota-Bar\app`，程序、配置、开始菜单和“已安装的应用”入口全部限定在当前用户
-- **Win32 命名管道 IPC**：单实例守护进程，CLI / IDE / Git Hook 毫秒级通信（命令表见下）
+- **Win32 命名管道 IPC**：单实例守护进程，支持命令行毫秒级唤醒、显隐切换、刷新与退出（命令表见下）
 - **零第三方运行库**：程序只使用 Windows 系统组件；额度同步需要已安装并登录的官方 Codex
 
 ---
@@ -102,18 +102,18 @@
 
 ### GitHub Actions 远程构建
 
-仓库内置 `.github/workflows/remote-build.yml`，工作流显示名称为 `Codex-Quota-Bar Remote Build`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2025`（Windows Server 2025 x64）执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Codex-Quota-Bar Remote Build > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并在临时 Runner 中实际验证当前用户安装、HKCU 注册、Hook、快捷方式和卸载清理，最后上传保留 30 天的构建产物。
+仓库内置 `.github/workflows/remote-build.yml`，工作流显示名称为 `Codex-Quota-Bar Remote Build`，固定使用带 Visual Studio 2022、MSVC 与 Windows SDK 的 `windows-2025`（Windows Server 2025 x64）执行器。推送到 `main`、向 `main` 提交 Pull Request，或者在 GitHub `Actions > Codex-Quota-Bar Remote Build > Run workflow` 手动运行时，会依次执行完整回归测试、构建安装器、校验 SHA256，并在临时 Runner 中实际验证当前用户安装、HKCU 注册、快捷方式和卸载清理，最后上传保留 30 天的构建产物。
 
 普通构建成功后，打开对应的 Actions 运行记录，在页面底部的 `Artifacts` 区域下载 `Codex-Quota-Bar_version_<版本号>`。压缩包中包含同名版本安装器和 SHA256 文件；普通分支构建不会自动公开发布。
 
-正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.7.8：
+正式版本使用语义化标签发布。标签必须与 `CMakeLists.txt` 中的项目版本完全一致；例如发布 2.8.0：
 
 ```powershell
-git tag -a v2.7.8 -m "Codex-Quota-Bar 2.7.8"
-git push origin v2.7.8
+git tag -a v2.8.0 -m "Codex-Quota-Bar 2.8.0"
+git push origin v2.8.0
 ```
 
-标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.7.8.exe` 与 `Codex-Quota-Bar_version_2.7.8.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
+标签流水线通过同一套回归、安装与卸载测试后，会自动创建非草稿、非预发布的 GitHub Release，生成发布说明，并将 `Codex-Quota-Bar_version_2.8.0.exe` 与 `Codex-Quota-Bar_version_2.8.0.sha256` 作为正式下载文件上传。推送不匹配项目版本的标签会直接失败，不会创建错误版本的 Release。
 
 如需在云端签名，在仓库的 `Settings > Secrets and variables > Actions` 中添加：
 
@@ -127,8 +127,8 @@ git push origin v2.7.8
 ```text
 assets/       icons/ 应用图标与 screenshots/ README 预览截图
 src/          EXE 源码、同模块头文件与 resources/ Win32 资源
-installer/    安装器、卸载器及 Hook 配置实现
-tests/        App Server、Hook 与异常路径测试
+installer/    安装器与卸载器实现
+tests/        App Server、IPC、配置与异常路径测试
 scripts/      构建、运行、测试、安装包与清理脚本
 dist/         最终单文件安装器与 SHA256；可删除、可重新生成
 .build/       隐藏的编译缓存；不纳入版本控制
@@ -141,7 +141,7 @@ CHANGELOG.md  各版本新增、变更与修复记录
 
 ### 安装包
 
-直接运行发布目录中的 `Codex-Quota-Bar_version_2.7.8.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
+直接运行发布目录中的 `Codex-Quota-Bar_version_2.8.0.exe` 即可安装。发布目录只包含安装器及其 SHA256 文件，主程序作为安装器内部载荷构建。首次交互式安装会打开目录选择器，所选位置下自动创建独立的 `Codex-Quota-Bar` 根目录及 `app`、`data` 分层；默认结构为：
 
 ```text
 %LOCALAPPDATA%\Codex-Quota-Bar\
@@ -159,13 +159,9 @@ CHANGELOG.md  各版本新增、变更与修复记录
 
 安装器检测到早期系统级版本的 HKLM 卸载项时会停止安装，并要求先从 Windows“已安装的应用”卸载旧版，避免 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 同时残留两份程序。
 
-卸载器仅在 Windows 锁定正在运行的 `Uninstall.exe`、需要调用系统原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 完成最终删除时请求管理员权限；Hook、伴随启动项、HKCU 卸载项、当前用户快捷方式和配置本身都不需要管理员权限。项目不复制临时卸载器，也不使用 `cmd.exe` 或脚本自删除。
+卸载器仅在 Windows 锁定正在运行的 `Uninstall.exe`、需要调用系统原生 `MOVEFILE_DELAY_UNTIL_REBOOT` 完成最终删除时请求管理员权限；伴随启动项、HKCU 卸载项、当前用户快捷方式和配置本身都不需要管理员权限。项目不复制临时卸载器，也不使用 `cmd.exe` 或脚本自删除。
 
-窗口设置、伴随模式启动项以及 Codex Hook 均保持当前用户范围。安装器通过当前用户的 `~/.codex/hooks.json` 注册会话同步 Hook，不读取或修改高敏感的 `config.toml`；`hooks.json` 使用临时文件原子替换，若其中已有其他 Hook 或元数据，会结构化合并并精确保留整数等 JSON 数值。重新安装时会备份现有程序、卸载器和快捷方式，任何关键步骤失败都会恢复原安装。
-
-卸载时只识别并移除调用 `Codex-Quota-Bar.exe --hook` 的三个处理器；文件仅由本软件创建且清空后会一并删除。伴随模式启动项也会始终移除。
-
-首次安装或 Hook 命令路径变化后，Codex 会按照官方安全机制跳过尚未信任的非托管 Hook。请在 Codex 中输入 `/hooks`，审核并信任新增的三个 Hook。官方说明见 [Codex Hooks 文档](https://learn.chatgpt.com/docs/hooks)。
+窗口设置与伴随模式启动项均保持当前用户范围，安装与卸载全程不读取或修改用户的 Codex 配置文件（如 `config.toml` 或 `hooks.json`）。重新安装时会备份现有程序、卸载器和快捷方式，任何关键步骤失败都会恢复原安装；卸载时会始终清理伴随模式启动项。
 
 从源码生成安装包需要 Visual Studio Build Tools（MSVC 与 Windows Resource Compiler）：
 
@@ -185,11 +181,11 @@ $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT = "证书 SHA-1 指纹"
 输出文件：
 
 ```text
-dist\Release\Codex-Quota-Bar_version_2.7.8.exe
-dist\Release\Codex-Quota-Bar_version_2.7.8.sha256
+dist\Release\Codex-Quota-Bar_version_2.8.0.exe
+dist\Release\Codex-Quota-Bar_version_2.8.0.sha256
 ```
 
-安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：精确移除本软件的 Hook、删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
+安装器支持 `/quiet` 或 `/s` 静默安装；已安装的 `app\Uninstall.exe /quiet` 可执行静默卸载并默认保留 `data`。卸载顺序固定为：删除伴随启动项、终止全部实例、隔离主程序路径，最后删除 `app`。交互卸载选择删除本地设置时会同时删除 `data`；若根目录随后为空会一并删除。正在运行的卸载器映像若仍被 Windows 占用，会登记在下次系统启动时删除并明确提示需要重启。
 
 ### Defender 与代码签名
 
@@ -203,21 +199,13 @@ dist\Release\Codex-Quota-Bar_version_2.7.8.sha256
 
 带参数启动时向运行中的实例发送命令；无参数启动进入常驻 GUI。所有命令以退出码报告结果：`0` 表示命令已发送并得到 `OK` 回复，`1` 表示未知命令、未知参数或实例未运行。
 
-| 命令                                    | 说明                                                            |
-| ------------------------------------- | ------------------------------------------------------------- |
-| `--worker BUSY`                       | Hook 兼容命令：回执成功，不存储、不显示任何工作状态                                  |
-| `--worker IDLE` / `READY`             | Hook 兼容命令：回执成功，不改变界面                                          |
-| `--worker DONE`                       | 收到命令后立即刷新额度；安装器注册的官方 `Stop` Hook 会在每轮对话完成时自动调用                |
-| `--worker OFFLINE`                    | Hook 兼容命令：回执成功，不改变界面                                          |
-| `--worker STATUS <文本>`                | Hook 兼容命令：接受文本并回执成功，不改变界面（可超 4KB，长消息自动分块读取）                   |
-| `--worker STATS <v1> <v2> <v3> <v4>`  | 手动覆盖统计卡片（兼容旧 Hook）：累计 Token、峰值 Token、最长聊天、连续天数。下一次成功自动同步会替换该值 |
-| `--worker REFRESH`                    | 立即刷新配额数据                                                      |
-| `--hook SessionStart/Stop/SessionEnd` | 安装器写入的 Codex 生命周期入口；实例未运行时会启动额度条并强制同步                         |
-| `--refresh` / `-r`                    | 立即刷新配额数据                                                      |
-| `--toggle` / `-t`                     | 显示/隐藏切换                                                       |
-| `--show`                              | 显示窗口                                                          |
-| `--hide`                              | 隐藏窗口                                                          |
-| `--exit` / `-x`                       | 优雅退出运行中的实例                                                    |
+| 命令               | 说明                 |
+| ------------------ | -------------------- |
+| `--refresh` / `-r` | 立即刷新配额数据     |
+| `--toggle` / `-t`  | 显示/隐藏切换        |
+| `--show`           | 显示窗口             |
+| `--hide`           | 隐藏窗口             |
+| `--exit` / `-x`    | 优雅退出运行中的实例 |
 
 未知参数会向 stderr 打印用法并以退出码 `1` 结束，不会静默启动 GUI。
 
@@ -338,8 +326,6 @@ $env:CODEX_QUOTA_CODEX_PATH = "D:\path\to\codex.exe"
 
 - **管道访问控制**：命名管道使用登录会话专属名称、受保护的显式 DACL 和中完整性写入限制，仅允许对象所有者、SYSTEM 与管理员访问，并拒绝远程客户端。与应用运行在同一用户和同一会话、且满足完整性要求的本地进程仍可发送受支持命令（包括 `EXIT`）；这是当前用户桌面 IPC 的权限边界。
 - **Codex 路径信任**：额度同步自动发现仅检查官方桌面端常用安装目录；显式设置 `CODEX_QUOTA_CODEX_PATH` 表示用户信任该可执行文件。伴随进程检测另行校验官方 Codex 桌面安装路径，并排除 CLI/App Server 路径。
-- **工作状态命令零 UI 影响**：`BUSY` / `IDLE` / `DONE` / `OFFLINE` / `STATUS` 仅为兼容 Hook 保留——服务端接受命令并回执 `OK`，但不存储、不显示任何工作状态；底部文字和指示灯只反映额度同步状态。安装器注册的官方 `Stop` Hook 会在每轮对话完成时调用 `DONE` 并触发刷新。
-- **`STATS` 字段分隔**：该命令只用于兼容手动 Hook；四个字段以空格分隔且字段内容不可包含空格。正常运行时统计卡片由 `account/usage/read` 自动更新；接口未返回过有效值时才显示 `--`。
 - **命令大小上限**：单条命令上限 64KB（消息模式管道）；超限会回复 `TOO_LONG` 并断开连接，客户端以退出码 `1` 报告失败。受 CreateProcess 32767 字符命令行上限约束（UTF-16 约 65,534 字节），正常 CLI 调用无法触及该上限。
 
 ---

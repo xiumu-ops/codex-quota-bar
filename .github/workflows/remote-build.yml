@@ -200,8 +200,15 @@ jobs:
             echo "Expected one installer and one SHA256 file; found ${#assets[@]}." >&2
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
-            --verify-tag \
-            --title "Codex-Quota-Bar ${RELEASE_VERSION}" \
-            --generate-notes \
-            --latest
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Codex-Quota-Bar ${RELEASE_VERSION}" \
+              --latest
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --verify-tag \
+              --title "Codex-Quota-Bar ${RELEASE_VERSION}" \
+              --generate-notes \
+              --latest
+          fi

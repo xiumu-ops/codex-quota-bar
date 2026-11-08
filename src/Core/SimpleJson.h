@@ -24,9 +24,6 @@ namespace CodexQuotaBar {
         JsonType type = JsonType::Null;
         bool boolVal = false;
         double numVal = 0.0;
-        // 保留解析时的数字词法值。Hook 安装器会重写整个 hooks.json；若只
-        // 保存 double，超过 2^53 的整数会在无备份场景下被永久舍入。
-        std::wstring numberText;
         std::wstring strVal;
         std::vector<JsonValue> arrVal;
         std::map<std::wstring, JsonValue> objVal;
@@ -398,7 +395,6 @@ namespace CodexQuotaBar {
                     ok = false;
                     return {};
                 }
-                val.numberText = token;
             } catch (const std::invalid_argument&) {
                 ok = false;
                 return {};
