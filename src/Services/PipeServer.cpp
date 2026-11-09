@@ -60,6 +60,7 @@ namespace CodexQuotaBar {
 
     namespace {
         constexpr DWORD kClientIoTimeoutMs = 1000;
+        constexpr DWORD kMaxCommandBytes = 64 * 1024;
 
         DWORD WaitIoOrStop(HANDLE ioEvent, HANDLE stopEvent, DWORD timeoutMs = INFINITE) {
             HANDLE events[] = { ioEvent, stopEvent };
@@ -67,7 +68,7 @@ namespace CodexQuotaBar {
         }
 
         void CancelAndDrainIo(HANDLE pipe, OVERLAPPED& ovl) {
-            if (!CancelIoEx(pipe, &ovl) && GetLastError() != ERROR_NOT_FOUND) return;
+            CancelIoEx(pipe, &ovl);
             DWORD transferred = 0;
             GetOverlappedResult(pipe, &ovl, &transferred, TRUE);
         }
@@ -138,7 +139,6 @@ namespace CodexQuotaBar {
 
             if (connected && m_running) {
                 constexpr DWORD kChunkBytes = 1024 * sizeof(wchar_t);
-                constexpr DWORD kMaxCommandBytes = 64 * 1024;
                 std::wstring cmd;
                 cmd.reserve(kMaxCommandBytes / sizeof(wchar_t));
                 BOOL readOk = TRUE;
@@ -147,6 +147,7 @@ namespace CodexQuotaBar {
                 while (readOk && !overLimit) {
                     wchar_t part[1024] = { 0 };
                     DWORD bytesRead = 0;
+                    bool moreData = false;
                     ResetEvent(m_ioEvent);
                     readOk = ReadFile(hPipe, part, kChunkBytes, &bytesRead, &ovl);
                     if (!readOk) {
@@ -165,23 +166,20 @@ namespace CodexQuotaBar {
                         if (!readOk && err == ERROR_MORE_DATA) {
                             readOk = TRUE;
                             bytesRead = kChunkBytes;
+                            moreData = true;
                         }
                     }
-                    if (!readOk) break;
+                    if (!readOk || bytesRead % sizeof(wchar_t) != 0) {
+                        readOk = FALSE;
+                        break;
+                    }
 
                     cmd.append(part, bytesRead / sizeof(wchar_t));
-                    if (cmd.size() * sizeof(wchar_t) >= kMaxCommandBytes) {
+                    if (moreData && cmd.size() * sizeof(wchar_t) >= kMaxCommandBytes) {
                         overLimit = true;
                         break;
                     }
-
-                    if (bytesRead < kChunkBytes) {
-                        break;
-                    }
-                    DWORD avail = 0, remaining = 0;
-                    if (!PeekNamedPipe(hPipe, NULL, 0, NULL, &avail, &remaining) || avail == 0) {
-                        break;
-                    }
+                    if (!moreData) break;
                 }
 
                 auto writeReply = [&](const std::wstring& reply) {
@@ -232,42 +230,64 @@ namespace CodexQuotaBar {
     }
 
     std::wstring PipeServer::SendCommand(const std::wstring& pipeName, const std::wstring& command, DWORD timeoutMs) {
-        wchar_t replyBuf[2048] = { 0 };
-        const ULONGLONG deadline = GetTickCount64() + (std::max)(timeoutMs, 1UL);
-
-        for (;;) {
+        if (command.size() >= kMaxCommandBytes / sizeof(wchar_t)) return L"ERROR";
+        const ULONGLONG deadline = GetTickCount64() + (std::clamp)(timeoutMs, 1UL, INFINITE - 1UL);
+        const auto remainingTime = [deadline]() -> DWORD {
             const ULONGLONG now = GetTickCount64();
-            if (now >= deadline) break;
-            const DWORD remaining = static_cast<DWORD>(deadline - now);
-            DWORD bytesRead = 0;
-            BOOL ok = CallNamedPipeW(
-                pipeName.c_str(),
-                const_cast<wchar_t*>(command.c_str()),
-                static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)),
-                replyBuf,
-                sizeof(replyBuf),
-                &bytesRead,
-                remaining);
+            return now < deadline ? static_cast<DWORD>(deadline - now) : 0;
+        };
 
-            if (ok && bytesRead >= sizeof(wchar_t)) {
-                size_t charCount = bytesRead / sizeof(wchar_t);
-                if (charCount > 0 && replyBuf[charCount - 1] == L'\0') --charCount;
-                return std::wstring(replyBuf, charCount);
-            }
-            const DWORD error = ok ? ERROR_INVALID_DATA : GetLastError();
-            const ULONGLONG afterCall = GetTickCount64();
-            if (afterCall >= deadline ||
-                (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND)) break;
+        HANDLE pipe = INVALID_HANDLE_VALUE;
+        while (remainingTime() != 0) {
+            pipe = CreateFileW(
+                pipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
+            if (pipe != INVALID_HANDLE_VALUE) break;
 
-            const DWORD waitRemaining = static_cast<DWORD>(deadline - afterCall);
+            const DWORD error = GetLastError();
+            const DWORD waitRemaining = remainingTime();
+            if (waitRemaining == 0) break;
             if (error == ERROR_PIPE_BUSY) {
-                WaitNamedPipeW(pipeName.c_str(), waitRemaining);
-            } else {
-                // 等待服务端启动并建立管道实例
+                if (!WaitNamedPipeW(pipeName.c_str(), waitRemaining) &&
+                    GetLastError() != ERROR_FILE_NOT_FOUND) break;
+            } else if (error == ERROR_FILE_NOT_FOUND) {
                 Sleep((std::min)(waitRemaining, 10UL));
+            } else {
+                break;
             }
         }
-        return L"ERROR";
+        if (pipe == INVALID_HANDLE_VALUE) return L"ERROR";
+
+        wchar_t replyBuf[2048] = {};
+        DWORD bytesRead = 0;
+        DWORD mode = PIPE_READMODE_MESSAGE;
+        OVERLAPPED ovl = {};
+        ovl.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        BOOL ok = FALSE;
+        if (ovl.hEvent && SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr) &&
+            remainingTime() != 0) {
+            // Once submitted, never retry a command that may have already run.
+            ok = TransactNamedPipe(
+                pipe, const_cast<wchar_t*>(command.c_str()),
+                static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)),
+                replyBuf, sizeof(replyBuf), &bytesRead, &ovl);
+            if (!ok && GetLastError() == ERROR_IO_PENDING) {
+                if (WaitForSingleObject(ovl.hEvent, remainingTime()) == WAIT_OBJECT_0) {
+                    ok = GetOverlappedResult(pipe, &ovl, &bytesRead, FALSE);
+                } else {
+                    CancelAndDrainIo(pipe, ovl);
+                }
+            }
+        }
+        CloseHandle(pipe);
+        if (ovl.hEvent) CloseHandle(ovl.hEvent);
+
+        if (!ok || bytesRead < sizeof(wchar_t) || bytesRead % sizeof(wchar_t) != 0) {
+            return L"ERROR";
+        }
+        size_t charCount = bytesRead / sizeof(wchar_t);
+        if (replyBuf[charCount - 1] == L'\0') --charCount;
+        return std::wstring(replyBuf, charCount);
     }
 
 } // namespace CodexQuotaBar

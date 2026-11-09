@@ -181,22 +181,15 @@ namespace CodexQuotaBar {
         m_wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
         // 获取当前屏幕 DPI 并确定初始窗口坐标，再统一完成缩放渲染与分层提交
-        UINT dpi = GetDpiForWindow(m_hwnd);
-        if (dpi == 0) dpi = BASE_DPI;
-        m_currentDpi = static_cast<int>(dpi);
-        m_dpiScale = m_currentDpi / static_cast<float>(BASE_DPI);
+        const UINT dpi = GetDpiForWindow(m_hwnd);
+        m_dpiScale = dpi == 0 ? 1.0f : static_cast<float>(dpi) / BASE_DPI;
         m_uiScale = m_dpiScale * USER_SCALE_LEVELS[
             static_cast<std::size_t>(m_userScaleLevel)];
 
         const SIZE initialPhysical = PhysicalWindowSize();
         POINT initialPosition = {};
         auto stored = ConfigStore::LoadState();
-        if (m_settings.miniMode && m_settings.dockToWeather) {
-            const WeatherWidgetPlacement placement =
-                TaskbarPlacement::FindWeatherWidgetPlacement(
-                    initialPhysical, m_dpiScale, m_uiScale);
-            initialPosition = ClampToScreens(placement.dockPosition, initialPhysical, true);
-        } else if (stored.hasPosition) {
+        if (stored.hasPosition && !IsWeatherDockActive()) {
             initialPosition = ClampToScreens(stored.position, initialPhysical);
         } else {
             RECT rcWork = {};
@@ -214,7 +207,13 @@ namespace CodexQuotaBar {
             initialPhysical.cx, initialPhysical.cy,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
 
-        ApplyDpiScale(static_cast<int>(dpi));
+        // Moving to the saved monitor can synchronously deliver WM_DPICHANGED.
+        // Query again so the initial render uses the window's destination DPI.
+        const UINT destinationDpi = GetDpiForWindow(m_hwnd);
+        if (destinationDpi != 0) {
+            m_dpiScale = static_cast<float>(destinationDpi) / BASE_DPI;
+        }
+        ApplyUiScale();
 
         // 自动刷新定时器
         SetTimer(m_hwnd, TIMER_REFRESH_ID,
@@ -253,13 +252,7 @@ namespace CodexQuotaBar {
         }
     }
 
-    void MainWindow::ApplyDpiScale(int dpi) {
-        m_currentDpi = (dpi <= 0) ? BASE_DPI : dpi;
-        m_dpiScale = m_currentDpi / static_cast<float>(BASE_DPI);
-        ApplyUiScale();
-    }
-
-    void MainWindow::ApplyUiScale() {
+    void MainWindow::ApplyUiScale(const POINT* requestedPosition) {
         const float userScale = USER_SCALE_LEVELS[
             static_cast<std::size_t>(m_userScaleLevel)];
         m_uiScale = m_dpiScale * userScale;
@@ -273,20 +266,23 @@ namespace CodexQuotaBar {
             static_cast<UINT>(targetW),
             static_cast<UINT>(targetH));
 
-        if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+        if (IsWeatherDockActive() && !m_dragging) {
             DockToWeatherWidget();
             return;
         }
 
         RECT rc = {};
         GetWindowRect(m_hwnd, &rc);
+        const POINT anchor = requestedPosition ? *requestedPosition : POINT{ rc.left, rc.top };
         POINT clamped = {};
-        if (m_expanded && m_hasCollapsedLocation) {
+        if (m_dragging) {
+            clamped = ClampToScreens(anchor, physical, m_settings.miniMode && !m_expanded);
+        } else if (m_expanded && m_hasCollapsedLocation) {
             m_collapsedLocation = ClampToScreens(
                 m_collapsedLocation, CollapsedPhysicalWindowSize());
-            clamped = ClampToScreens(m_collapsedLocation, physical);
+            clamped = ClampToScreens(requestedPosition ? anchor : m_collapsedLocation, physical);
         } else {
-            clamped = ClampToScreens({ rc.left, rc.top }, physical);
+            clamped = ClampToScreens(anchor, physical);
             m_collapsedLocation = clamped;
             m_hasCollapsedLocation = true;
         }
@@ -589,23 +585,20 @@ namespace CodexQuotaBar {
             return;
         }
 
-        const bool isDockedMini = m_settings.miniMode && m_settings.dockToWeather && !m_expanded;
-        SetWindowPos(
-            m_hwnd,
-            (m_settings.alwaysOnTop || isDockedMini) ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        ApplyWindowZOrder();
         SyncWindowPosition(false);
     }
 
     void MainWindow::ToggleMiniMode() {
         const bool previous = m_settings.miniMode;
+        const bool previousDock = m_settings.dockToWeather;
         m_settings.miniMode = !previous;
         if (!m_settings.miniMode && m_settings.dockToWeather) {
             m_settings.dockToWeather = false;
         }
         if (!SaveSettingsWithFeedback()) {
             m_settings.miniMode = previous;
+            m_settings.dockToWeather = previousDock;
             return;
         }
 
@@ -614,76 +607,60 @@ namespace CodexQuotaBar {
             return;
         }
         if (!m_expanded) {
-            if (!m_settings.miniMode && !m_settings.alwaysOnTop) {
-                SetWindowPos(
-                    m_hwnd,
-                    HWND_NOTOPMOST,
-                    0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            }
+            ApplyWindowZOrder();
             ApplyUiScale();
-            if (m_settings.miniMode && m_settings.dockToWeather) {
-                DockToWeatherWidget();
-            } else if (m_hasCollapsedLocation) {
+            if (!IsWeatherDockActive() && m_hasCollapsedLocation) {
                 ConfigStore::SavePosition(m_collapsedLocation);
             }
         }
     }
 
-    void MainWindow::ToggleDockToWeather() {
-        const bool previous = m_settings.dockToWeather;
-        m_settings.dockToWeather = !previous;
-
-        if (m_settings.dockToWeather) {
-            if (!m_settings.miniMode) {
-                m_settings.miniMode = true;
-            }
-            if (m_expanded) {
-                m_expanded = false;
-            }
+    bool MainWindow::SetWeatherDocked(bool enabled) {
+        const bool previousDock = m_settings.dockToWeather;
+        const bool previousMini = m_settings.miniMode;
+        const bool previousExpanded = m_expanded;
+        m_settings.dockToWeather = enabled;
+        if (enabled) {
+            m_settings.miniMode = true;
+            m_expanded = false;
         }
 
         if (!SaveSettingsWithFeedback()) {
-            m_settings.dockToWeather = previous;
-            return;
+            m_settings.dockToWeather = previousDock;
+            m_settings.miniMode = previousMini;
+            m_expanded = previousExpanded;
+            return false;
         }
 
-        if (m_settings.dockToWeather) {
+        if (enabled) {
             ApplyUiScale();
-            DockToWeatherWidget();
         } else {
-            if (!m_settings.alwaysOnTop) {
-                SetWindowPos(
-                    m_hwnd,
-                    HWND_NOTOPMOST,
-                    0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            }
-            RECT rc = {};
-            GetWindowRect(m_hwnd, &rc);
-            const SIZE sz = PhysicalWindowSize();
-            const POINT clamped = ClampToScreens({ rc.left, rc.top }, sz, false);
-            m_collapsedLocation = clamped;
-            m_hasCollapsedLocation = true;
-            SetWindowPos(
-                m_hwnd, NULL,
-                clamped.x, clamped.y,
-                sz.cx, sz.cy,
-                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
-            RenderLayeredWindow();
-            DwmFlush();
-            ConfigStore::SavePosition(m_collapsedLocation);
+            ApplyWindowZOrder();
+            SyncWindowPosition(true);
         }
+        return true;
+    }
+
+    bool MainWindow::IsWeatherDockActive() const {
+        return m_settings.miniMode && m_settings.dockToWeather && !m_expanded;
+    }
+
+    void MainWindow::ApplyWindowZOrder() {
+        const bool topmost = m_settings.alwaysOnTop || IsWeatherDockActive();
+        const bool currentlyTopmost = (GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        if (topmost == currentlyTopmost) return;
+        SetWindowPos(m_hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                     0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     void MainWindow::DockToWeatherWidget() {
-        if (!m_hwnd || !m_settings.miniMode || m_expanded) return;
+        if (!m_hwnd || !IsWeatherDockActive() || m_dragging) return;
 
         const SIZE sz = PhysicalWindowSize();
         const WeatherWidgetPlacement placement =
-            TaskbarPlacement::FindWeatherWidgetPlacement(sz, m_dpiScale, m_uiScale);
+            TaskbarPlacement::FindWeatherWidgetPlacement(sz);
 
-        const POINT pos = ClampToScreens(placement.dockPosition, sz, true);
+        const POINT pos = placement.dockPosition;
         m_collapsedLocation = pos;
         m_hasCollapsedLocation = true;
 
@@ -797,39 +774,40 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::OnDpiChanged(int newDpi, const RECT* suggestedRect) {
-        const float previousUiScale = m_uiScale > 0.0f ? m_uiScale : 1.0f;
+        m_dpiScale = newDpi > 0 ? static_cast<float>(newDpi) / BASE_DPI : 1.0f;
+        const float uiScale = m_dpiScale * USER_SCALE_LEVELS[
+            static_cast<std::size_t>(m_userScaleLevel)];
+        POINT anchor = {};
+        const POINT* requestedPosition = nullptr;
         if (suggestedRect) {
-            SetWindowPos(
-                m_hwnd, NULL,
-                suggestedRect->left, suggestedRect->top,
-                0, 0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
-                SWP_NOCOPYBITS | SWP_NOREDRAW);
-            if (!m_expanded || !m_hasCollapsedLocation) {
-                m_collapsedLocation = { suggestedRect->left, suggestedRect->top };
-                m_hasCollapsedLocation = true;
-            }
+            anchor = { suggestedRect->left, suggestedRect->top };
+            requestedPosition = &anchor;
         }
-        ApplyDpiScale(newDpi);
-        if (m_dragging) {
-            RECT currentRect = {};
-            if (GetWindowRect(m_hwnd, &currentRect)) {
-                m_dragWindowPos = { currentRect.left, currentRect.top };
+        POINT cursor = {};
+        if (m_dragging && GetCursorPos(&cursor)) {
+            m_lastDragCursor = cursor;
+            const POINT dragAnchor = DragWindowPosition(cursor, uiScale);
+            const SIZE size = PhysicalWindowSize(uiScale);
+            const RECT dragRect = { dragAnchor.x, dragAnchor.y,
+                                   dragAnchor.x + size.cx, dragAnchor.y + size.cy };
+            // Keep Windows' chosen destination at a monitor seam. A correction
+            // back onto the old monitor would reenter WM_DPICHANGED.
+            if (!suggestedRect ||
+                MonitorFromRect(&dragRect, MONITOR_DEFAULTTONEAREST) ==
+                    MonitorFromRect(suggestedRect, MONITOR_DEFAULTTONEAREST)) {
+                anchor = dragAnchor;
             }
-            GetCursorPos(&m_dragOrigin);
-            const float ratio = m_uiScale / previousUiScale;
-            m_dragClickPoint.x = static_cast<LONG>(std::lround(m_dragClickPoint.x * ratio));
-            m_dragClickPoint.y = static_cast<LONG>(std::lround(m_dragClickPoint.y * ratio));
+            requestedPosition = &anchor;
         }
-        if (m_hasCollapsedLocation) {
+        ApplyUiScale(requestedPosition);
+        if (!m_dragging && !IsWeatherDockActive() && m_hasCollapsedLocation) {
             ConfigStore::SavePosition(m_collapsedLocation);
         }
     }
 
     POINT MainWindow::ClampToScreens(POINT pt, SIZE sz, bool allowTaskbarArea) const {
         std::vector<RECT> workAreas;
-        const bool useMonitorBounds = allowTaskbarArea ||
-            (m_settings.miniMode && m_settings.dockToWeather && !m_expanded);
+        const bool useMonitorBounds = allowTaskbarArea || IsWeatherDockActive();
 
         struct EnumContext {
             std::vector<RECT>* pAreas;
@@ -978,26 +956,26 @@ namespace CodexQuotaBar {
         return { BAR_WIDTH, COLLAPSED_HEIGHT };
     }
 
-    SIZE MainWindow::CollapsedPhysicalWindowSize() const {
+    SIZE MainWindow::CollapsedPhysicalWindowSize(float uiScale) const {
         if (m_settings.miniMode) {
             return {
-                SnapEven(MiniBarPhysicalWidth(m_snapshot, m_uiScale)),
-                ScaleEven(static_cast<float>(MINI_HEIGHT), m_uiScale)
+                MiniBarPhysicalWidth(m_snapshot, uiScale),
+                MiniBarPhysicalHeight(uiScale)
             };
         }
         return {
-            ScaleEven(static_cast<float>(BAR_WIDTH), m_uiScale),
-            ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale)
+            ScaleEven(static_cast<float>(BAR_WIDTH), uiScale),
+            ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), uiScale)
         };
     }
 
-    SIZE MainWindow::PhysicalWindowSize() const {
+    SIZE MainWindow::PhysicalWindowSize(float uiScale) const {
         if (!m_expanded) {
-            return CollapsedPhysicalWindowSize();
+            return CollapsedPhysicalWindowSize(uiScale);
         }
         return {
-            ScaleEven(static_cast<float>(BAR_WIDTH), m_uiScale),
-            ExpandedPhysicalHeight(m_uiScale)
+            ScaleEven(static_cast<float>(BAR_WIDTH), uiScale),
+            ExpandedPhysicalHeight(uiScale)
         };
     }
 
@@ -1042,7 +1020,7 @@ namespace CodexQuotaBar {
         targetLeft = clamped.x;
         targetTop = clamped.y;
         if (!m_expanded) {
-            if (m_settings.miniMode && m_settings.dockToWeather) {
+            if (IsWeatherDockActive()) {
                 DockToWeatherWidget();
                 return;
             }
@@ -1050,6 +1028,7 @@ namespace CodexQuotaBar {
             m_hasCollapsedLocation = true;
         }
 
+        ApplyWindowZOrder();
         SetWindowPos(
             m_hwnd, NULL,
             targetLeft, targetTop,
@@ -1064,6 +1043,14 @@ namespace CodexQuotaBar {
 
     void MainWindow::OnWindowMoved() {
         SyncWindowPosition(true);
+    }
+
+    POINT MainWindow::DragWindowPosition(POINT cursor, float uiScale) const {
+        const double ratio = static_cast<double>(uiScale) / m_dragStartScale;
+        return {
+            cursor.x - std::lround(m_dragClickPoint.x * ratio),
+            cursor.y - std::lround(m_dragClickPoint.y * ratio)
+        };
     }
 
     void MainWindow::SyncWindowPosition(bool updateCollapsedFromWindow) {
@@ -1152,7 +1139,7 @@ namespace CodexQuotaBar {
 
     bool MainWindow::IsHeaderArea(POINT pt) const {
         const int headerHeight = m_settings.miniMode && !m_expanded
-            ? ScaleEven(static_cast<float>(MINI_HEIGHT), m_uiScale)
+            ? MiniBarPhysicalHeight(m_uiScale)
             : ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
         return pt.y >= 0 && pt.y < headerHeight;
     }
@@ -1191,7 +1178,7 @@ namespace CodexQuotaBar {
         } else if (cmd == IDM_MINI_MODE) {
             ToggleMiniMode();
         } else if (cmd == IDM_DOCK_TO_WEATHER) {
-            ToggleDockToWeather();
+            SetWeatherDocked(!m_settings.dockToWeather);
         } else if (cmd == IDM_REFRESH) {
             RefreshQuota();
         } else if (cmd == IDM_REFRESH_INTERVAL_SUB) {
@@ -1261,15 +1248,15 @@ namespace CodexQuotaBar {
             return 0;
 
         case WM_LBUTTONDOWN: {
-            POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            if (!m_dragging && IsHeaderArea(pt) && !IsExpandButtonArea(pt)) {
-                m_dragging = true;
-                SetCapture(m_hwnd);
+            const POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            POINT screenPt = pt;
+            if (!m_dragging && IsHeaderArea(pt) && !IsExpandButtonArea(pt) &&
+                ClientToScreen(m_hwnd, &screenPt)) {
                 m_dragClickPoint = pt;
-                GetCursorPos(&m_dragOrigin);
-                RECT rc;
-                GetWindowRect(m_hwnd, &rc);
-                m_dragWindowPos = { rc.left, rc.top };
+                m_lastDragCursor = screenPt;
+                m_dragStartScale = m_uiScale;
+                SetCapture(m_hwnd);
+                m_dragging = GetCapture() == m_hwnd;
                 return 0;
             }
             break;
@@ -1277,21 +1264,18 @@ namespace CodexQuotaBar {
 
         case WM_MOUSEMOVE: {
             if (m_dragging) {
-                POINT cur;
-                int deltaX = 0;
-                int deltaY = 0;
-                if (GetCursorPos(&cur) && (cur.x != m_dragOrigin.x || cur.y != m_dragOrigin.y)) {
-                    deltaX = cur.x - m_dragOrigin.x;
-                    deltaY = cur.y - m_dragOrigin.y;
-                } else {
-                    POINT clientPt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-                    deltaX = clientPt.x - m_dragClickPoint.x;
-                    deltaY = clientPt.y - m_dragClickPoint.y;
+                POINT cursor = {};
+                if (!GetCursorPos(&cursor)) {
+                    cursor = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                    if (!ClientToScreen(m_hwnd, &cursor)) return 0;
                 }
+                if (cursor.x == m_lastDragCursor.x && cursor.y == m_lastDragCursor.y) {
+                    return 0;
+                }
+                m_lastDragCursor = cursor;
                 const SIZE sz = PhysicalWindowSize();
-                POINT targetPos = { m_dragWindowPos.x + deltaX, m_dragWindowPos.y + deltaY };
                 const bool allowTaskbar = m_settings.miniMode && !m_expanded;
-                POINT clamped = ClampToScreens(targetPos, sz, allowTaskbar);
+                const POINT clamped = ClampToScreens(DragWindowPosition(cursor, m_uiScale), sz, allowTaskbar);
                 SetWindowPos(m_hwnd, NULL,
                     clamped.x,
                     clamped.y,
@@ -1312,19 +1296,17 @@ namespace CodexQuotaBar {
 
                 if (m_settings.miniMode && !m_expanded) {
                     const WeatherWidgetPlacement placement =
-                        TaskbarPlacement::FindWeatherWidgetPlacement(sz, m_dpiScale, m_uiScale);
+                        TaskbarPlacement::FindWeatherWidgetPlacement(sz);
                     const int snapThreshold = ScaleEven(24.0f, m_dpiScale);
                     const bool snapped = TaskbarPlacement::IsNearDockPosition(
                         POINT{ rc.left, rc.top }, placement.dockPosition, snapThreshold);
 
-                    if (snapped) {
-                        m_settings.dockToWeather = true;
-                        SaveSettingsWithFeedback();
+                    if (snapped != m_settings.dockToWeather && SetWeatherDocked(snapped)) {
+                        return 0;
+                    }
+                    if (IsWeatherDockActive()) {
                         DockToWeatherWidget();
                         return 0;
-                    } else if (m_settings.dockToWeather) {
-                        m_settings.dockToWeather = false;
-                        SaveSettingsWithFeedback();
                     }
                 }
 
@@ -1340,7 +1322,11 @@ namespace CodexQuotaBar {
         }
 
         case WM_CAPTURECHANGED:
-            m_dragging = false;
+            if (m_dragging) {
+                m_dragging = false;
+                if (IsWeatherDockActive()) DockToWeatherWidget();
+                else OnWindowMoved();
+            }
             break;
 
         case WM_LBUTTONDBLCLK: {
@@ -1390,9 +1376,7 @@ namespace CodexQuotaBar {
                     previousMiniWidth != MiniBarLogicalWidth(m_snapshot);
                 if (miniWidthChanged) {
                     ApplyUiScale();
-                    if (m_settings.dockToWeather) {
-                        DockToWeatherWidget();
-                    } else if (m_hasCollapsedLocation) {
+                    if (!m_dragging && !IsWeatherDockActive() && m_hasCollapsedLocation) {
                         ConfigStore::SavePosition(m_collapsedLocation);
                     }
                 } else if (IsWindowVisible(m_hwnd)) {
@@ -1412,15 +1396,20 @@ namespace CodexQuotaBar {
             HandleCompanionResult(static_cast<DesktopProcessState>(wParam));
             return 0;
 
-        case 0x02E0: // WM_DPICHANGED
+        case WM_GETDPISCALEDSIZE: {
+            if (lParam == 0 || wParam == 0) return FALSE;
+            const float scale = (static_cast<float>(wParam) / BASE_DPI) *
+                USER_SCALE_LEVELS[static_cast<std::size_t>(m_userScaleLevel)];
+            *reinterpret_cast<SIZE*>(lParam) = PhysicalWindowSize(scale);
+            return TRUE;
+        }
+
+        case WM_DPICHANGED:
             OnDpiChanged(LOWORD(wParam), reinterpret_cast<const RECT*>(lParam));
-            if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
-                DockToWeatherWidget();
-            }
             return 0;
 
         case WM_DISPLAYCHANGE:
-            if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+            if (IsWeatherDockActive()) {
                 DockToWeatherWidget();
             } else {
                 SyncWindowPosition(false);
@@ -1428,7 +1417,7 @@ namespace CodexQuotaBar {
             break;
 
         case WM_SETTINGCHANGE:
-            if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+            if (IsWeatherDockActive()) {
                 DockToWeatherWidget();
             } else if (wParam == SPI_SETWORKAREA) {
                 SyncWindowPosition(false);
@@ -1466,7 +1455,7 @@ namespace CodexQuotaBar {
 
         default:
             if (m_wmTaskbarCreated != 0 && msg == m_wmTaskbarCreated) {
-                if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+                if (IsWeatherDockActive()) {
                     DockToWeatherWidget();
                 }
                 return 0;

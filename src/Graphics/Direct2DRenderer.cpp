@@ -360,12 +360,6 @@ namespace CodexQuotaBar {
     }
 
     HRESULT Direct2DRenderer::PresentLayeredWindow() {
-        RECT windowRect = {};
-        if (!GetWindowRect(m_hwnd, &windowRect)) {
-            return HRESULT_FROM_WIN32(GetLastError());
-        }
-
-        POINT destination = { windowRect.left, windowRect.top };
         POINT source = { 0, 0 };
         SIZE size = { static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
         BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
@@ -374,7 +368,7 @@ namespace CodexQuotaBar {
         const BOOL presented = UpdateLayeredWindow(
             m_hwnd,
             screenDc,
-            &destination,
+            nullptr, // The window layout owns the physical screen position.
             &size,
             m_memoryDc,
             &source,

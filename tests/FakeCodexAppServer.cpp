@@ -49,8 +49,8 @@ int main(int argc, char** argv) {
                 !Contains(line, "\"version\":\"3.0.0\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
-            // 非 JSON 诊断行用于覆盖客户端的输出降噪路径。
-            std::cerr << "fake app-server diagnostic" << std::endl;
+            // An unfinished diagnostic must not corrupt the next stdout response.
+            std::cerr << "fake app-server diagnostic: " << std::flush;
             std::cout << "{\"id\":1,\"result\":{\"userAgent\":\"fake-codex\"}}" << std::endl;
         } else if (step == 1) {
             if (!Contains(line, "\"method\":\"initialized\"") || Contains(line, "\"id\"")) {

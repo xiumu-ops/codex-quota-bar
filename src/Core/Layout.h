@@ -17,6 +17,10 @@ namespace CodexQuotaBar {
         float outerBorderThickness = 0.0f;
     };
 
+    inline int MiniBarPhysicalHeight(float uiScale) {
+        return ScaleEven(static_cast<float>(MINI_HEIGHT), uiScale);
+    }
+
     inline bool ShouldUseSmallWindowCorner(bool /*miniVisible*/ = false, float /*userScale*/ = 1.0f) {
         return false; // 统一全应用基准圆角体系，迷你栏与普通栏保持一致的 8px DWM 硬件圆角
     }
@@ -35,7 +39,7 @@ namespace CodexQuotaBar {
         const float safeUiScale = uiScale > 0.0f ? uiScale : 1.0f;
         const float clampedOuter = (std::max)(2.0f, std::round(outerCornerRadius));
         const float contentInset = (std::max)(1.0f, std::round(2.0f * safeUiScale));
-        const int physicalHeight = ScaleEven(static_cast<float>(MINI_HEIGHT), safeUiScale);
+        const int physicalHeight = MiniBarPhysicalHeight(safeUiScale);
         const float maxHalfPill = std::floor(
             (std::max)(0.0f, static_cast<float>(physicalHeight) - contentInset * 2.0f) / 2.0f);
         // 内嵌胶囊圆角与外框圆角保持同心统一（R_pill = R_outer - inset），使四角与直边留白均匀一致。
@@ -80,8 +84,8 @@ namespace CodexQuotaBar {
 
     // 先将单个额度槽缩放到物理像素，再组合总宽度，保证双额度始终严格等宽且总宽为偶数。
     inline int MiniBarPhysicalWidth(const QuotaSnapshot& snapshot, float uiScale) {
-        return MiniQuotaSlotCount(snapshot) * Scale(
-            static_cast<float>(MINI_SINGLE_WIDTH), uiScale);
+        return SnapEven(MiniQuotaSlotCount(snapshot) * Scale(
+            static_cast<float>(MINI_SINGLE_WIDTH), uiScale));
     }
 
     inline float MiniDividerHeight(int physicalHeight, const MiniBarMetrics& metrics) {

@@ -142,9 +142,39 @@ int main() {
            "200% DPI + 120% mini pill stays concentric (16 - 5 = 11px)");
 
     const float monitorDpis[] = { 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
+    struct MiniDpiCase {
+        float monitorScale;
+        LONG dualWidth;
+        LONG height;
+        LONG taskbarHeight;
+    };
+    const MiniDpiCase miniDpiCases[] = {
+        { 1.0f, 134, 34, 48 },
+        { 1.25f, 168, 42, 60 },
+        { 1.5f, 202, 50, 72 },
+        { 1.75f, 236, 60, 84 },
+    };
+    for (const auto& test : miniDpiCases) {
+        const float uiScale = test.monitorScale * 1.2f;
+        const SIZE size = { MiniBarPhysicalWidth(twoQuotas, uiScale), MiniBarPhysicalHeight(uiScale) };
+        Expect(size.cx == test.dualWidth && size.cy == test.height,
+               "mini bar has exact physical dimensions at each target display DPI");
+
+        // A monitor to the left of the primary has negative physical coordinates.
+        const RECT taskbar = { -1920, 1080 - test.taskbarHeight, 0, 1080 };
+        const RECT slot = { -1900, taskbar.top, -1600, taskbar.bottom };
+        const POINT dock = TaskbarPlacement::ComputeDockPosition(slot, taskbar, true, size);
+        Expect(dock.x - slot.left == slot.right - (dock.x + size.cx) &&
+                   dock.y - taskbar.top == taskbar.bottom - (dock.y + size.cy),
+               "taskbar docking keeps equal physical margins at each target DPI");
+    }
     for (float dpi : monitorDpis) {
         for (float userScale : USER_SCALE_LEVELS) {
             const float uiScale = dpi * userScale;
+            Expect(MiniBarPhysicalWidth(oneQuota, uiScale) % 2 == 0 &&
+                       MiniBarPhysicalWidth(twoQuotas, uiScale) % 2 == 0 &&
+                       MiniBarPhysicalHeight(uiScale) % 2 == 0,
+                   "mini bar dimensions stay on even physical pixels across user and display scales");
             const int expandedH = ExpandedPhysicalHeight(uiScale);
             const int bottomCardEnd =
                 static_cast<int>(SnapPx(static_cast<float>(COLLAPSED_HEIGHT), uiScale)) +

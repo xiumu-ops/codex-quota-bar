@@ -95,6 +95,22 @@ int main() {
     }
 
     server.Stop();
+
+    std::atomic<bool> handlerEntered{ false };
+    const auto slowName = name + L"-slow";
+    PipeServer slowServer(slowName, [&](const std::wstring&) {
+        handlerEntered = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        return L"OK";
+    });
+    Expect(slowServer.Start(), "slow-response server starts");
+    const auto slowStart = std::chrono::steady_clock::now();
+    const auto timedOut = PipeServer::SendCommand(slowName, L"PING", 250);
+    const auto slowElapsed = std::chrono::steady_clock::now() - slowStart;
+    slowServer.Stop();
+    Expect(handlerEntered && timedOut == L"ERROR" && slowElapsed < std::chrono::seconds(1),
+           "client times out even after the server receives the command");
+
     _wputenv_s(L"CODEX_QUOTA_DISABLE_LOG", L"");
     return g_failures == 0 ? 0 : 1;
 }

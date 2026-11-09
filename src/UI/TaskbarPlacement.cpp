@@ -271,13 +271,8 @@ namespace {
         return 1;
     }
 
-    WeatherWidgetPlacement TaskbarPlacement::FindWeatherWidgetPlacement(
-        SIZE miniPhysicalSize,
-        float dpiScale,
-        float uiScale)
+    WeatherWidgetPlacement TaskbarPlacement::FindWeatherWidgetPlacement(SIZE miniPhysicalSize)
     {
-        static_cast<void>(dpiScale);
-        static_cast<void>(uiScale);
         WeatherWidgetPlacement placement = {};
         const TaskbarMetrics metrics = GetTaskbarMetrics();
 

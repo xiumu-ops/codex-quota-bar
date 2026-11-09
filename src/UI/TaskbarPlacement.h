@@ -106,10 +106,7 @@ namespace CodexQuotaBar {
         // System query and composite detection
         static TaskbarMetrics GetTaskbarMetrics();
         static int GetTaskbarAlignment();
-        static WeatherWidgetPlacement FindWeatherWidgetPlacement(
-            SIZE miniPhysicalSize,
-            float dpiScale,
-            float uiScale);
+        static WeatherWidgetPlacement FindWeatherWidgetPlacement(SIZE miniPhysicalSize);
     };
 
 } // namespace CodexQuotaBar

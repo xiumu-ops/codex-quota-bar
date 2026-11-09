@@ -42,8 +42,7 @@ namespace CodexQuotaBar {
         void OnPaint();
         HRESULT RenderLayeredWindow();
         void OnDpiChanged(int newDpi, const RECT* suggestedRect);
-        void ApplyDpiScale(int dpi);
-        void ApplyUiScale();
+        void ApplyUiScale(const POINT* requestedPosition = nullptr);
         void ApplyUserScale(int level);
         void ApplyRefreshInterval(int level);
         void ApplyAppearance(const std::wstring& validationErrors = L"");
@@ -56,8 +55,10 @@ namespace CodexQuotaBar {
         void ToggleVisible();
         void ToggleExpanded();
         void ToggleMiniMode();
-        void ToggleDockToWeather();
+        bool SetWeatherDocked(bool enabled);
         void DockToWeatherWidget();
+        bool IsWeatherDockActive() const;
+        void ApplyWindowZOrder();
         void RefreshQuota();
         void ToggleAlwaysOnTop();
         void ToggleCompanionMode();
@@ -69,8 +70,11 @@ namespace CodexQuotaBar {
         bool IsHeaderArea(POINT pt) const;
         bool IsExpandButtonArea(POINT pt) const;
         SIZE LogicalWindowSize() const;
-        SIZE CollapsedPhysicalWindowSize() const;
-        SIZE PhysicalWindowSize() const;
+        SIZE CollapsedPhysicalWindowSize() const { return CollapsedPhysicalWindowSize(m_uiScale); }
+        SIZE CollapsedPhysicalWindowSize(float uiScale) const;
+        SIZE PhysicalWindowSize() const { return PhysicalWindowSize(m_uiScale); }
+        SIZE PhysicalWindowSize(float uiScale) const;
+        POINT DragWindowPosition(POINT cursor, float uiScale) const;
         void ApplyCurrentWindowEffects() const;
         POINT ClampToScreens(POINT pt, SIZE sz, bool allowTaskbarArea = false) const;
 
@@ -92,7 +96,6 @@ namespace CodexQuotaBar {
         int m_userScaleLevel = DEFAULT_USER_SCALE_LEVEL; // 用户缩放档位索引（20%~180%，步长 20%）
         int m_refreshIntervalLevel = 0; // 自动刷新档位索引（1/5/10/30/60 分钟）
         UINT m_wmTaskbarCreated = 0;
-        int m_currentDpi = 96;
         AppSettings m_settings;
         bool m_companionMode = false;
         bool m_codexDesktopRunning = false;
@@ -115,9 +118,9 @@ namespace CodexQuotaBar {
 
         // 手动拖拽状态（取代 HTCAPTION 模态循环，保留双击刷新）
         bool m_dragging = false;
-        POINT m_dragOrigin = { 0, 0 };
         POINT m_dragClickPoint = { 0, 0 };
-        POINT m_dragWindowPos = { 0, 0 };
+        POINT m_lastDragCursor = { 0, 0 };
+        float m_dragStartScale = 1.0f;
 
         QuotaSnapshot m_snapshot;
         SyncState m_syncState = SyncState::Waiting;

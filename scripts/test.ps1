@@ -277,6 +277,16 @@ try {
     [void][CqbNative]::SetCursorPos($screenStartX + $deltaX, $screenStartY + $deltaY)
     Start-Sleep -Milliseconds 25
     [void][CqbNative]::SendMessage($hwnd, 0x0200, [IntPtr]::new(1), (New-CqbLParam ($startX + $deltaX) ($startY + $deltaY)))
+    $movedRect = Get-CqbWindowRect $hwnd
+    [void][CqbNative]::SetCursorPos($screenStartX, $screenStartY)
+    $returnPoint = New-CqbLParam ($screenStartX - $movedRect.Left) ($screenStartY - $movedRect.Top)
+    [void][CqbNative]::SendMessage($hwnd, 0x0200, [IntPtr]::new(1), $returnPoint)
+    $returnedRect = Get-CqbWindowRect $hwnd
+    if ($returnedRect.Left -ne $expandedBeforeDrag.Left -or $returnedRect.Top -ne $expandedBeforeDrag.Top) {
+        Fail-Test "鼠标回到拖动起点后，窗口未回到原始像素坐标"
+    }
+    [void][CqbNative]::SetCursorPos($screenStartX + $deltaX, $screenStartY + $deltaY)
+    [void][CqbNative]::SendMessage($hwnd, 0x0200, [IntPtr]::new(1), (New-CqbLParam ($startX + $deltaX) ($startY + $deltaY)))
     Start-Sleep -Milliseconds 25
     [void][CqbNative]::SendMessage($hwnd, 0x0202, [IntPtr]::Zero, (New-CqbLParam ($startX + $deltaX) ($startY + $deltaY)))
     Start-Sleep -Milliseconds 150
@@ -408,8 +418,9 @@ try {
                     if ($miniHwnd -ne [IntPtr]::Zero) {
                         $miniRect = Get-CqbWindowRect $miniHwnd
                         $dpiScale = [CqbNative]::GetDpiForWindow($miniHwnd) / 96.0
-                        $expectedMiniWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.2)
-                        $expectedMiniHeight = [int][Math]::Round(28 * $dpiScale * 1.2)
+                        $expectedMiniWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.2, [MidpointRounding]::AwayFromZero)
+                        $roundedMiniHeight = [int][Math]::Round(28 * $dpiScale * 1.2, [MidpointRounding]::AwayFromZero)
+                        $expectedMiniHeight = $roundedMiniHeight + ($roundedMiniHeight % 2)
                         $miniSizeOk = ($miniRect.Right - $miniRect.Left) -eq $expectedMiniWidth -and
                                       ($miniRect.Bottom - $miniRect.Top) -eq $expectedMiniHeight
                         if ($miniSizeOk) { break }

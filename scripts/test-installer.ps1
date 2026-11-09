@@ -37,6 +37,19 @@ if ($preexistingState.Count -gt 0) {
     throw "The GitHub runner contains pre-existing installer state: $($preexistingState -join ', ')"
 }
 
+function Assert-UninstallComplete([string]$targetAppDir) {
+    $targetUninstaller = Join-Path $targetAppDir "Uninstall.exe"
+    $uninstall = Start-Process -FilePath $targetUninstaller -ArgumentList '/quiet' -Wait -PassThru
+    if ($uninstall.ExitCode -notin 0, 3010) {
+        throw "Uninstaller exited with code $($uninstall.ExitCode)."
+    }
+    foreach ($target in $targetAppDir, $uninstallRegistry, $shortcut) {
+        if (Test-Path -LiteralPath $target) {
+            throw "Uninstall left behind: $target"
+        }
+    }
+}
+
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 $previousCodexHome = $env:CODEX_HOME
 $env:CODEX_HOME = $codexHome
@@ -87,17 +100,26 @@ try {
     }
 
     Write-Host "Uninstalling and validating cleanup..." -ForegroundColor Cyan
-    $uninstall = Start-Process -FilePath $uninstallPath `
-        -ArgumentList '/quiet' -Wait -PassThru
-    if ($uninstall.ExitCode -notin 0, 3010) {
-        throw "Uninstaller exited with code $($uninstall.ExitCode)."
-    }
+    Assert-UninstallComplete $appDir
 
-    if (Test-Path -LiteralPath $uninstallRegistry) {
-        throw "The current-user uninstall registration was not removed."
+    Write-Host "Verifying uninstall from a custom location..." -ForegroundColor Cyan
+    $customRoot = Join-Path $env:RUNNER_TEMP "custom uninstall test\Codex-Quota-Bar"
+    $customApp = Join-Path $customRoot "app"
+    $customData = Join-Path $customRoot "data"
+    # Quiet setup follows an existing InstallLocation instead of opening the folder picker.
+    New-Item -Path $uninstallRegistry -Force | Out-Null
+    New-ItemProperty -LiteralPath $uninstallRegistry -Name InstallLocation `
+        -Value $customApp -PropertyType String | Out-Null
+    $setup = Start-Process -FilePath $installers[0].FullName -ArgumentList '/quiet' -Wait -PassThru
+    if ($setup.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $customApp "Uninstall.exe"))) {
+        throw "Custom-location installer did not create the expected payload."
     }
-    if (Test-Path -LiteralPath $shortcut) {
-        throw "The current-user Start menu shortcut was not removed."
+    New-Item -ItemType Directory -Path $customData | Out-Null
+    $settingsMarker = Join-Path $customData "settings-marker.txt"
+    Set-Content -LiteralPath $settingsMarker -Value "preserve"
+    Assert-UninstallComplete $customApp
+    if (-not (Test-Path -LiteralPath $settingsMarker)) {
+        throw "Quiet uninstall removed the retained user settings."
     }
     if (Test-Path -LiteralPath $hooksFile) {
         throw "The uninstaller unexpectedly created Codex hooks.json."

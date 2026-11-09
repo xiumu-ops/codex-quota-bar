@@ -20,6 +20,7 @@ namespace {
 
 constexpr wchar_t kProductName[] = L"Codex-Quota-Bar";
 constexpr wchar_t kAppDirectoryName[] = L"app";
+constexpr wchar_t kUninstallFilename[] = L"Uninstall.exe";
 constexpr wchar_t kDataDirectoryName[] = L"data";
 constexpr wchar_t kUninstallKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Codex-Quota-Bar";
@@ -150,7 +151,12 @@ bool QuarantineAppExecutable(const std::filesystem::path& installDir,
     for (int attempt = 0; attempt < 100; ++attempt) {
         StopInstalledApp(installDir, appPath);
         std::error_code error;
-        if (!std::filesystem::exists(appPath, error)) return true;
+        const bool exists = std::filesystem::exists(appPath, error);
+        if (error) {
+            errorCode = static_cast<DWORD>(error.value());
+            return false;
+        }
+        if (!exists) return true;
         if (MoveFileExW(appPath.c_str(), quarantined.c_str(),
                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
             // 隔离原主程序路径，防止卸载期间再次启动新实例。
@@ -207,8 +213,8 @@ bool IsValidInstallDirectory(const std::filesystem::path& installDir) {
 
     // 1. 优先校验当前用户的卸载注册表登记位置
     const std::filesystem::path registered = RegisteredPath(L"InstallLocation");
-    if (!registered.empty() && EqualPath(installDir, registered)) {
-        return true;
+    if (!registered.empty()) {
+        return EqualPath(installDir, registered);
     }
 
     // 2. 校验是否位于当前用户的 LocalAppData 默认安装路径
@@ -249,18 +255,37 @@ bool SafeRemoveInstallDirectory(const std::filesystem::path& installDir,
     // 最长重试约 20 秒，应对父卸载器以及安全软件的短暂扫描锁。
     for (int attempt = 0; attempt < 100; ++attempt) {
         std::error_code error;
-        if (!std::filesystem::exists(installDir, error)) return true;
+        const bool exists = std::filesystem::exists(installDir, error);
+        if (error) {
+            errorCode = static_cast<DWORD>(error.value());
+            return false;
+        }
+        if (!exists) return true;
 
         SetFileAttributesW(installDir.c_str(), FILE_ATTRIBUTE_NORMAL);
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(installDir, error)) {
-            if (error) break;
-            SetFileAttributesW(entry.path().c_str(), FILE_ATTRIBUTE_NORMAL);
+        const auto end = std::filesystem::recursive_directory_iterator{};
+        for (auto it = std::filesystem::recursive_directory_iterator(installDir, error);
+             !error && it != end; it.increment(error)) {
+            SetFileAttributesW(it->path().c_str(), FILE_ATTRIBUTE_NORMAL);
         }
 
-        std::filesystem::remove_all(installDir, error);
-        if (error) errorCode = static_cast<DWORD>(error.value());
-        error.clear();
-        if (!std::filesystem::exists(installDir, error)) return true;
+        // Keep the entry point available while any payload is still locked.
+        const auto uninstaller = installDir / kUninstallFilename;
+        const auto dirEnd = std::filesystem::directory_iterator{};
+        std::vector<std::filesystem::path> payloads;
+        for (auto it = std::filesystem::directory_iterator(installDir, error);
+             !error && it != dirEnd; it.increment(error)) {
+            if (!EqualPath(it->path(), uninstaller)) {
+                payloads.push_back(it->path());
+            }
+        }
+        for (const auto& payload : payloads) {
+            if (error) break;
+            std::filesystem::remove_all(payload, error);
+        }
+        if (!error) std::filesystem::remove(uninstaller, error);
+        if (!error) std::filesystem::remove(installDir, error);
+        if (!error) return true;
         if (error) errorCode = static_cast<DWORD>(error.value());
 
         Sleep(200);
@@ -273,7 +298,7 @@ bool SafeRemoveInstallDirectory(const std::filesystem::path& installDir,
         errorCode = GetLastError();
     }
 
-    const bool missing = !std::filesystem::exists(installDir, error);
+    const bool missing = !std::filesystem::exists(installDir, error) && !error;
     if (!missing && errorCode == ERROR_SUCCESS) {
         errorCode = error ? static_cast<DWORD>(error.value()) : ERROR_ACCESS_DENIED;
     }
@@ -284,22 +309,27 @@ bool ScheduleInstallDirectoryRemoval(const std::filesystem::path& installDir) {
     if (!IsRegisteredInstallDirectory(installDir)) return false;
 
     std::error_code error;
-    if (!std::filesystem::exists(installDir, error)) return true;
+    const bool exists = std::filesystem::exists(installDir, error);
+    if (error) return false;
+    if (!exists) return true;
 
     std::vector<std::filesystem::path> directories;
     directories.push_back(installDir);
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(installDir, error)) {
-        if (error) return false;
-        if (entry.is_directory(error)) {
+    const auto end = std::filesystem::recursive_directory_iterator{};
+    for (auto it = std::filesystem::recursive_directory_iterator(installDir, error);
+         !error && it != end; it.increment(error)) {
+        if (it->is_directory(error)) {
             if (error) return false;
-            directories.push_back(entry.path());
+            directories.push_back(it->path());
             continue;
         }
-        SetFileAttributesW(entry.path().c_str(), FILE_ATTRIBUTE_NORMAL);
-        if (!MoveFileExW(entry.path().c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
+        if (error) return false;
+        SetFileAttributesW(it->path().c_str(), FILE_ATTRIBUTE_NORMAL);
+        if (!MoveFileExW(it->path().c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
             return false;
         }
     }
+    if (error) return false;
 
     // 启动阶段按登记顺序执行：先删除文件，再从最深层目录向上删除目录。
     std::sort(directories.begin(), directories.end(),
@@ -362,9 +392,12 @@ bool ScheduleInstallRootRemoval(const std::filesystem::path& installDir) {
     }
 
     std::error_code error;
-    for (const auto& entry : std::filesystem::directory_iterator(installRoot, error)) {
-        if (error || !EqualPath(entry.path(), installDir)) return false;
+    const auto end = std::filesystem::directory_iterator{};
+    for (auto it = std::filesystem::directory_iterator(installRoot, error);
+         !error && it != end; it.increment(error)) {
+        if (!EqualPath(it->path(), installDir)) return false;
     }
+    if (error) return false;
     return MoveFileExW(installRoot.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT) != FALSE;
 }
 
@@ -476,65 +509,28 @@ void ScheduleTempSelfDelete(const std::filesystem::path& tempExePath) {
 }
 
 int RunStage2(const std::filesystem::path& installDir, DWORD waitPid, bool removeData, bool quiet) {
-    if (!IsValidInstallDirectory(installDir)) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"安装目录与当前用户注册信息不一致，卸载已中止。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 3;
-    }
-
-    // 1. 等待 Stage 1 进程完全退出并释放 Uninstall.exe 镜像锁
+    bool parentExited = true;
     if (waitPid > 0) {
         HANDLE hProcess = OpenProcess(SYNCHRONIZE, FALSE, waitPid);
         if (hProcess) {
-            WaitForSingleObject(hProcess, 10000);
+            parentExited = WaitForSingleObject(hProcess, 10000) == WAIT_OBJECT_0;
             CloseHandle(hProcess);
+        } else {
+            parentExited = GetLastError() == ERROR_INVALID_PARAMETER;
         }
-        Sleep(100);
     }
-
-    // 2. 幂等清理注册表和快捷方式
-    DeleteStartupValue();
-    if (removeData) {
-        RemoveSettingsData(installDir);
+    if (!parentExited && !quiet) {
+        MessageBoxW(nullptr, L"卸载启动进程尚未退出，请稍后重试。",
+                    L"Codex-Quota-Bar 卸载程序", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
     }
-    DeleteRegistrationAndShortcut();
+    const int result = parentExited ? Cleanup(installDir, removeData, quiet) : 3;
 
-    // 3. 删除安装目录文件
-    DWORD removalError = ERROR_SUCCESS;
-    const bool removed = SafeRemoveInstallDirectory(installDir, removalError);
-    const bool scheduled = !removed && ScheduleInstallDirectoryRemoval(installDir);
-    if (removed) {
-        RemoveEmptyInstallRoot(installDir);
-    } else if (scheduled) {
-        ScheduleInstallRootRemoval(installDir);
-    }
-
-    // 4. 用户交互反馈
-    if (!quiet) {
-        const std::wstring message = removed
-            ? L"Codex-Quota-Bar 已卸载完成，伴随模式已关闭。"
-            : scheduled
-                ? L"Codex-Quota-Bar 已卸载。Windows 正在占用残留文件，已登记在下次系统启动时自动删除；请重启一次电脑。"
-                : L"无法删除安装目录，卸载入口已保留。\n\nWindows 错误 " +
-                      std::to_wstring(removalError) + L"：" +
-                      WindowsErrorText(removalError);
-        MessageBoxW(nullptr, message.c_str(),
-                    L"Codex-Quota-Bar 卸载程序",
-                    MB_OK | ((removed || scheduled) ? MB_ICONINFORMATION : MB_ICONERROR) |
-                        MB_SETFOREGROUND);
-    }
-
-    // 5. 调度清理位于 %TEMP% 的自身副本
     const std::wstring self = ModulePath();
     if (!self.empty()) {
         ScheduleTempSelfDelete(self);
     }
 
-    return removed ? 0 : (scheduled ? ERROR_SUCCESS_REBOOT_REQUIRED : 3);
+    return result;
 }
 
 } // namespace
@@ -603,59 +599,17 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
             MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) == IDYES;
     }
 
-    const std::filesystem::path appPath = installDir / L"Codex-Quota-Bar.exe";
-
-    // 1. 先关闭伴随模式的自动启动来源
-    if (!DeleteStartupValue()) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"无法关闭伴随模式启动项，卸载入口已保留。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 5;
-    }
-
-    // 2. 终止主程序运行并隔离主程序二进制
-    if (!StopInstalledApp(installDir, appPath)) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"Codex-Quota-Bar 进程无法结束，卸载入口已保留，请稍后重试。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 6;
-    }
-
-    DWORD quarantineError = ERROR_SUCCESS;
-    if (!QuarantineAppExecutable(installDir, appPath, quarantineError)) {
-        if (!quiet) {
-            const std::wstring message =
-                L"无法隔离正在使用的主程序，卸载入口已保留。\n\nWindows 错误 " +
-                std::to_wstring(quarantineError) + L"：" +
-                WindowsErrorText(quarantineError);
-            MessageBoxW(nullptr, message.c_str(), L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 7;
-    }
-
-    // 3. 删除用户配置（若选择）以及卸载注册表与快捷方式
-    if (removeData) {
-        RemoveSettingsData(installDir);
-    }
-    DeleteRegistrationAndShortcut();
-
-    // 4. 将自身克隆到 %TEMP% 并启动 Stage 2 完成安装目录清理
+    // Leave the registration in place so the worker can validate a custom
+    // install location and preserve the uninstall entry if cleanup fails.
     std::error_code ec;
     const std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
     if (!ec && !tempDir.empty()) {
         const std::filesystem::path tempExe =
             tempDir / (L"Codex-Quota-Bar-Uninstall-" +
-                       std::to_wstring(GetCurrentProcessId()) + L".exe");
+                       std::to_wstring(GetCurrentProcessId()) + L"-" +
+                       std::to_wstring(GetTickCount64()) + L".exe");
 
-        std::filesystem::copy_file(self, tempExe,
-                                   std::filesystem::copy_options::overwrite_existing, ec);
+        std::filesystem::copy_file(self, tempExe, ec);
         if (!ec) {
             std::wstring command = Quote(tempExe.wstring()) +
                                    L" --stage2 " + Quote(installDir.wstring()) +
@@ -679,8 +633,9 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
                                FALSE, 0, nullptr, tempDir.c_str(), &si, &pi)) {
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
-                return 0; // Stage 1 顺利完成，立即退出释放 app/Uninstall.exe 镜像锁
+                return 0; // The worker can remove the image once this process exits.
             }
+            DeleteFileW(tempExe.c_str());
         }
     }
 

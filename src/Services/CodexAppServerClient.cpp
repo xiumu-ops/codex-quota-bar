@@ -256,12 +256,22 @@ namespace {
             }
             m_writeEvent.Reset(writeEventRaw);
 
+            // Keep diagnostics out of the JSON-RPC byte stream. A separate pipe would
+            // have to be drained even while the child is waiting for a request.
+            UniqueHandle stderrSink(CreateFileW(
+                L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                &attributes, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+            if (!stderrSink.IsValid()) {
+                error = L"无法重定向 Codex 诊断输出：" + FormatWindowsError(GetLastError());
+                return false;
+            }
+
             STARTUPINFOEXW startupEx = {};
             startupEx.StartupInfo.cb = sizeof(startupEx);
             startupEx.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
             startupEx.StartupInfo.hStdInput = stdinRead.Get();
             startupEx.StartupInfo.hStdOutput = stdoutWrite.Get();
-            startupEx.StartupInfo.hStdError = stdoutWrite.Get();
+            startupEx.StartupInfo.hStdError = stderrSink.Get();
 
             SIZE_T attributeBytes = 0;
             InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
@@ -278,7 +288,7 @@ namespace {
                 return false;
             }
 
-            HANDLE inheritedHandles[] = { stdinRead.Get(), stdoutWrite.Get() };
+            HANDLE inheritedHandles[] = { stdinRead.Get(), stdoutWrite.Get(), stderrSink.Get() };
             if (!UpdateProcThreadAttribute(
                     startupEx.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                     inheritedHandles, sizeof(inheritedHandles), nullptr, nullptr)) {
