@@ -39,7 +39,7 @@ inline Handle AcquireInstallationGate(bool inherit = false) {
 
 class DirectoryGuard {
 public:
-    DWORD Pin(const std::filesystem::path& absolute) {
+    DWORD Pin(const std::filesystem::path& absolute, DWORD leafSharing = FILE_SHARE_READ) {
         const auto drive = absolute.root_name().native();
         if (!absolute.is_absolute() || drive.size() != 2 || drive[1] != L':') {
             return ERROR_INVALID_NAME;
@@ -50,10 +50,10 @@ public:
                 return ERROR_INVALID_NAME;
             }
             path /= component;
-            // Inspect the directory entry itself and prevent replacement or
-            // reparse-point changes while its children are being accessed.
+            // Open the directory entry itself and deny delete sharing so it
+            // cannot be renamed or replaced while its children are in use.
             Handle handle(CreateFileW(path.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
-                                      FILE_SHARE_READ,
+                                      path == absolute ? leafSharing : FILE_SHARE_READ,
                                       nullptr, OPEN_EXISTING,
                                       FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
             if (!handle) return GetLastError();

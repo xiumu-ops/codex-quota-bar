@@ -115,6 +115,7 @@ try {
     $customApp = Join-Path $customRoot "app"
     $customData = Join-Path $customRoot "data"
     # Quiet setup follows an existing InstallLocation instead of opening the folder picker.
+    New-Item -ItemType Directory -Path (Split-Path -Parent $customRoot) -Force | Out-Null
     New-Item -Path $uninstallRegistry -Force | Out-Null
     New-ItemProperty -LiteralPath $uninstallRegistry -Name InstallLocation `
         -Value $customApp -PropertyType String | Out-Null

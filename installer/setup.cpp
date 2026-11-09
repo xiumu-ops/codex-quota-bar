@@ -531,17 +531,20 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         return 2;
     }
     CqbInstaller::DirectoryGuard installGuard;
-    const auto ensureDirectory = [&installGuard](const std::filesystem::path& directory) {
-        DWORD status = installGuard.Pin(directory);
+    const auto ensureDirectory = [&installGuard](const std::filesystem::path& directory, DWORD sharing) {
+        DWORD status = installGuard.Pin(directory, sharing);
         if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND) {
             if (!CreateDirectoryW(directory.c_str(), nullptr) &&
                 GetLastError() != ERROR_ALREADY_EXISTS) return false;
-            status = installGuard.Pin(directory);
+            status = installGuard.Pin(directory, sharing);
         }
         return status == ERROR_SUCCESS;
     };
+    // MoveFileEx needs write sharing on the destination directory. The
+    // directory itself remains pinned without delete sharing.
     if (installGuard.Pin(installRoot.parent_path()) != ERROR_SUCCESS ||
-        !ensureDirectory(installRoot) || !ensureDirectory(installDir)) {
+        !ensureDirectory(installRoot, FILE_SHARE_READ) ||
+        !ensureDirectory(installDir, FILE_SHARE_READ | FILE_SHARE_WRITE)) {
         ReportFailure(L"无法安全打开安装目录。请使用本地实际目录，避开目录联接或符号链接。", quiet);
         if (SUCCEEDED(comResult)) CoUninitialize();
         return 2;
