@@ -104,7 +104,29 @@ jobs:
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run regression tests
-        run: .\scripts\test.ps1
+        run: |
+          $ErrorActionPreference = "Continue"
+          .\scripts\test.ps1 *>&1 | Tee-Object -FilePath "test-output.log"
+          $testExit = if ($LASTEXITCODE -ne 0) { $LASTEXITCODE } elseif (-not $?) { 1 } else { 0 }
+          if (Test-Path "test-output.log") {
+              Get-Content "test-output.log" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+          if ($testExit -ne 0) {
+              if (Test-Path "test-output.log") {
+                  $lines = Get-Content "test-output.log"
+                  $failedLines = @($lines | Where-Object { $_ -match "FAIL|error|Exception|unresolved|fatal|aborting" })
+                  if ($failedLines.Count -gt 0) {
+                      foreach ($f in $failedLines) {
+                          Write-Host "::error::$f"
+                      }
+                  } else {
+                      $lines | Select-Object -Last 20 | ForEach-Object {
+                          Write-Host "::error::$_"
+                      }
+                  }
+              }
+              exit $testExit
+          }
 
       - name: Build release installer
         run: .\scripts\build-installer.ps1
