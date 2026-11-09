@@ -66,10 +66,21 @@ rc.exe /nologo /fo "$ResFile" "src\resources\app.rc" &&
 cl.exe /nologo $CompileFlags /EHsc /std:c++20 /utf-8 /W4 /WX /permissive- /Zc:preprocessor /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /I"$ProjectRoot\src" /Fo:"$ObjectPrefix" /Fe:"$OutputFile" $SourceArgs "$ResFile" /link user32.lib gdi32.lib shell32.lib ole32.lib oleaut32.lib d2d1.lib dwrite.lib dwmapi.lib advapi32.lib comdlg32.lib uiautomationcore.lib /SUBSYSTEM:WINDOWS /MANIFEST:NO
 "@
 $command = $command -replace "`r?`n", " "
-cmd.exe /d /c $command
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputFile)) {
-    Write-Host "::error::Application build failed with exit code $LASTEXITCODE"
-    throw "Application build failed."
+$buildOutput = cmd.exe /d /c $command 2>&1
+$buildExit = $LASTEXITCODE
+$buildOutput | ForEach-Object { Write-Host $_ }
+if ($buildExit -ne 0 -or -not (Test-Path -LiteralPath $OutputFile)) {
+    $errLines = @($buildOutput | Where-Object { $_ -match "error |fatal |warning |unresolved" })
+    if ($errLines.Count -gt 0) {
+        foreach ($e in $errLines) {
+            Write-Host "::error::$e"
+        }
+    } else {
+        $buildOutput | Select-Object -Last 10 | ForEach-Object {
+            Write-Host "::error::$_"
+        }
+    }
+    throw "Application build failed with exit code $buildExit."
 }
 Copy-Item -LiteralPath $DefaultConfigSource -Destination $DefaultConfigOutput -Force
 
