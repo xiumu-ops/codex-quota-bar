@@ -4,6 +4,7 @@
 #include "Graphics/Direct2DRenderer.h"
 #include "Core/Models.h"
 #include "Core/ConfigStore.h"
+#include "Core/Settings.h"
 
 #include <atomic>
 #include <memory>
