@@ -49,6 +49,10 @@ int main(int argc, char** argv) {
                 !Contains(line, "\"version\":\"3.0.0\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
+            if (scenario == "hang_before_initialize") {
+                std::this_thread::sleep_for(std::chrono::seconds(30));
+                return 0;
+            }
             // An unfinished diagnostic must not corrupt the next stdout response.
             std::cerr << "fake app-server diagnostic: " << std::flush;
             std::cout << "{\"id\":1,\"result\":{\"userAgent\":\"fake-codex\"}}" << std::endl;

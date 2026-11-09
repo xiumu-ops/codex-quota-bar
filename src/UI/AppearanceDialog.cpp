@@ -27,6 +27,8 @@ namespace {
     constexpr int kFontEditControlId = 201;
     constexpr int kScaleEditControlId = 202;
     constexpr size_t kColorCount = 19;
+    constexpr float kDialogWidth = 714.0f;
+    constexpr float kDialogHeight = 496.0f;
 
     struct ColorSpec {
         const wchar_t* key;
@@ -104,7 +106,76 @@ namespace {
         ComPtr<ID2D1SolidColorBrush> brush;
     };
 
-    bool InitializeDrawing(AppearanceDialogState& state, const std::wstring& fontFamily);
+    bool InitializeDrawing(AppearanceDialogState& state);
+    bool UpdateDialogFonts(AppearanceDialogState& state, float scale);
+    float FitScaleToMonitor(HMONITOR monitor, float requestedScale);
+
+    void LayoutAppearanceDialog(HWND hwnd, AppearanceDialogState& state) {
+        const float scale = state.dpiScale;
+        const auto pixels = [scale](float value) { return Scale(value, scale); };
+        const int outlineWidth = pixels(152.0f);
+        const int outlineHeight = pixels(28.0f);
+        const int swatchWidth = pixels(36.0f);
+        const int swatchHeight = pixels(24.0f);
+        const int swatchOffsetY = (outlineHeight - swatchHeight) / 2;
+        const int editPadX = pixels(6.0f);
+
+        int measuredFontHeight = pixels(19.0f);
+        if (HDC dc = GetDC(hwnd)) {
+            HGDIOBJ oldFont = SelectObject(dc, state.editFont);
+            TEXTMETRICW metrics = {};
+            if (GetTextMetricsW(dc, &metrics) && metrics.tmHeight > 0) {
+                measuredFontHeight = static_cast<int>(metrics.tmHeight);
+            }
+            if (oldFont) SelectObject(dc, oldFont);
+            ReleaseDC(hwnd, dc);
+        }
+        const int editHeight = (std::max)(1, (std::min)(outlineHeight - 2, measuredFontHeight));
+        const int editOffsetY = (outlineHeight - editHeight) / 2;
+        const auto placeEdit = [&](HWND edit, const RECT& outline) {
+            SetWindowPos(edit, nullptr, outline.left + editPadX, outline.top + editOffsetY,
+                         outlineWidth - editPadX * 2, editHeight,
+                         SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+        };
+        const auto outlineAt = [&](float x, float y) {
+            const int left = pixels(x);
+            const int top = pixels(y);
+            return RECT{ left, top, left + outlineWidth, top + outlineHeight };
+        };
+
+        for (size_t index = 0; index < kColorCount; ++index) {
+            const bool leftColumn = index < 10;
+            const int row = static_cast<int>(leftColumn ? index : index - 10);
+            const float columnX = leftColumn ? 18.0f : 386.0f;
+            ColorField& field = state.fields[index];
+            field.outline = outlineAt(columnX + 112.0f, 58.0f + row * 34.0f);
+            const int swatchLeft = pixels(columnX + 274.0f);
+            const LONG swatchTop = field.outline.top + swatchOffsetY;
+            field.swatch = { swatchLeft, swatchTop, swatchLeft + swatchWidth, swatchTop + swatchHeight };
+            placeEdit(field.edit, field.outline);
+        }
+
+        state.transparencyOutline = outlineAt(498.0f, 364.0f);
+        state.scaleOutline = outlineAt(498.0f, 398.0f);
+        state.fontOutline = outlineAt(130.0f, 398.0f);
+        placeEdit(state.transparencyEdit, state.transparencyOutline);
+        placeEdit(state.scaleEdit, state.scaleOutline);
+        placeEdit(state.fontEdit, state.fontOutline);
+        const int browseLeft = pixels(292.0f);
+        state.fontBrowseRect = { browseLeft, state.fontOutline.top,
+                                 browseLeft + pixels(36.0f), state.fontOutline.bottom };
+
+        const int buttonTop = pixels(448.0f);
+        const int buttonBottom = buttonTop + pixels(34.0f);
+        const int buttonWidth = pixels(88.0f);
+        const auto buttonAt = [&](float x) {
+            const int left = pixels(x);
+            return RECT{ left, buttonTop, left + buttonWidth, buttonBottom };
+        };
+        state.applyRect = buttonAt(412.0f);
+        state.confirmRect = buttonAt(510.0f);
+        state.cancelRect = buttonAt(608.0f);
+    }
 
     bool CheckFontFamilyExists(IDWriteFactory* factory, const std::wstring& name) {
         if (!factory || name.empty()) return false;
@@ -596,21 +667,8 @@ namespace {
         }
 
         state->currentFontFamily = fontName;
-        InitializeDrawing(*state, fontName);
-        HFONT replacementFont = CreateFontW(
-            -Scale(14.0f, state->dpiScale), 0, 0, 0, FW_REGULAR,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, fontName.c_str());
-        if (replacementFont) {
-            DeleteObject(state->editFont);
-            state->editFont = replacementFont;
-            for (size_t i = 0; i < kColorCount; ++i) {
-                SendMessageW(state->fields[i].edit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
-            }
-            SendMessageW(state->transparencyEdit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
-            SendMessageW(state->scaleEdit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
-            SendMessageW(state->fontEdit, WM_SETFONT, reinterpret_cast<WPARAM>(state->editFont), TRUE);
+        if (UpdateDialogFonts(*state, state->dpiScale)) {
+            LayoutAppearanceDialog(hwnd, *state);
         }
 
         AppearanceSettings previewAppearance;
@@ -645,6 +703,21 @@ namespace {
         if (!state) return DefWindowProcW(hwnd, message, wParam, lParam);
 
         switch (message) {
+        case WM_DPICHANGED: {
+            const auto* suggested = reinterpret_cast<const RECT*>(lParam);
+            if (!state->editFont || !suggested || LOWORD(wParam) == 0) return 0;
+            const float monitorScale = static_cast<float>(LOWORD(wParam)) / BASE_DPI;
+            const HMONITOR monitor = MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST);
+            const float scale = FitScaleToMonitor(monitor, monitorScale);
+            if (scale != state->dpiScale && !UpdateDialogFonts(*state, scale)) return 0;
+            state->windowCornerRadius = WindowOuterCornerRadius(monitorScale);
+            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                         Scale(kDialogWidth, scale), Scale(kDialogHeight, scale),
+                         SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+            LayoutAppearanceDialog(hwnd, *state);
+            RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+            return 0;
+        }
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT: {
@@ -848,44 +921,61 @@ namespace {
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    bool InitializeDrawing(AppearanceDialogState& state, const std::wstring& fontFamily) {
+    bool InitializeDrawing(AppearanceDialogState& state) {
         D2D1_FACTORY_OPTIONS options = {};
-        if (FAILED(D2D1CreateFactory(
+        return SUCCEEDED(D2D1CreateFactory(
                 D2D1_FACTORY_TYPE_SINGLE_THREADED,
-                __uuidof(ID2D1Factory), &options, &state.d2dFactory)) ||
-            FAILED(DWriteCreateFactory(
+                __uuidof(ID2D1Factory), &options, &state.d2dFactory)) &&
+            SUCCEEDED(DWriteCreateFactory(
                 DWRITE_FACTORY_TYPE_SHARED,
-                __uuidof(IDWriteFactory), &state.writeFactory))) {
-            return false;
-        }
-        const float scale = state.dpiScale;
-        const bool ok =
-            SUCCEEDED(state.writeFactory->CreateTextFormat(
-                fontFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_BOLD,
+                __uuidof(IDWriteFactory), &state.writeFactory));
+    }
+
+    bool UpdateDialogFonts(AppearanceDialogState& state, float scale) {
+        const wchar_t* family = state.currentFontFamily.c_str();
+        const auto createFormat = [&](DWRITE_FONT_WEIGHT weight, float size, IDWriteTextFormat** format) {
+            return SUCCEEDED(state.writeFactory->CreateTextFormat(
+                family, nullptr, weight,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                std::round(16.0f * scale), L"zh-cn", &state.titleFont)) &&
-            SUCCEEDED(state.writeFactory->CreateTextFormat(
-                fontFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_REGULAR,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                std::round(14.0f * scale), L"zh-cn", &state.bodyFont)) &&
-            SUCCEEDED(state.writeFactory->CreateTextFormat(
-                fontFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_REGULAR,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                std::round(12.0f * scale), L"zh-cn", &state.hintFont));
-        if (!ok) return false;
-        state.titleFont->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        state.bodyFont->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        state.hintFont->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+                std::round(size * scale), L"zh-cn", format));
+        };
+        ComPtr<IDWriteTextFormat> title, body, hint;
+        if (!createFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, title.GetAddressOf()) ||
+            !createFormat(DWRITE_FONT_WEIGHT_REGULAR, 14.0f, body.GetAddressOf()) ||
+            !createFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, hint.GetAddressOf())) return false;
+        HFONT font = CreateFontW(
+            -Scale(14.0f, scale), 0, 0, 0, FW_REGULAR,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family);
+        if (!font) return false;
+
+        title->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        body->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        hint->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        state.titleFont = std::move(title);
+        state.bodyFont = std::move(body);
+        state.hintFont = std::move(hint);
+        state.dpiScale = scale;
+
+        HFONT previous = std::exchange(state.editFont, font);
+        const auto setFont = [font](HWND edit) {
+            SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+        };
+        for (const auto& field : state.fields) setFont(field.edit);
+        setFont(state.transparencyEdit);
+        setFont(state.scaleEdit);
+        setFont(state.fontEdit);
+        if (previous) DeleteObject(previous);
         return true;
     }
 
-    float FitScaleToMonitor(HWND owner, float requestedScale) {
-        HMONITOR monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST);
+    float FitScaleToMonitor(HMONITOR monitor, float requestedScale) {
         MONITORINFO info = { sizeof(MONITORINFO) };
         if (!GetMonitorInfoW(monitor, &info)) return requestedScale;
         const float workWidth = static_cast<float>(info.rcWork.right - info.rcWork.left);
         const float workHeight = static_cast<float>(info.rcWork.bottom - info.rcWork.top);
-        return (std::min)({ requestedScale, workWidth / 726.0f, workHeight / 508.0f });
+        return (std::min)({ requestedScale, workWidth / (kDialogWidth + 12.0f),
+                            workHeight / (kDialogHeight + 12.0f) });
     }
 
     POINT CenterAndClamp(HWND owner, int width, int height) {
@@ -917,11 +1007,11 @@ namespace {
         const AppearanceApplyCallback& applyCallback)
     {
         AppearanceDialogState state;
-        state.dpiScale = FitScaleToMonitor(owner, dpiScale);
+        state.dpiScale = FitScaleToMonitor(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), dpiScale);
         state.palette = palette;
         state.applyCallback = applyCallback;
         state.currentFontFamily = currentFontFamily;
-        if (!InitializeDrawing(state, currentFontFamily)) return false;
+        if (!InitializeDrawing(state)) return false;
 
         static bool registered = false;
         if (!registered) {
@@ -940,18 +1030,9 @@ namespace {
         }
 
         const float scale = state.dpiScale;
-        const int width = Scale(714.0f, scale);
-        const int height = Scale(496.0f, scale);
+        const int width = Scale(kDialogWidth, scale);
+        const int height = Scale(kDialogHeight, scale);
         const POINT position = CenterAndClamp(owner, width, height);
-        const int buttonWidth = Scale(88.0f, scale);
-        const int buttonHeight = Scale(34.0f, scale);
-        const int buttonTop = Scale(448.0f, scale);
-        const int cancelLeft = Scale(608.0f, scale);
-        const int confirmLeft = Scale(510.0f, scale);
-        const int applyLeft = Scale(412.0f, scale);
-        state.applyRect = { applyLeft, buttonTop, applyLeft + buttonWidth, buttonTop + buttonHeight };
-        state.confirmRect = { confirmLeft, buttonTop, confirmLeft + buttonWidth, buttonTop + buttonHeight };
-        state.cancelRect = { cancelLeft, buttonTop, cancelLeft + buttonWidth, buttonTop + buttonHeight };
 
         HWND dialog = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT,
@@ -966,172 +1047,44 @@ namespace {
             static_cast<float>(dialogDpi) / static_cast<float>(BASE_DPI), false);
         ApplyPopupWindowEffects(dialog);
         state.editBrush = CreateSolidBrush(ToColorRef(state.palette.trackBg));
-        state.editFont = CreateFontW(
-            -Scale(14.0f, scale), 0, 0, 0, FW_REGULAR,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, currentFontFamily.c_str());
-        if (!state.editBrush || !state.editFont) {
+        if (!state.editBrush) {
             DestroyWindow(dialog);
-            if (state.editFont) DeleteObject(state.editFont);
-            if (state.editBrush) DeleteObject(state.editBrush);
             return false;
         }
 
-        const int outlineWidth = Scale(152.0f, scale);
-        const int outlineHeight = Scale(28.0f, scale);
-        const int swatchWidth = Scale(36.0f, scale);
-        const int swatchHeight = Scale(24.0f, scale);
-        const int swatchOffsetY = (outlineHeight - swatchHeight) / 2;
-        const int editPadX = Scale(6.0f, scale);
-
-        int measuredFontHeight = Scale(19.0f, scale);
-        HDC dialogDc = GetDC(dialog);
-        if (dialogDc) {
-            HGDIOBJ oldFont = SelectObject(dialogDc, state.editFont);
-            TEXTMETRICW tm = {};
-            if (GetTextMetricsW(dialogDc, &tm) && tm.tmHeight > 0) {
-                measuredFontHeight = static_cast<int>(tm.tmHeight);
-            }
-            if (oldFont) SelectObject(dialogDc, oldFont);
-            ReleaseDC(dialog, dialogDc);
-        }
-        const int editHeight = (std::max)(
-            1, (std::min)(outlineHeight - 2, measuredFontHeight));
-        const int editOffsetY = (outlineHeight - editHeight) / 2;
+        const auto createEdit = [&](const wchar_t* value, INT_PTR id, DWORD style, WPARAM limit) {
+            const HWND edit = CreateWindowExW(
+                0, L"EDIT", value,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_AUTOHSCROLL | style,
+                0, 0, 0, 0, dialog, reinterpret_cast<HMENU>(id), GetModuleHandleW(nullptr), nullptr);
+            if (edit) SendMessageW(edit, EM_SETLIMITTEXT, limit, 0);
+            return edit;
+        };
 
         const auto defaults = DefaultAppearanceColors();
         for (size_t index = 0; index < kColorCount; ++index) {
-            const int column = index < 10 ? 0 : 1;
-            const int row = column == 0 ? static_cast<int>(index) : static_cast<int>(index) - 10;
-            const float columnX = column == 0 ? 18.0f : 386.0f;
-            const float rowY = 58.0f + row * 34.0f;
-            const int outlineLeft = Scale(columnX + 112.0f, scale);
-            const int outlineTop = Scale(rowY, scale);
-            const int swatchLeft = Scale(columnX + 274.0f, scale);
-            ColorField& field = state.fields[index];
-            field.outline = {
-                outlineLeft, outlineTop,
-                outlineLeft + outlineWidth, outlineTop + outlineHeight
-            };
-            field.swatch = {
-                swatchLeft, outlineTop + swatchOffsetY,
-                swatchLeft + swatchWidth, outlineTop + swatchOffsetY + swatchHeight
-            };
-            auto found = currentColors.find(kColorSpecs[index].key);
+            const auto found = currentColors.find(kColorSpecs[index].key);
             const std::wstring& value = found != currentColors.end()
-                ? found->second
-                : defaults.at(kColorSpecs[index].key);
-            field.edit = CreateWindowExW(
-                0, L"EDIT", value.c_str(),
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_UPPERCASE | ES_AUTOHSCROLL,
-                field.outline.left + editPadX,
-                field.outline.top + editOffsetY,
-                outlineWidth - editPadX * 2,
-                editHeight,
-                dialog,
-                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEditControlBase + index)),
-                GetModuleHandleW(nullptr), nullptr);
-            if (!field.edit) {
+                ? found->second : defaults.at(kColorSpecs[index].key);
+            state.fields[index].edit = createEdit(
+                value.c_str(), kEditControlBase + static_cast<INT_PTR>(index), ES_UPPERCASE, 7);
+            if (!state.fields[index].edit) {
                 DestroyWindow(dialog);
-                DeleteObject(state.editFont);
                 DeleteObject(state.editBrush);
                 return false;
             }
-            SendMessageW(field.edit, WM_SETFONT, reinterpret_cast<WPARAM>(state.editFont), TRUE);
-            SendMessageW(field.edit, EM_SETLIMITTEXT, 7, 0);
         }
-
-        const int transparencyLeft = Scale(498.0f, scale);
-        const int transparencyTop = Scale(364.0f, scale);
-        state.transparencyOutline = {
-            transparencyLeft, transparencyTop,
-            transparencyLeft + outlineWidth, transparencyTop + outlineHeight
-        };
-        state.transparencyEdit = CreateWindowExW(
-            0, L"EDIT", std::to_wstring(currentBackgroundTransparency).c_str(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_NUMBER | ES_AUTOHSCROLL,
-            state.transparencyOutline.left + editPadX,
-            state.transparencyOutline.top + editOffsetY,
-            outlineWidth - editPadX * 2,
-            editHeight,
-            dialog,
-            reinterpret_cast<HMENU>(
-                static_cast<INT_PTR>(kTransparencyEditControlId)),
-            GetModuleHandleW(nullptr), nullptr);
-        if (!state.transparencyEdit) {
+        state.transparencyEdit = createEdit(
+            std::to_wstring(currentBackgroundTransparency).c_str(), kTransparencyEditControlId, ES_NUMBER, 2);
+        state.scaleEdit = createEdit(
+            std::to_wstring(currentUserScalePercent).c_str(), kScaleEditControlId, ES_NUMBER, 3);
+        state.fontEdit = createEdit(currentFontFamily.c_str(), kFontEditControlId, 0, 64);
+        if (!state.transparencyEdit || !state.scaleEdit || !state.fontEdit || !UpdateDialogFonts(state, scale)) {
             DestroyWindow(dialog);
-            DeleteObject(state.editFont);
             DeleteObject(state.editBrush);
             return false;
         }
-        SendMessageW(
-            state.transparencyEdit, WM_SETFONT,
-            reinterpret_cast<WPARAM>(state.editFont), TRUE);
-        SendMessageW(state.transparencyEdit, EM_SETLIMITTEXT, 2, 0);
-
-        const int scaleLeft = Scale(498.0f, scale);
-        const int scaleTop = Scale(398.0f, scale);
-        state.scaleOutline = {
-            scaleLeft, scaleTop,
-            scaleLeft + outlineWidth, scaleTop + outlineHeight
-        };
-        state.scaleEdit = CreateWindowExW(
-            0, L"EDIT", std::to_wstring(currentUserScalePercent).c_str(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_NUMBER | ES_AUTOHSCROLL,
-            state.scaleOutline.left + editPadX,
-            state.scaleOutline.top + editOffsetY,
-            outlineWidth - editPadX * 2,
-            editHeight,
-            dialog,
-            reinterpret_cast<HMENU>(
-                static_cast<INT_PTR>(kScaleEditControlId)),
-            GetModuleHandleW(nullptr), nullptr);
-        if (!state.scaleEdit) {
-            DestroyWindow(dialog);
-            DeleteObject(state.editFont);
-            DeleteObject(state.editBrush);
-            return false;
-        }
-        SendMessageW(
-            state.scaleEdit, WM_SETFONT,
-            reinterpret_cast<WPARAM>(state.editFont), TRUE);
-        SendMessageW(state.scaleEdit, EM_SETLIMITTEXT, 3, 0);
-
-        const int fontOutlineLeft = Scale(130.0f, scale);
-        const int fontOutlineTop = Scale(398.0f, scale);
-        const int fontOutlineWidth = Scale(152.0f, scale);
-        state.fontOutline = {
-            fontOutlineLeft, fontOutlineTop,
-            fontOutlineLeft + fontOutlineWidth, fontOutlineTop + outlineHeight
-        };
-        const int fontBrowseLeft = Scale(292.0f, scale);
-        const int fontBrowseWidth = Scale(36.0f, scale);
-        state.fontBrowseRect = {
-            fontBrowseLeft, fontOutlineTop,
-            fontBrowseLeft + fontBrowseWidth, fontOutlineTop + outlineHeight
-        };
-        state.fontEdit = CreateWindowExW(
-            0, L"EDIT", currentFontFamily.c_str(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_AUTOHSCROLL,
-            state.fontOutline.left + editPadX,
-            state.fontOutline.top + editOffsetY,
-            fontOutlineWidth - editPadX * 2,
-            editHeight,
-            dialog,
-            reinterpret_cast<HMENU>(
-                static_cast<INT_PTR>(kFontEditControlId)),
-            GetModuleHandleW(nullptr), nullptr);
-        if (!state.fontEdit) {
-            DestroyWindow(dialog);
-            DeleteObject(state.editFont);
-            DeleteObject(state.editBrush);
-            return false;
-        }
-        SendMessageW(
-            state.fontEdit, WM_SETFONT,
-            reinterpret_cast<WPARAM>(state.editFont), TRUE);
-        SendMessageW(state.fontEdit, EM_SETLIMITTEXT, 64, 0);
+        LayoutAppearanceDialog(dialog, state);
 
         state.fontInvalid = currentFontFamily.empty() || !CheckFontFamilyExists(state.writeFactory.Get(), currentFontFamily);
 

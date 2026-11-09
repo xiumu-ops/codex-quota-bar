@@ -46,6 +46,10 @@ namespace {
     }
 
     DesktopProcessState CompanionMode::ProbeDesktopState() {
+        DWORD currentSession = 0;
+        if (!ProcessIdToSessionId(GetCurrentProcessId(), &currentSession)) {
+            return DesktopProcessState::QueryFailed;
+        }
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snapshot == INVALID_HANDLE_VALUE) return DesktopProcessState::QueryFailed;
 
@@ -59,6 +63,9 @@ namespace {
                     _wcsicmp(entry.szExeFile, L"Codex.exe") != 0) {
                     continue;
                 }
+                DWORD processSession = 0;
+                if (!ProcessIdToSessionId(entry.th32ProcessID, &processSession) ||
+                    processSession != currentSession) continue;
 
                 HANDLE process = OpenProcess(
                     PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);

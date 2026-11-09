@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
+#include <stop_token>
 
 namespace CodexQuotaBar {
 
@@ -21,9 +23,6 @@ namespace CodexQuotaBar {
         RECT workAreaRect = {};
         float dpiScale = 1.0f;
         bool isHorizontal = true;
-        bool isAtBottom = true;
-        bool isAtTop = false;
-        bool autoHide = false;
     };
 
     struct WeatherWidgetPlacement {
@@ -103,10 +102,56 @@ namespace CodexQuotaBar {
                     std::abs(currentPos.y - dockPos.y) <= snapThreshold);
         }
 
+        static inline POINT HoldAtMonitorSeam(
+            POINT position, SIZE size, const RECT& current, const RECT& next, LONG margin)
+        {
+            const POINT center = { position.x + size.cx / 2, position.y + size.cy / 2 };
+            const bool right = current.right <= next.left;
+            const bool left = current.left >= next.right;
+            const bool below = current.bottom <= next.top;
+            const bool above = current.top >= next.bottom;
+            if ((right && center.x < next.left + margin) ||
+                (left && center.x >= next.right - margin) ||
+                (below && center.y < next.top + margin) ||
+                (above && center.y >= next.bottom - margin)) {
+                // Keep only the center on the old side. The rest of the window
+                // can straddle the seam while the cursor travels the margin.
+                if (right) position.x = (std::min)(position.x, current.right - 1 - size.cx / 2);
+                if (left) position.x = (std::max)(position.x, current.left + 1 - size.cx / 2);
+                if (below) position.y = (std::min)(position.y, current.bottom - 1 - size.cy / 2);
+                if (above) position.y = (std::max)(position.y, current.top + 1 - size.cy / 2);
+            }
+            return position;
+        }
+
+        static inline RECT NormalizeTaskbarRect(
+            RECT raw, const RECT& monitor, bool horizontal, LONG minimum, LONG fallback)
+        {
+            RECT visible = {};
+            IntersectRect(&visible, &raw, &monitor);
+            const LONG rawThickness = horizontal ? raw.bottom - raw.top : raw.right - raw.left;
+            const LONG visibleThickness = horizontal
+                ? visible.bottom - visible.top : visible.right - visible.left;
+            if (visibleThickness == rawThickness && visibleThickness >= minimum) return visible;
+
+            const LONG thickness = (std::min)(rawThickness >= minimum ? rawThickness : fallback,
+                horizontal ? monitor.bottom - monitor.top : monitor.right - monitor.left);
+            if (horizontal) {
+                const bool top = raw.top + rawThickness / 2 < monitor.top + (monitor.bottom - monitor.top) / 2;
+                return top ? RECT{ monitor.left, monitor.top, monitor.right, monitor.top + thickness }
+                           : RECT{ monitor.left, monitor.bottom - thickness, monitor.right, monitor.bottom };
+            }
+            const bool left = raw.left + rawThickness / 2 < monitor.left + (monitor.right - monitor.left) / 2;
+            return left ? RECT{ monitor.left, monitor.top, monitor.left + thickness, monitor.bottom }
+                        : RECT{ monitor.right - thickness, monitor.top, monitor.right, monitor.bottom };
+        }
+
         // System query and composite detection
-        static TaskbarMetrics GetTaskbarMetrics();
+        static TaskbarMetrics GetTaskbarMetrics(POINT anchor, float fallbackDpiScale);
         static int GetTaskbarAlignment();
-        static WeatherWidgetPlacement FindWeatherWidgetPlacement(SIZE miniPhysicalSize);
+        static std::optional<RECT> ProbeWeatherWidget(const TaskbarMetrics& metrics, std::stop_token stop = {});
+        static WeatherWidgetPlacement FindWeatherWidgetPlacement(
+            SIZE miniPhysicalSize, const TaskbarMetrics& metrics, const std::optional<RECT>& widgetRect);
     };
 
 } // namespace CodexQuotaBar

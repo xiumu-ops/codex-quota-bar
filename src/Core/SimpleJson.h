@@ -26,6 +26,7 @@ namespace CodexQuotaBar {
         JsonType type = JsonType::Null;
         bool boolVal = false;
         double numVal = 0.0;
+        std::string numberToken;
         std::wstring strVal;
         std::vector<JsonValue> arrVal;
         std::map<std::wstring, JsonValue> objVal;
@@ -92,7 +93,7 @@ namespace CodexQuotaBar {
         static constexpr size_t kMaxDepth = 32;
 
         static bool TryParse(const std::wstring& json, JsonValue& out) {
-            size_t idx = 0;
+            size_t idx = !json.empty() && json.front() == L'\uFEFF' ? 1 : 0;
             bool ok = true;
             SkipWhitespace(json, idx);
             if (idx >= json.size()) return false;
@@ -401,6 +402,7 @@ namespace CodexQuotaBar {
                 return {};
             }
             val.numVal = number;
+            val.numberToken = std::move(token);
             return val;
         }
     };

@@ -1,13 +1,11 @@
 #include "UI/TaskbarPlacement.h"
 #include "Core/Constants.h"
 #include "Core/DpiHelper.h"
-#include "Core/Logger.h"
 
-#include <shellapi.h>
 #include <ole2.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
-#include <vector>
+#include <cstdlib>
 #include <cwchar>
 
 #pragma comment(lib, "uiautomationcore.lib")
@@ -15,280 +13,232 @@
 namespace CodexQuotaBar {
 namespace {
 
-    constexpr PROPERTYID kPropAutomationId = 30011; // UIA_AutomationIdPropertyId
-    constexpr PROPERTYID kPropClassName = 30012;    // UIA_ClassNamePropertyId
+    constexpr PROPERTYID kPropAutomationId = 30011;
+    constexpr PROPERTYID kPropClassName = 30012;
+    constexpr PROPERTYID kPropIsOffscreen = 30022;
+    using Microsoft::WRL::ComPtr;
 
-    static const GUID kClsidCUIAutomation = { 0xff48dba4, 0x60ef, 0x4201, { 0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e } };
-    static const GUID kIidIUIAutomation = { 0x30cbe57d, 0xd9d0, 0x452a, { 0xab, 0x13, 0x7a, 0xc0, 0xac, 0x48, 0x25, 0xee } };
+    struct ComApartment {
+        HRESULT status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        ~ComApartment() { if (SUCCEEDED(status)) CoUninitialize(); }
+    };
 
-    bool TryFindWeatherWidgetUIA(HWND hTaskbar, const RECT& taskbarRect, RECT& widgetRect) {
-        if (!hTaskbar || !IsWindow(hTaskbar)) return false;
-
-        Microsoft::WRL::ComPtr<IUIAutomation> automation;
-        HRESULT hr = CoCreateInstance(
-            kClsidCUIAutomation,
-            nullptr,
-            CLSCTX_INPROC_SERVER,
-            kIidIUIAutomation,
-            reinterpret_cast<void**>(automation.GetAddressOf()));
-
-        if (FAILED(hr) || !automation) return false;
-
-        Microsoft::WRL::ComPtr<IUIAutomationElement> taskbarElem;
-        hr = automation->ElementFromHandle(hTaskbar, taskbarElem.GetAddressOf());
-        if (FAILED(hr) || !taskbarElem) return false;
-
-        const wchar_t* const idCandidates[] = {
-            L"WidgetsButton",
-            L"TaskbarAugmentedEntryPointButton",
-            L"Widgets"
-        };
-        const wchar_t* const classCandidates[] = {
-            L"Taskbar.AugmentedEntryPointButton",
-            L"AugmentedEntryPointButton",
-            L"Taskbar.AugmentedEntryPointListView"
-        };
-
-        std::vector<Microsoft::WRL::ComPtr<IUIAutomationCondition>> conditions;
-
-        for (const wchar_t* idName : idCandidates) {
-            VARIANT varId;
-            VariantInit(&varId);
-            varId.vt = VT_BSTR;
-            varId.bstrVal = SysAllocString(idName);
-            if (varId.bstrVal) {
-                Microsoft::WRL::ComPtr<IUIAutomationCondition> cond;
-                if (SUCCEEDED(automation->CreatePropertyCondition(
-                        kPropAutomationId, varId, cond.GetAddressOf())) && cond) {
-                    conditions.push_back(cond);
-                }
-                VariantClear(&varId);
-            }
+    struct ScopedVariant {
+        VARIANT value = {};
+        explicit ScopedVariant(const wchar_t* text) {
+            value.vt = VT_BSTR;
+            value.bstrVal = SysAllocString(text);
         }
+        ~ScopedVariant() { VariantClear(&value); }
+        ScopedVariant(const ScopedVariant&) = delete;
+        ScopedVariant& operator=(const ScopedVariant&) = delete;
+    };
 
-        for (const wchar_t* className : classCandidates) {
-            VARIANT varClass;
-            VariantInit(&varClass);
-            varClass.vt = VT_BSTR;
-            varClass.bstrVal = SysAllocString(className);
-            if (varClass.bstrVal) {
-                Microsoft::WRL::ComPtr<IUIAutomationCondition> cond;
-                if (SUCCEEDED(automation->CreatePropertyCondition(
-                        kPropClassName, varClass, cond.GetAddressOf())) && cond) {
-                    conditions.push_back(cond);
-                }
-                VariantClear(&varClass);
-            }
-        }
-
-        if (conditions.empty()) return false;
-
-        Microsoft::WRL::ComPtr<IUIAutomationCondition> searchCond = conditions[0];
-        for (size_t i = 1; i < conditions.size(); ++i) {
-            Microsoft::WRL::ComPtr<IUIAutomationCondition> combined;
-            if (SUCCEEDED(automation->CreateOrCondition(
-                    searchCond.Get(), conditions[i].Get(), combined.GetAddressOf())) && combined) {
-                searchCond = combined;
-            }
-        }
-
-        if (!searchCond) return false;
-
-        Microsoft::WRL::ComPtr<IUIAutomationElement> widgetElem;
-        hr = taskbarElem->FindFirst(
-            TreeScope_Descendants, searchCond.Get(), widgetElem.GetAddressOf());
-
-        if (SUCCEEDED(hr) && widgetElem) {
-            BOOL isOffscreen = FALSE;
-            if (SUCCEEDED(widgetElem->get_CurrentIsOffscreen(&isOffscreen)) && isOffscreen) {
-                return false;
-            }
-
-            RECT rect = {};
-            hr = widgetElem->get_CurrentBoundingRectangle(&rect);
-            if (SUCCEEDED(hr) && (rect.right > rect.left) && (rect.bottom > rect.top)) {
-                RECT inter = {};
-                if (IntersectRect(&inter, &rect, &taskbarRect) &&
-                    (inter.right - inter.left >= 16) && (inter.bottom - inter.top >= 16)) {
-                    widgetRect = rect;
-                    return true;
-                }
-            }
-        }
-
-        return false;
+    bool GetWidgetBounds(const RECT& rect, const RECT& taskbar, RECT& widget) {
+        RECT visible = {};
+        if (!IntersectRect(&visible, &rect, &taskbar)) return false;
+        const LONG width = visible.right - visible.left;
+        const LONG height = visible.bottom - visible.top;
+        const LONG trayWidth = taskbar.right - taskbar.left;
+        const LONG trayHeight = taskbar.bottom - taskbar.top;
+        const bool horizontal = trayWidth >= trayHeight;
+        if (width < 16 || height < 16 ||
+            (horizontal ? width > 6 * trayHeight : height > 6 * trayWidth)) return false;
+        widget = visible;
+        return true;
     }
 
-    bool TryFindWeatherWidgetChildWindow(HWND hTaskbar, const RECT& taskbarRect, RECT& widgetRect) {
-        if (!hTaskbar || !IsWindow(hTaskbar)) return false;
-
-        struct EnumCtx {
-            RECT taskbarRect = {};
-            RECT foundRect = {};
-            bool found = false;
-        } ctx;
-        ctx.taskbarRect = taskbarRect;
-
-        EnumChildWindows(
-            hTaskbar,
-            [](HWND hWnd, LPARAM lParam) -> BOOL {
-                if (!IsWindowVisible(hWnd)) return TRUE;
-                auto* pCtx = reinterpret_cast<EnumCtx*>(lParam);
-                wchar_t className[128] = {};
-                wchar_t windowText[128] = {};
-                GetClassNameW(hWnd, className, 128);
-                GetWindowTextW(hWnd, windowText, 128);
-
-                if (wcsstr(className, L"Feeds") ||
-                    wcsstr(className, L"Weather") ||
-                    wcsstr(className, L"Widget") ||
-                    wcsstr(windowText, L"Feeds") ||
-                    wcsstr(windowText, L"Weather") ||
-                    wcsstr(windowText, L"Widget")) {
-                    RECT rc = {};
-                    if (GetWindowRect(hWnd, &rc) && (rc.right > rc.left) && (rc.bottom > rc.top)) {
-                        RECT inter = {};
-                        if (IntersectRect(&inter, &rc, &pCtx->taskbarRect) &&
-                            (inter.right - inter.left >= 16) && (inter.bottom - inter.top >= 16)) {
-                            pCtx->foundRect = rc;
-                            pCtx->found = true;
-                            return FALSE;
-                        }
-                    }
-                }
-                return TRUE;
-            },
-            reinterpret_cast<LPARAM>(&ctx));
-
-        if (ctx.found) {
-            widgetRect = ctx.foundRect;
-            return true;
+    ComPtr<IUIAutomationCondition> ButtonCondition(
+        IUIAutomation& automation, PROPERTYID property, const wchar_t* const* names, size_t count)
+    {
+        ComPtr<IUIAutomationCondition> combined;
+        for (size_t i = 0; i < count; ++i) {
+            const ScopedVariant name(names[i]);
+            ComPtr<IUIAutomationCondition> match;
+            if (!name.value.bstrVal || FAILED(automation.CreatePropertyCondition(
+                    property, name.value, match.GetAddressOf()))) continue;
+            if (!combined) {
+                combined = std::move(match);
+            } else {
+                ComPtr<IUIAutomationCondition> next;
+                if (SUCCEEDED(automation.CreateOrCondition(
+                        combined.Get(), match.Get(), next.GetAddressOf()))) combined = std::move(next);
+            }
         }
-        return false;
+        return combined;
+    }
+
+    bool TryFindWeatherWidgetUIA(const TaskbarMetrics& metrics, RECT& widget, std::stop_token stop) {
+        if (stop.stop_requested() || !IsWindow(metrics.hTaskbar)) return false;
+
+        ComPtr<IUIAutomation2> automation;
+        if (FAILED(CoCreateInstance(__uuidof(CUIAutomation8), nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(automation.GetAddressOf()))) ||
+            FAILED(automation->put_ConnectionTimeout(600)) ||
+            FAILED(automation->put_TransactionTimeout(600))) return false;
+
+        ComPtr<IUIAutomationElement> taskbar;
+        if (stop.stop_requested() ||
+            FAILED(automation->ElementFromHandle(metrics.hTaskbar, taskbar.GetAddressOf())) ||
+            !taskbar) return false;
+
+        constexpr const wchar_t* ids[] = { L"WidgetsButton", L"TaskbarAugmentedEntryPointButton" };
+        constexpr const wchar_t* classes[] = {
+            L"Taskbar.AugmentedEntryPointButton", L"AugmentedEntryPointButton"
+        };
+        VARIANT visible = {};
+        visible.vt = VT_BOOL;
+        visible.boolVal = VARIANT_FALSE;
+        ComPtr<IUIAutomationCondition> onScreen;
+        if (FAILED(automation->CreatePropertyCondition(kPropIsOffscreen, visible, onScreen.GetAddressOf()))) {
+            return false;
+        }
+
+        const auto find = [&](PROPERTYID property, const wchar_t* const* names, size_t count) {
+            if (stop.stop_requested()) return false;
+            auto button = ButtonCondition(*automation.Get(), property, names, count);
+            ComPtr<IUIAutomationCondition> filter;
+            ComPtr<IUIAutomationElement> element;
+            RECT rect = {};
+            return button && SUCCEEDED(automation->CreateAndCondition(
+                button.Get(), onScreen.Get(), filter.GetAddressOf())) && !stop.stop_requested() &&
+                SUCCEEDED(taskbar->FindFirst(TreeScope_Descendants, filter.Get(), element.GetAddressOf())) &&
+                element && !stop.stop_requested() &&
+                SUCCEEDED(element->get_CurrentBoundingRectangle(&rect)) &&
+                GetWidgetBounds(rect, metrics.taskbarRect, widget);
+        };
+        // Prefer exact button IDs. A list or taskbar-wide container isn't a dock target.
+        return find(kPropAutomationId, ids, _countof(ids)) || find(kPropClassName, classes, _countof(classes));
+    }
+
+    std::optional<RECT> TryFindWeatherWidgetChildWindow(const TaskbarMetrics& metrics, std::stop_token stop) {
+        if (stop.stop_requested() || !IsWindow(metrics.hTaskbar)) return {};
+        struct Context {
+            RECT taskbar;
+            std::stop_token stop;
+            std::optional<RECT> result;
+        } context{ metrics.taskbarRect, stop, {} };
+        EnumChildWindows(metrics.hTaskbar, [](HWND hwnd, LPARAM param) -> BOOL {
+            auto& ctx = *reinterpret_cast<Context*>(param);
+            if (ctx.stop.stop_requested()) return FALSE;
+            if (!IsWindowVisible(hwnd)) return TRUE;
+            wchar_t className[128] = {};
+            GetClassNameW(hwnd, className, _countof(className));
+            // Class lookup does not send WM_GETTEXT to Explorer or match the
+            // captions of unrelated applications pinned to the taskbar.
+            if (_wcsicmp(className, L"TrayDynamicContentWindow") != 0 &&
+                _wcsicmp(className, L"FeedsButton") != 0 &&
+                _wcsicmp(className, L"WidgetsButton") != 0 &&
+                _wcsicmp(className, L"TaskbarAugmentedEntryPointButton") != 0) return TRUE;
+            RECT rect = {};
+            RECT visible = {};
+            if (GetWindowRect(hwnd, &rect) && GetWidgetBounds(rect, ctx.taskbar, visible)) {
+                ctx.result = visible;
+                return FALSE;
+            }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&context));
+        return context.result;
+    }
+
+    bool IsWindows11Taskbar() {
+        static const bool windows11 = [] {
+            wchar_t build[24] = {};
+            DWORD bytes = sizeof(build);
+            return RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                    L"CurrentBuildNumber", RRF_RT_REG_SZ, nullptr, build, &bytes) == ERROR_SUCCESS &&
+                    std::wcstoul(build, nullptr, 10) >= 22000;
+        }();
+        return windows11;
+    }
+
+    HWND FindTaskbarForMonitor(HMONITOR monitor) {
+        const HWND primary = FindWindowW(L"Shell_TrayWnd", nullptr);
+        if (primary && MonitorFromWindow(primary, MONITOR_DEFAULTTONEAREST) == monitor) return primary;
+        HWND secondary = nullptr;
+        while ((secondary = FindWindowExW(nullptr, secondary, L"Shell_SecondaryTrayWnd", nullptr))) {
+            if (MonitorFromWindow(secondary, MONITOR_DEFAULTTONEAREST) == monitor) return secondary;
+        }
+        return nullptr;
     }
 
 } // namespace
 
-    TaskbarMetrics TaskbarPlacement::GetTaskbarMetrics() {
-        TaskbarMetrics metrics = {};
-        HWND hTaskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
-        metrics.hTaskbar = hTaskbar;
-
-        HMONITOR hMon = nullptr;
-        if (hTaskbar && IsWindow(hTaskbar)) {
-            GetWindowRect(hTaskbar, &metrics.taskbarRect);
-            hMon = MonitorFromWindow(hTaskbar, MONITOR_DEFAULTTOPRIMARY);
+    TaskbarMetrics TaskbarPlacement::GetTaskbarMetrics(POINT anchor, float fallbackDpiScale) {
+        TaskbarMetrics metrics;
+        const HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info = { sizeof(info) };
+        if (monitor && GetMonitorInfoW(monitor, &info)) {
+            metrics.monitorRect = info.rcMonitor;
+            metrics.workAreaRect = info.rcWork;
         } else {
-            hMon = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &metrics.workAreaRect, 0);
+            metrics.monitorRect = metrics.workAreaRect;
         }
+        metrics.hTaskbar = FindTaskbarForMonitor(monitor);
+        const UINT dpi = metrics.hTaskbar ? GetDpiForWindow(metrics.hTaskbar) : 0;
+        metrics.dpiScale = dpi ? static_cast<float>(dpi) / BASE_DPI : fallbackDpiScale;
 
-        MONITORINFO mi = { sizeof(MONITORINFO) };
-        if (hMon && GetMonitorInfoW(hMon, &mi)) {
-            metrics.monitorRect = mi.rcMonitor;
-            metrics.workAreaRect = mi.rcWork;
+        RECT raw = {};
+        if (metrics.hTaskbar && GetWindowRect(metrics.hTaskbar, &raw) &&
+            raw.right > raw.left && raw.bottom > raw.top) {
+            metrics.isHorizontal = raw.right - raw.left >= raw.bottom - raw.top;
+            metrics.taskbarRect = NormalizeTaskbarRect(raw, metrics.monitorRect, metrics.isHorizontal,
+                ScaleEven(24.0f, metrics.dpiScale),
+                ScaleEven(IsWindows11Taskbar() ? 48.0f : 40.0f, metrics.dpiScale));
         } else {
-            RECT rcWork = {};
-            SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
-            metrics.monitorRect = rcWork;
-            metrics.workAreaRect = rcWork;
+            metrics.hTaskbar = nullptr;
         }
-
-        if (metrics.taskbarRect.right <= metrics.taskbarRect.left ||
-            metrics.taskbarRect.bottom <= metrics.taskbarRect.top) {
-            metrics.taskbarRect.left = metrics.monitorRect.left;
-            metrics.taskbarRect.right = metrics.monitorRect.right;
-            metrics.taskbarRect.top = metrics.workAreaRect.bottom;
-            metrics.taskbarRect.bottom = metrics.monitorRect.bottom;
-            if (metrics.taskbarRect.top >= metrics.taskbarRect.bottom) {
-                metrics.taskbarRect.top = metrics.monitorRect.bottom - 48;
-                metrics.taskbarRect.bottom = metrics.monitorRect.bottom;
-            }
-        }
-
-        UINT dpi = 0;
-        if (hTaskbar && IsWindow(hTaskbar)) {
-            dpi = GetDpiForWindow(hTaskbar);
-        }
-        if (dpi == 0) {
-            dpi = GetDpiForSystem();
-        }
-        if (dpi == 0) dpi = BASE_DPI;
-        metrics.dpiScale = static_cast<float>(dpi) / static_cast<float>(BASE_DPI);
-
-        APPBARDATA abd = { sizeof(APPBARDATA) };
-        abd.hWnd = hTaskbar;
-        const UINT_PTR state = SHAppBarMessage(ABM_GETSTATE, &abd);
-        metrics.autoHide = ((state & ABS_AUTOHIDE) != 0);
-
-        const int tbW = metrics.taskbarRect.right - metrics.taskbarRect.left;
-        int tbH = metrics.taskbarRect.bottom - metrics.taskbarRect.top;
-        metrics.isHorizontal = (tbW >= tbH);
-        metrics.isAtBottom = (metrics.taskbarRect.bottom >= metrics.monitorRect.bottom &&
-                              metrics.taskbarRect.top > metrics.monitorRect.top);
-        metrics.isAtTop = (metrics.taskbarRect.top <= metrics.monitorRect.top &&
-                           metrics.taskbarRect.bottom < metrics.monitorRect.bottom);
-
-        // 当开启任务栏自动隐藏时，隐藏状态下 taskbarRect 高度通常缩小至 2~4px。
-        // 为确保吸附与停靠坐标稳定，按系统基准高度重构实际任务栏槽位几何。
-        const int minTbHeight = ScaleEven(24.0f, metrics.dpiScale);
-        if (metrics.isHorizontal && tbH < minTbHeight) {
-            const int defaultTbHeight = ScaleEven(48.0f, metrics.dpiScale);
-            if (metrics.isAtTop) {
-                metrics.taskbarRect.top = metrics.monitorRect.top;
-                metrics.taskbarRect.bottom = metrics.monitorRect.top + defaultTbHeight;
-            } else {
-                metrics.taskbarRect.top = metrics.monitorRect.bottom - defaultTbHeight;
-                metrics.taskbarRect.bottom = metrics.monitorRect.bottom;
-            }
-        }
-
         return metrics;
     }
 
     int TaskbarPlacement::GetTaskbarAlignment() {
-        DWORD alignment = 1;
-        DWORD size = sizeof(alignment);
-        DWORD type = REG_DWORD;
-        HKEY hKey = nullptr;
-        if (RegOpenKeyExW(
-                HKEY_CURRENT_USER,
+        DWORD alignment = 0;
+        DWORD bytes = sizeof(alignment);
+        if (RegGetValueW(HKEY_CURRENT_USER,
                 L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                0,
-                KEY_READ,
-                &hKey) == ERROR_SUCCESS) {
-            if (RegQueryValueExW(
-                    hKey,
-                    L"TaskbarAl",
-                    nullptr,
-                    &type,
-                    reinterpret_cast<LPBYTE>(&alignment),
-                    &size) == ERROR_SUCCESS && type == REG_DWORD) {
-                RegCloseKey(hKey);
-                return static_cast<int>(alignment);
-            }
-            RegCloseKey(hKey);
-        }
-        return 1;
+                L"TaskbarAl", RRF_RT_REG_DWORD, nullptr, &alignment, &bytes) == ERROR_SUCCESS &&
+            alignment <= 1) return static_cast<int>(alignment);
+        return IsWindows11Taskbar() ? 1 : 0;
     }
 
-    WeatherWidgetPlacement TaskbarPlacement::FindWeatherWidgetPlacement(SIZE miniPhysicalSize)
+    std::optional<RECT> TaskbarPlacement::ProbeWeatherWidget(
+        const TaskbarMetrics& metrics, std::stop_token stop) {
+        try {
+            const ComApartment com;
+            RECT rect = {};
+            // Respect an existing STA and never call CoUninitialize for a
+            // failed initialization. Win32 fallback does not require COM.
+            if ((SUCCEEDED(com.status) || com.status == RPC_E_CHANGED_MODE) &&
+                TryFindWeatherWidgetUIA(metrics, rect, stop)) return rect;
+        } catch (...) {
+            // The Win32 fallback is independent of UI Automation.
+        }
+        return TryFindWeatherWidgetChildWindow(metrics, stop);
+    }
+
+    WeatherWidgetPlacement TaskbarPlacement::FindWeatherWidgetPlacement(
+        SIZE miniPhysicalSize, const TaskbarMetrics& metrics, const std::optional<RECT>& widgetRect)
     {
         WeatherWidgetPlacement placement = {};
-        const TaskbarMetrics metrics = GetTaskbarMetrics();
+        if (!metrics.hTaskbar) {
+            const auto& work = metrics.workAreaRect;
+            const LONG margin = ScaleEven(12.0f, metrics.dpiScale);
+            placement.dockPosition = ClampToMonitorBounds(
+                { work.right - miniPhysicalSize.cx - margin, work.bottom - miniPhysicalSize.cy - margin },
+                miniPhysicalSize, work);
+            return placement;
+        }
 
-        RECT foundRect = {};
-        if (TryFindWeatherWidgetUIA(metrics.hTaskbar, metrics.taskbarRect, foundRect)) {
-            placement.widgetRect = foundRect;
-            placement.exactWidgetFound = true;
-        } else if (TryFindWeatherWidgetChildWindow(metrics.hTaskbar, metrics.taskbarRect, foundRect)) {
-            placement.widgetRect = foundRect;
+        if (widgetRect) {
+            placement.widgetRect = *widgetRect;
             placement.exactWidgetFound = true;
         } else {
             placement.exactWidgetFound = false;
             RECT slotRect = {};
             if (metrics.isHorizontal) {
                 const int alignment = GetTaskbarAlignment();
-                if (alignment != 0) {
+                if (alignment != 0 && metrics.hTaskbar == FindWindowW(L"Shell_TrayWnd", nullptr)) {
                     // Windows 11 居中对齐时：天气槽位于任务栏最左侧，左留白 12 DIP
                     const int marginX = ScaleEven(12.0f, metrics.dpiScale);
                     slotRect.left = metrics.taskbarRect.left + marginX;

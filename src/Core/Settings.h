@@ -19,11 +19,12 @@ namespace CodexQuotaBar {
     };
 
     inline bool IsSupportedUserScale(double value) {
-        if (!std::isfinite(value)) return false;
-        const double roundedInt = std::round(value * 100.0);
-        if (std::fabs(value * 100.0 - roundedInt) > 1e-4) return false;
+        const double scaled = value * 100.0;
+        if (!std::isfinite(scaled)) return false;
+        const double roundedInt = std::round(scaled);
+        if (roundedInt < MIN_USER_SCALE_PERCENT || roundedInt > MAX_USER_SCALE_PERCENT ||
+            std::fabs(scaled - roundedInt) > 1e-4) return false;
         const int percent = static_cast<int>(roundedInt);
-        if (percent < MIN_USER_SCALE_PERCENT || percent > MAX_USER_SCALE_PERCENT) return false;
         return (percent % USER_SCALE_PERCENT_STEP) == 0;
     }
 

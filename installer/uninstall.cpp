@@ -9,12 +9,13 @@
 #include <knownfolders.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#include <tlhelp32.h>
 
-#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <string_view>
 #include <filesystem>
 #include <string>
-#include <vector>
+#include "InstallSafety.h"
 
 namespace {
 
@@ -65,107 +66,6 @@ bool EqualPath(const std::filesystem::path& left, const std::filesystem::path& r
     const std::wstring rightFull = FullPath(right);
     return !leftFull.empty() && !rightFull.empty() &&
            _wcsicmp(leftFull.c_str(), rightFull.c_str()) == 0;
-}
-
-bool IsSubPathOf(const std::filesystem::path& child, const std::filesystem::path& parent) {
-    const std::wstring childFull = FullPath(child);
-    const std::wstring parentFull = FullPath(parent);
-    if (childFull.empty() || parentFull.empty()) return false;
-    if (childFull.size() <= parentFull.size()) return false;
-    if (_wcsnicmp(childFull.c_str(), parentFull.c_str(), parentFull.size()) != 0) return false;
-    return childFull[parentFull.size()] == L'\\' || childFull[parentFull.size()] == L'/';
-}
-
-std::vector<DWORD> GetProcessIdsRunningFrom(const std::filesystem::path& targetDirOrFile) {
-    std::vector<DWORD> pids;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return pids;
-
-    const DWORD currentPid = GetCurrentProcessId();
-    PROCESSENTRY32W entry = {};
-    entry.dwSize = sizeof(entry);
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            if (entry.th32ProcessID == 0 || entry.th32ProcessID == currentPid) continue;
-
-            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
-                                         entry.th32ProcessID);
-            if (!process) continue;
-
-            std::wstring path(32768, L'\0');
-            DWORD length = static_cast<DWORD>(path.size());
-            const BOOL queried = QueryFullProcessImageNameW(process, 0, path.data(), &length);
-            CloseHandle(process);
-            if (queried && length > 0) {
-                path.resize(length);
-                if (EqualPath(path, targetDirOrFile) || IsSubPathOf(path, targetDirOrFile)) {
-                    pids.push_back(entry.th32ProcessID);
-                }
-            }
-        } while (Process32NextW(snapshot, &entry));
-    }
-    CloseHandle(snapshot);
-    return pids;
-}
-
-bool StopInstalledApp(const std::filesystem::path& installDir,
-                      const std::filesystem::path& appPath) {
-    std::error_code error;
-    if (std::filesystem::exists(appPath, error)) {
-        std::wstring command = Quote(appPath.wstring()) + L" --exit";
-        STARTUPINFOW startup = { sizeof(startup) };
-        PROCESS_INFORMATION process = {};
-        if (CreateProcessW(appPath.c_str(), command.data(), nullptr, nullptr, FALSE,
-                           CREATE_NO_WINDOW, nullptr, appPath.parent_path().c_str(),
-                           &startup, &process)) {
-            WaitForSingleObject(process.hProcess, 3000);
-            CloseHandle(process.hThread);
-            CloseHandle(process.hProcess);
-        }
-    }
-
-    // 1. 先等待 IPC 优雅退出（最多 1.5 秒）
-    for (int attempt = 0; attempt < 15; ++attempt) {
-        if (GetProcessIdsRunningFrom(installDir).empty()) return true;
-        Sleep(100);
-    }
-
-    // 2. 针对任何挂起或残留的程序进程，强制终止
-    const auto remainingPids = GetProcessIdsRunningFrom(installDir);
-    for (DWORD pid : remainingPids) {
-        HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
-        if (hProcess) {
-            TerminateProcess(hProcess, 0);
-            WaitForSingleObject(hProcess, 2000);
-            CloseHandle(hProcess);
-        }
-    }
-    return GetProcessIdsRunningFrom(installDir).empty();
-}
-
-bool QuarantineAppExecutable(const std::filesystem::path& installDir,
-                             const std::filesystem::path& appPath,
-                             DWORD& errorCode) {
-    errorCode = ERROR_SUCCESS;
-    const std::filesystem::path quarantined = appPath.wstring() + L".uninstalling";
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        StopInstalledApp(installDir, appPath);
-        std::error_code error;
-        const bool exists = std::filesystem::exists(appPath, error);
-        if (error) {
-            errorCode = static_cast<DWORD>(error.value());
-            return false;
-        }
-        if (!exists) return true;
-        if (MoveFileExW(appPath.c_str(), quarantined.c_str(),
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            // 隔离原主程序路径，防止卸载期间再次启动新实例。
-            return true;
-        }
-        errorCode = GetLastError();
-        Sleep(200);
-    }
-    return false;
 }
 
 bool DeleteStartupValue() {
@@ -230,122 +130,6 @@ bool IsValidInstallDirectory(const std::filesystem::path& installDir) {
     return false;
 }
 
-bool IsRegisteredInstallDirectory(const std::filesystem::path& installDir) {
-    return IsValidInstallDirectory(installDir);
-}
-
-void DeleteRegistrationAndShortcut() {
-    RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
-    const std::wstring programs = KnownFolder(FOLDERID_Programs);
-    if (!programs.empty()) {
-        const std::filesystem::path shortcut =
-            std::filesystem::path(programs) / L"Codex-Quota-Bar.lnk";
-        DeleteFileW(shortcut.c_str());
-    }
-}
-
-bool SafeRemoveInstallDirectory(const std::filesystem::path& installDir,
-                                DWORD& errorCode) {
-    errorCode = ERROR_SUCCESS;
-    if (!IsRegisteredInstallDirectory(installDir)) {
-        errorCode = ERROR_INVALID_NAME;
-        return false;
-    }
-
-    // 最长重试约 20 秒，应对父卸载器以及安全软件的短暂扫描锁。
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        std::error_code error;
-        const bool exists = std::filesystem::exists(installDir, error);
-        if (error) {
-            errorCode = static_cast<DWORD>(error.value());
-            return false;
-        }
-        if (!exists) return true;
-
-        SetFileAttributesW(installDir.c_str(), FILE_ATTRIBUTE_NORMAL);
-        const auto end = std::filesystem::recursive_directory_iterator{};
-        for (auto it = std::filesystem::recursive_directory_iterator(installDir, error);
-             !error && it != end; it.increment(error)) {
-            SetFileAttributesW(it->path().c_str(), FILE_ATTRIBUTE_NORMAL);
-        }
-
-        // Keep the entry point available while any payload is still locked.
-        const auto uninstaller = installDir / kUninstallFilename;
-        const auto dirEnd = std::filesystem::directory_iterator{};
-        std::vector<std::filesystem::path> payloads;
-        for (auto it = std::filesystem::directory_iterator(installDir, error);
-             !error && it != dirEnd; it.increment(error)) {
-            if (!EqualPath(it->path(), uninstaller)) {
-                payloads.push_back(it->path());
-            }
-        }
-        for (const auto& payload : payloads) {
-            if (error) break;
-            std::filesystem::remove_all(payload, error);
-        }
-        if (!error) std::filesystem::remove(uninstaller, error);
-        if (!error) std::filesystem::remove(installDir, error);
-        if (!error) return true;
-        if (error) errorCode = static_cast<DWORD>(error.value());
-
-        Sleep(200);
-    }
-
-    std::error_code error;
-    if (std::filesystem::is_empty(installDir, error) && !error) {
-        SetFileAttributesW(installDir.c_str(), FILE_ATTRIBUTE_NORMAL);
-        if (RemoveDirectoryW(installDir.c_str())) return true;
-        errorCode = GetLastError();
-    }
-
-    const bool missing = !std::filesystem::exists(installDir, error) && !error;
-    if (!missing && errorCode == ERROR_SUCCESS) {
-        errorCode = error ? static_cast<DWORD>(error.value()) : ERROR_ACCESS_DENIED;
-    }
-    return missing;
-}
-
-bool ScheduleInstallDirectoryRemoval(const std::filesystem::path& installDir) {
-    if (!IsRegisteredInstallDirectory(installDir)) return false;
-
-    std::error_code error;
-    const bool exists = std::filesystem::exists(installDir, error);
-    if (error) return false;
-    if (!exists) return true;
-
-    std::vector<std::filesystem::path> directories;
-    directories.push_back(installDir);
-    const auto end = std::filesystem::recursive_directory_iterator{};
-    for (auto it = std::filesystem::recursive_directory_iterator(installDir, error);
-         !error && it != end; it.increment(error)) {
-        if (it->is_directory(error)) {
-            if (error) return false;
-            directories.push_back(it->path());
-            continue;
-        }
-        if (error) return false;
-        SetFileAttributesW(it->path().c_str(), FILE_ATTRIBUTE_NORMAL);
-        if (!MoveFileExW(it->path().c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
-            return false;
-        }
-    }
-    if (error) return false;
-
-    // 启动阶段按登记顺序执行：先删除文件，再从最深层目录向上删除目录。
-    std::sort(directories.begin(), directories.end(),
-              [](const std::filesystem::path& left,
-                 const std::filesystem::path& right) {
-                  return left.native().size() > right.native().size();
-              });
-    for (const auto& directory : directories) {
-        SetFileAttributesW(directory.c_str(), FILE_ATTRIBUTE_NORMAL);
-        if (!MoveFileExW(directory.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 std::wstring WindowsErrorText(DWORD errorCode) {
     wchar_t* message = nullptr;
     const DWORD length = FormatMessageW(
@@ -361,176 +145,303 @@ std::wstring WindowsErrorText(DWORD errorCode) {
     return result;
 }
 
-void RemoveSettingsData(const std::filesystem::path& installDir) {
-    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
-        _wcsicmp(installDir.parent_path().filename().c_str(), kProductName) != 0) {
-        return;
+
+constexpr wchar_t kWorkerPrefix[] = L"Codex-Quota-Bar-Uninstall-";
+
+class ManagedFiles {
+public:
+    ~ManagedFiles() { CancelDeletion(); }
+
+    DWORD OpenForRemoval(const std::filesystem::path& path) {
+        DWORD error = ERROR_SUCCESS;
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            CqbInstaller::Handle handle(CreateFileW(path.c_str(), DELETE | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+            if (handle) {
+                FILE_ATTRIBUTE_TAG_INFO info = {};
+                if (!GetFileInformationByHandleEx(handle.Get(), FileAttributeTagInfo, &info, sizeof(info))) {
+                    return GetLastError();
+                }
+                if ((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+                    return ERROR_REPARSE_POINT_ENCOUNTERED;
+                }
+                if ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) return ERROR_DIRECTORY;
+                m_files.push_back(std::move(handle));
+                return ERROR_SUCCESS;
+            }
+            error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return ERROR_SUCCESS;
+            if (error != ERROR_SHARING_VIOLATION && error != ERROR_ACCESS_DENIED) break;
+            Sleep(100);
+        }
+        return error;
     }
-    const std::filesystem::path dataDir =
-        installDir.parent_path() / kDataDirectoryName;
-    std::error_code error;
-    std::filesystem::remove_all(dataDir, error);
+
+    DWORD MarkForDeletion() {
+        FILE_DISPOSITION_INFO disposition = { TRUE };
+        for (const auto& file : m_files) {
+            if (!SetFileInformationByHandle(file.Get(), FileDispositionInfo, &disposition, sizeof(disposition))) {
+                return GetLastError();
+            }
+            ++m_marked;
+        }
+        return ERROR_SUCCESS;
+    }
+
+    void Commit() {
+        m_marked = 0;
+        m_files.clear(); // The marked files are deleted when their handles close.
+    }
+
+private:
+    void CancelDeletion() {
+        FILE_DISPOSITION_INFO disposition = { FALSE };
+        while (m_marked != 0) {
+            --m_marked;
+            SetFileInformationByHandle(m_files[m_marked].Get(), FileDispositionInfo,
+                                       &disposition, sizeof(disposition));
+        }
+    }
+
+    std::vector<CqbInstaller::Handle> m_files;
+    std::size_t m_marked = 0;
+};
+
+DWORD DeleteRegistrationAndShortcut() {
+    const std::wstring programs = KnownFolder(FOLDERID_Programs);
+    if (!programs.empty()) {
+        const auto shortcut = std::filesystem::path(programs) / L"Codex-Quota-Bar.lnk";
+        if (!DeleteFileW(shortcut.c_str())) {
+            const DWORD error = GetLastError();
+            if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) return error;
+        }
+    }
+    const auto status = RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
+    return status == ERROR_FILE_NOT_FOUND ? ERROR_SUCCESS : static_cast<DWORD>(status);
 }
 
-void RemoveEmptyInstallRoot(const std::filesystem::path& installDir) {
-    const std::filesystem::path installRoot = installDir.parent_path();
-    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
-        _wcsicmp(installRoot.filename().c_str(), kProductName) != 0) {
-        return;
+int ReportFailure(const std::wstring& message, DWORD error, bool quiet) {
+    if (!quiet) {
+        const std::wstring detail = message + L"\n\n" + WindowsErrorText(error);
+        MessageBoxW(nullptr, detail.c_str(), L"Codex-Quota-Bar 卸载程序",
+                    MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
     }
-    std::error_code error;
-    if (std::filesystem::is_empty(installRoot, error) && !error) {
-        std::filesystem::remove(installRoot, error);
-    }
-}
-
-bool ScheduleInstallRootRemoval(const std::filesystem::path& installDir) {
-    const std::filesystem::path installRoot = installDir.parent_path();
-    if (_wcsicmp(installDir.filename().c_str(), kAppDirectoryName) != 0 ||
-        _wcsicmp(installRoot.filename().c_str(), kProductName) != 0) {
-        return false;
-    }
-
-    std::error_code error;
-    const auto end = std::filesystem::directory_iterator{};
-    for (auto it = std::filesystem::directory_iterator(installRoot, error);
-         !error && it != end; it.increment(error)) {
-        if (!EqualPath(it->path(), installDir)) return false;
-    }
-    if (error) return false;
-    return MoveFileExW(installRoot.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT) != FALSE;
+    return 3;
 }
 
 int Cleanup(const std::filesystem::path& installDir, bool removeData, bool quiet) {
-    if (!IsRegisteredInstallDirectory(installDir)) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"安装目录与当前用户注册信息不一致，卸载已中止。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 3;
+    if (!IsValidInstallDirectory(installDir)) {
+        return ReportFailure(L"安装目录与当前用户注册信息不一致。", ERROR_INVALID_NAME, quiet);
     }
 
-    const std::filesystem::path appPath = installDir / L"Codex-Quota-Bar.exe";
+    CqbInstaller::DirectoryGuard appGuard;
+    DWORD error = appGuard.Pin(installDir);
+    if (error != ERROR_SUCCESS) {
+        return ReportFailure(L"无法安全打开安装目录，卸载已中止。", error, quiet);
+    }
 
-    // 1. 先关闭伴随模式的自动启动来源；失败时不进入文件删除阶段。
+    const auto installRoot = installDir.parent_path();
+    const auto dataDir = installRoot / kDataDirectoryName;
+    CqbInstaller::DirectoryGuard dataGuard;
+    bool hasData = false;
+    if (removeData) {
+        error = dataGuard.Pin(dataDir);
+        hasData = error == ERROR_SUCCESS;
+        if (!hasData && error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+            return ReportFailure(L"无法安全打开配置目录，卸载已中止。", error, quiet);
+        }
+    }
+
+    const auto appPath = installDir / L"Codex-Quota-Bar.exe";
+    if (!CqbInstaller::StopInstalledApp(appPath)) {
+        return ReportFailure(L"请先退出 Codex-Quota-Bar，再重试卸载。", ERROR_BUSY, quiet);
+    }
+
+    // Remove only files that this product writes. Keep the uninstall entry
+    // available if any managed file is still locked or cannot be removed.
+    ManagedFiles files;
+    constexpr const wchar_t* appFiles[] = {
+        L"Codex-Quota-Bar.exe", L"config-default.json", L"Codex-Quota-Bar.exe.uninstalling",
+        L"Codex-Quota-Bar.exe.new", L"Uninstall.exe.new", L"config-default.json.new",
+        L"Codex-Quota-Bar.exe.codex-quota-bar.rollback",
+        L"Uninstall.exe.codex-quota-bar.rollback", L"config-default.json.codex-quota-bar.rollback",
+        kUninstallFilename
+    };
+    for (const auto* name : appFiles) {
+        error = files.OpenForRemoval(installDir / name);
+        if (error != ERROR_SUCCESS) {
+            return ReportFailure(L"无法删除程序文件，请关闭占用文件的程序后重试。\n" +
+                                 std::wstring(name), error, quiet);
+        }
+    }
+
+    if (hasData) {
+        constexpr const wchar_t* dataFiles[] = {
+            L"config-users.json", L"config-users.json.tmp", L"config.json",
+            L"diagnostic.log", L"diagnostic.previous.log"
+        };
+        for (const auto* name : dataFiles) {
+            error = files.OpenForRemoval(dataDir / name);
+            if (error != ERROR_SUCCESS) {
+                return ReportFailure(L"无法删除本地设置，请关闭占用文件的程序后重试。\n" +
+                                     std::wstring(name), error, quiet);
+            }
+        }
+    }
+
+    error = files.MarkForDeletion();
+    if (error != ERROR_SUCCESS) {
+        return ReportFailure(L"程序文件仍被占用，请关闭相关程序后重试。", error, quiet);
+    }
     if (!DeleteStartupValue()) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"无法关闭伴随模式启动项，卸载入口已保留。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 5;
+        return ReportFailure(L"无法关闭伴随模式启动项，卸载入口已保留。", ERROR_ACCESS_DENIED, quiet);
     }
-
-    // 2. 自动启动来源已切断后，退出并确认安装目录内不再有进程。
-    if (!StopInstalledApp(installDir, appPath)) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"Codex-Quota-Bar 进程无法结束，卸载入口已保留，请稍后重试。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 6;
+    error = DeleteRegistrationAndShortcut();
+    if (error != ERROR_SUCCESS) {
+        return ReportFailure(L"无法清理卸载注册信息。", error, quiet);
     }
-
-    DWORD quarantineError = ERROR_SUCCESS;
-    if (!QuarantineAppExecutable(installDir, appPath, quarantineError)) {
-        if (!quiet) {
-            const std::wstring message =
-                L"无法隔离正在使用的主程序，卸载入口已保留。\n\nWindows 错误 " +
-                std::to_wstring(quarantineError) + L"：" +
-                WindowsErrorText(quarantineError);
-            MessageBoxW(nullptr, message.c_str(), L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 7;
+    files.Commit();
+    if (hasData) {
+        dataGuard.ReleaseLeaf();
+        RemoveDirectoryW(dataDir.c_str()); // Empty directories only.
     }
+    dataGuard.Release();
 
-    // 3. 最后删除程序与依赖。持久的 Windows 映像锁使用系统标准的
-    // MOVEFILE_DELAY_UNTIL_REBOOT 兜底，在下次启动阶段完成清理。
-    DWORD removalError = ERROR_SUCCESS;
-    const bool removed = SafeRemoveInstallDirectory(installDir, removalError);
-    const bool scheduled = !removed && ScheduleInstallDirectoryRemoval(installDir);
-    if (removed || scheduled) {
-        if (removeData) RemoveSettingsData(installDir);
-        DeleteRegistrationAndShortcut();
-        if (removed) {
-            RemoveEmptyInstallRoot(installDir);
-        } else {
-            ScheduleInstallRootRemoval(installDir);
-        }
-    }
-
+    appGuard.ReleaseLeaf();
+    RemoveDirectoryW(installDir.c_str());
+    // The app guard pins the installation root and its ancestors.
+    appGuard.ReleaseLeaf();
+    RemoveDirectoryW(installRoot.c_str());
     if (!quiet) {
-        const std::wstring message = removed
-            ? L"Codex-Quota-Bar 已卸载完成，伴随模式已关闭。"
-            : scheduled
-                ? L"Codex-Quota-Bar 已卸载。Windows 正在占用残留文件，已登记在下次系统启动时自动删除；请重启一次电脑。"
-                : L"无法删除安装目录，卸载入口已保留。\n\nWindows 错误 " +
-                      std::to_wstring(removalError) + L"：" +
-                      WindowsErrorText(removalError);
-        MessageBoxW(nullptr, message.c_str(),
-                    L"Codex-Quota-Bar 卸载程序",
-                    MB_OK | ((removed || scheduled) ? MB_ICONINFORMATION : MB_ICONERROR) |
-                        MB_SETFOREGROUND);
+        MessageBoxW(nullptr, L"Codex-Quota-Bar 已卸载完成。",
+                    L"Codex-Quota-Bar 卸载程序", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
     }
-    return removed ? 0 : (scheduled ? ERROR_SUCCESS_REBOOT_REQUIRED : 3);
+    return 0;
 }
 
-void ScheduleTempSelfDelete(const std::filesystem::path& tempExePath) {
-    MoveFileExW(tempExePath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+bool IsWorkerPath(const std::filesystem::path& path) {
+    const std::wstring name = path.filename().native();
+    const std::wstring_view filename(name);
+    const std::wstring_view prefix(kWorkerPrefix);
+    constexpr std::wstring_view extension = L".exe";
+    if (!filename.starts_with(prefix) || !filename.ends_with(extension) ||
+        filename.size() <= prefix.size() + extension.size()) return false;
+    const auto suffix = filename.substr(prefix.size(), filename.size() - prefix.size() - extension.size());
+    std::error_code ec;
+    const auto temp = std::filesystem::temp_directory_path(ec);
+    return !ec && EqualPath(path.parent_path(), temp) &&
+        suffix.find_first_not_of(L"0123456789-") == std::wstring_view::npos;
+}
 
+void DeleteWorkerAfterExit(const std::filesystem::path& self) {
+    if (!IsWorkerPath(self)) return;
     wchar_t systemDir[MAX_PATH] = {};
     const UINT len = GetSystemDirectoryW(systemDir, MAX_PATH);
-    const std::wstring cmdExe = (len > 0 && len < MAX_PATH)
-        ? (std::filesystem::path(systemDir) / L"cmd.exe").wstring()
-        : L"cmd.exe";
-
-    const std::wstring cmdLine =
-        Quote(cmdExe) + L" /c (ping 127.0.0.1 -n 2 > nul & del /f /q " +
-        Quote(tempExePath.wstring()) + L")";
-    std::vector<wchar_t> cmdBuffer(cmdLine.begin(), cmdLine.end());
-    cmdBuffer.push_back(L'\0');
-
-    STARTUPINFOW si = { sizeof(si) };
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    if (CreateProcessW(nullptr, cmdBuffer.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr,
-                       (len > 0 && len < MAX_PATH) ? systemDir : nullptr,
-                       &si, &pi)) {
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
+    if (len == 0 || len >= MAX_PATH) return;
+    const auto system = std::filesystem::path(systemDir);
+    const auto cmd = system / L"cmd.exe";
+    const auto ping = system / L"ping.exe";
+    // Only a generated basename enters the shell command. Pass the temp
+    // directory through CreateProcess so shell syntax in a path is inert.
+    const auto folder = self.parent_path();
+    if (folder.root_name().native().size() != 2) return;
+    std::wstring command = Quote(cmd.wstring()) + L" /D /V:OFF /C (" +
+        Quote(ping.wstring()) + L" 127.0.0.1 -n 2 >nul & del /f /q " +
+        Quote(self.filename().wstring()) + L")";
+    STARTUPINFOW startup = { sizeof(startup) };
+    PROCESS_INFORMATION process = {};
+    if (CreateProcessW(cmd.c_str(), command.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, folder.c_str(), &startup, &process)) {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
     }
 }
 
-int RunStage2(const std::filesystem::path& installDir, DWORD waitPid, bool removeData, bool quiet) {
-    bool parentExited = true;
-    if (waitPid > 0) {
-        HANDLE hProcess = OpenProcess(SYNCHRONIZE, FALSE, waitPid);
-        if (hProcess) {
-            parentExited = WaitForSingleObject(hProcess, 10000) == WAIT_OBJECT_0;
-            CloseHandle(hProcess);
+HANDLE ParseInheritedHandle(const wchar_t* text) {
+    wchar_t* end = nullptr;
+    errno = 0;
+    const auto number = _wcstoui64(text, &end, 10);
+    if (errno != 0 || end == text || *end != L'\0' || number == 0) return nullptr;
+    return reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(number));
+}
+
+int RunStage2(const std::filesystem::path& installDir, HANDLE gate, HANDLE parent,
+              bool removeData, bool quiet) {
+    const auto self = std::filesystem::path(ModulePath());
+    DWORD flags = 0;
+    if (!IsWorkerPath(self) || !GetHandleInformation(gate, &flags) ||
+        (flags & HANDLE_FLAG_INHERIT) == 0 || !GetHandleInformation(parent, &flags) ||
+        (flags & HANDLE_FLAG_INHERIT) == 0 || GetProcessId(parent) == 0) {
+        return 3;
+    }
+    const CqbInstaller::Handle inheritedGate(gate);
+    const CqbInstaller::Handle inheritedParent(parent);
+    SetHandleInformation(inheritedGate.Get(), HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(inheritedParent.Get(), HANDLE_FLAG_INHERIT, 0);
+    const int result = WaitForSingleObject(inheritedParent.Get(), 10000) == WAIT_OBJECT_0
+        ? Cleanup(installDir, removeData, quiet)
+        : ReportFailure(L"卸载启动进程尚未退出，请稍后重试。", ERROR_BUSY, quiet);
+    DeleteWorkerAfterExit(self);
+    return result;
+}
+
+bool StartCleanupWorker(const std::filesystem::path& self, const std::filesystem::path& installDir,
+                        HANDLE gate, bool removeData, bool quiet) {
+    std::error_code ec;
+    const auto tempPath = std::filesystem::temp_directory_path(ec);
+    if (ec || tempPath.empty()) return false;
+    const std::filesystem::path temp = FullPath(tempPath);
+    CqbInstaller::DirectoryGuard tempGuard;
+    if (tempGuard.Pin(temp) != ERROR_SUCCESS) return false;
+
+    HANDLE rawParent = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &rawParent,
+                         SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, TRUE, 0)) return false;
+    const CqbInstaller::Handle parent(rawParent);
+    HANDLE inherited[] = { gate, parent.Get() };
+
+    SIZE_T attributeBytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+    if (attributeBytes == 0) return false;
+    std::vector<BYTE> attributes(attributeBytes);
+    STARTUPINFOEXW startup = {};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeBytes)) return false;
+
+    const auto worker = temp / (kWorkerPrefix + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                                std::to_wstring(GetTickCount64()) + L".exe");
+    bool started = false;
+    if (UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                  inherited, sizeof(inherited), nullptr, nullptr) &&
+        CopyFileW(self.c_str(), worker.c_str(), TRUE)) {
+        std::wstring command = Quote(worker.wstring()) + L" --stage2 " + Quote(installDir.wstring()) +
+            L" --gate " + std::to_wstring(reinterpret_cast<std::uintptr_t>(gate)) +
+            L" --parent " + std::to_wstring(reinterpret_cast<std::uintptr_t>(parent.Get()));
+        if (quiet) command += L" /quiet";
+        if (removeData) command += L" --remove-data";
+        PROCESS_INFORMATION process = {};
+        {
+            // Keep the copy immutable while starting it.
+            CqbInstaller::Handle executable(CreateFileW(worker.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+            FILE_ATTRIBUTE_TAG_INFO info = {};
+            started = executable && GetFileInformationByHandleEx(
+                executable.Get(), FileAttributeTagInfo, &info, sizeof(info)) &&
+                (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
+                CreateProcessW(worker.c_str(), command.data(), nullptr, nullptr, TRUE,
+                               EXTENDED_STARTUPINFO_PRESENT, nullptr, temp.c_str(),
+                               &startup.StartupInfo, &process);
+        }
+        if (started) {
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
         } else {
-            parentExited = GetLastError() == ERROR_INVALID_PARAMETER;
+            DeleteFileW(worker.c_str());
         }
     }
-    if (!parentExited && !quiet) {
-        MessageBoxW(nullptr, L"卸载启动进程尚未退出，请稍后重试。",
-                    L"Codex-Quota-Bar 卸载程序", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-    }
-    const int result = parentExited ? Cleanup(installDir, removeData, quiet) : 3;
-
-    const std::wstring self = ModulePath();
-    if (!self.empty()) {
-        ScheduleTempSelfDelete(self);
-    }
-
-    return result;
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
+    return started;
 }
 
 } // namespace
@@ -543,102 +454,53 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     bool quiet = false;
     bool isStage2 = false;
     bool removeData = false;
-    DWORD waitPid = 0;
+    HANDLE gate = nullptr;
+    HANDLE parent = nullptr;
     std::filesystem::path stage2InstallDir;
-
     for (int i = 1; i < argc; ++i) {
         if (_wcsicmp(argv[i], L"/quiet") == 0 || _wcsicmp(argv[i], L"--quiet") == 0) {
             quiet = true;
-        } else if (_wcsicmp(argv[i], L"--stage2") == 0) {
+        } else if (_wcsicmp(argv[i], L"--stage2") == 0 && i + 1 < argc) {
             isStage2 = true;
-            if (i + 1 < argc && argv[i + 1][0] != L'-') {
-                stage2InstallDir = FullPath(argv[++i]);
-            }
-        } else if (_wcsicmp(argv[i], L"--wait-pid") == 0) {
-            if (i + 1 < argc) {
-                waitPid = static_cast<DWORD>(_wtoi(argv[++i]));
-            }
+            stage2InstallDir = FullPath(argv[++i]);
+        } else if (_wcsicmp(argv[i], L"--gate") == 0 && i + 1 < argc) {
+            gate = ParseInheritedHandle(argv[++i]);
+        } else if (_wcsicmp(argv[i], L"--parent") == 0 && i + 1 < argc) {
+            parent = ParseInheritedHandle(argv[++i]);
         } else if (_wcsicmp(argv[i], L"--remove-data") == 0) {
             removeData = true;
         }
     }
     LocalFree(argv);
+    if (isStage2) return RunStage2(stage2InstallDir, gate, parent, removeData, quiet);
 
-    if (isStage2) {
-        return RunStage2(stage2InstallDir, waitPid, removeData, quiet);
-    }
-
-    // Stage 1: 从主安装目录执行
-    const std::wstring self = ModulePath();
+    const auto self = std::filesystem::path(ModulePath());
     if (self.empty()) return 1;
-    const std::filesystem::path installDir = FullPath(std::filesystem::path(self).parent_path());
-
+    const std::filesystem::path installDir = FullPath(self.parent_path());
     if (!IsValidInstallDirectory(installDir)) {
-        if (!quiet) {
-            MessageBoxW(nullptr,
-                        L"安装目录与当前用户注册信息不一致，卸载已中止。",
-                        L"Codex-Quota-Bar 卸载程序",
-                        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-        }
-        return 3;
+        return ReportFailure(L"安装目录与当前用户注册信息不一致。", ERROR_INVALID_NAME, quiet);
     }
-
-    if (!quiet && MessageBoxW(
-            nullptr, L"确定要卸载 Codex-Quota-Bar 吗？",
-            L"Codex-Quota-Bar 卸载程序",
-            MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) != IDYES) {
+    if (!quiet && MessageBoxW(nullptr, L"确定要卸载 Codex-Quota-Bar 吗？",
+            L"Codex-Quota-Bar 卸载程序", MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) != IDYES) {
         return 0;
     }
-
     if (!quiet) {
-        removeData = MessageBoxW(
-            nullptr,
-            L"是否同时删除窗口位置、缩放、刷新间隔等本地设置？\n\n"
-            L"选择“否”会保留设置，方便以后重新安装。",
-            L"删除本地设置",
+        removeData = MessageBoxW(nullptr, L"是否同时删除窗口位置、缩放、刷新间隔等本地设置？\n\n"
+            L"选择“否”会保留设置，方便以后重新安装。", L"删除本地设置",
             MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) == IDYES;
     }
 
-    // Leave the registration in place so the worker can validate a custom
-    // install location and preserve the uninstall entry if cleanup fails.
-    std::error_code ec;
-    const std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
-    if (!ec && !tempDir.empty()) {
-        const std::filesystem::path tempExe =
-            tempDir / (L"Codex-Quota-Bar-Uninstall-" +
-                       std::to_wstring(GetCurrentProcessId()) + L"-" +
-                       std::to_wstring(GetTickCount64()) + L".exe");
-
-        std::filesystem::copy_file(self, tempExe, ec);
-        if (!ec) {
-            std::wstring command = Quote(tempExe.wstring()) +
-                                   L" --stage2 " + Quote(installDir.wstring()) +
-                                   L" --wait-pid " + std::to_wstring(GetCurrentProcessId());
-            if (quiet) {
-                command += L" /quiet";
-            }
-            if (removeData) {
-                command += L" --remove-data";
-            }
-
-            // 切换工作目录至临时目录，释放安装目录的目录句柄
-            SetCurrentDirectoryW(tempDir.c_str());
-
-            STARTUPINFOW si = { sizeof(si) };
-            PROCESS_INFORMATION pi = {};
-            std::vector<wchar_t> cmdBuffer(command.begin(), command.end());
-            cmdBuffer.push_back(L'\0');
-
-            if (CreateProcessW(tempExe.c_str(), cmdBuffer.data(), nullptr, nullptr,
-                               FALSE, 0, nullptr, tempDir.c_str(), &si, &pi)) {
-                CloseHandle(pi.hThread);
-                CloseHandle(pi.hProcess);
-                return 0; // The worker can remove the image once this process exits.
-            }
-            DeleteFileW(tempExe.c_str());
-        }
+    const auto operation = CqbInstaller::AcquireInstallationGate(true);
+    if (!operation) {
+        return ReportFailure(L"另一个安装或卸载操作正在运行。", ERROR_BUSY, quiet);
     }
-
-    // 若临时克隆或启动失败，回退到原位执行
-    return Cleanup(installDir, removeData, quiet);
+    CqbInstaller::DirectoryGuard appGuard;
+    const DWORD error = appGuard.Pin(installDir);
+    if (error != ERROR_SUCCESS) {
+        return ReportFailure(L"无法安全打开安装目录，卸载已中止。", error, quiet);
+    }
+    if (!StartCleanupWorker(self, installDir, operation.Get(), removeData, quiet)) {
+        return ReportFailure(L"无法启动卸载清理进程，卸载入口已保留。", ERROR_ACCESS_DENIED, quiet);
+    }
+    return 0;
 }

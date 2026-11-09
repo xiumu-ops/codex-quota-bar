@@ -27,6 +27,8 @@ namespace CodexQuotaBar {
 
     constexpr UINT_PTR TIMER_REFRESH_ID = 1001;
     constexpr UINT_PTR TIMER_COMPANION_ID = 1002;
+    constexpr UINT_PTR TIMER_RENDER_RETRY_ID = 1003;
+    constexpr UINT_PTR TIMER_WEATHER_LAYOUT_ID = 1004;
 
     constexpr int IDM_TOGGLE_EXPAND = 2001;
     constexpr int IDM_REFRESH = 2002;
@@ -42,7 +44,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_APPEARANCE_CUSTOM = 2302;
     constexpr int IDM_APPEARANCE_EDIT = 2303;
     constexpr int IDM_FONT_SUB = 2400;
-    constexpr int IDM_FONT_PRESET_BASE = 2401;
+    constexpr int IDM_FONT_YAHEI_UI = 2401;
     constexpr int IDM_FONT_CHOOSE_SYSTEM = 2498;
     constexpr int IDM_FONT_CUSTOM_DIALOG = 2499;
 
@@ -89,6 +91,9 @@ namespace CodexQuotaBar {
 
     MainWindow::~MainWindow() {
         BeginShutdown();
+        m_fetchWorker.Join();
+        m_companionWorker.Join();
+        m_weatherWorker.Join();
         if (m_hwnd) {
             DestroyWindow(m_hwnd);
             m_hwnd = NULL;
@@ -189,7 +194,7 @@ namespace CodexQuotaBar {
         const SIZE initialPhysical = PhysicalWindowSize();
         POINT initialPosition = {};
         auto stored = ConfigStore::LoadState();
-        if (stored.hasPosition && !IsWeatherDockActive()) {
+        if (stored.hasPosition) {
             initialPosition = ClampToScreens(stored.position, initialPhysical);
         } else {
             RECT rcWork = {};
@@ -241,6 +246,7 @@ namespace CodexQuotaBar {
 
     void MainWindow::Hide() {
         if (m_hwnd) {
+            CustomMenu::Dismiss(m_hwnd);
             ShowWindow(m_hwnd, SW_HIDE);
         }
     }
@@ -266,7 +272,7 @@ namespace CodexQuotaBar {
             static_cast<UINT>(targetW),
             static_cast<UINT>(targetH));
 
-        if (IsWeatherDockActive() && !m_dragging) {
+        if (IsWeatherDockActive() && !m_dragging && !requestedPosition) {
             DockToWeatherWidget();
             return;
         }
@@ -294,6 +300,7 @@ namespace CodexQuotaBar {
         ApplyCurrentWindowEffects();
         RenderLayeredWindow();
         DwmFlush();
+        if (IsWeatherDockActive() && !m_dragging) ScheduleWeatherLayout();
     }
 
     void MainWindow::ApplyUserScale(int level) {
@@ -326,7 +333,7 @@ namespace CodexQuotaBar {
             std::wstring loadErrors;
             bool readable = false;
             const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
-            if (!readable || !loadErrors.empty()) {
+            if (!readable) {
                 MessageBoxW(
                     m_hwnd,
                     (L"配置未保存，请先修正配置文件：\n\n" + loadErrors).c_str(),
@@ -335,10 +342,29 @@ namespace CodexQuotaBar {
                 return false;
             }
             settingsToSave.appearance = loaded.appearance;
+            settingsToSave.defaultAppearance = loaded.defaultAppearance;
         }
 
         std::wstring errors;
-        if (ConfigStore::SaveSettings(settingsToSave, &errors)) return true;
+        if (ConfigStore::SaveSettings(settingsToSave, &errors)) {
+            if (preserveDiskAppearance) {
+                const auto& previous = m_settings.appearance;
+                const auto& saved = settingsToSave.appearance;
+                const auto& oldDefault = m_settings.defaultAppearance;
+                const auto& newDefault = settingsToSave.defaultAppearance;
+                const bool changed = previous.mode != saved.mode ||
+                    previous.fontFamily != saved.fontFamily ||
+                    previous.backgroundTransparency != saved.backgroundTransparency ||
+                    previous.colors != saved.colors ||
+                    oldDefault.fontFamily != newDefault.fontFamily ||
+                    oldDefault.backgroundTransparency != newDefault.backgroundTransparency ||
+                    oldDefault.colors != newDefault.colors;
+                m_settings.appearance = saved;
+                m_settings.defaultAppearance = newDefault;
+                if (changed) ApplyAppearance();
+            }
+            return true;
+        }
         MessageBoxW(
             m_hwnd,
             (L"配置未保存，请修正配置文件：\n\n" + errors).c_str(),
@@ -373,20 +399,14 @@ namespace CodexQuotaBar {
                 L"Codex-Quota-Bar 配置校验",
                 MB_OK | MB_ICONWARNING);
         }
-        if (m_hwnd) {
-            if (IsWindowVisible(m_hwnd)) {
-                RenderLayeredWindow();
-            } else {
-                InvalidateRect(m_hwnd, NULL, FALSE);
-            }
-        }
+        if (m_hwnd && IsWindowVisible(m_hwnd)) RenderLayeredWindow();
     }
 
     void MainWindow::SetAppearanceMode(AppearanceMode mode) {
         std::wstring loadErrors;
         bool readable = false;
         const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
-        if (!readable || !loadErrors.empty()) {
+        if (!readable) {
             MessageBoxW(
                 m_hwnd,
                 (L"无法切换外观，请先修正配置文件：\n\n" + loadErrors).c_str(),
@@ -412,7 +432,7 @@ namespace CodexQuotaBar {
         std::wstring loadErrors;
         bool readable = false;
         const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
-        if (!readable || !loadErrors.empty()) {
+        if (!readable) {
             MessageBoxW(
                 m_hwnd,
                 (L"无法修改个性外观，请先修正配置文件：\n\n" + loadErrors).c_str(),
@@ -479,7 +499,7 @@ namespace CodexQuotaBar {
         std::wstring loadErrors;
         bool readable = false;
         const AppSettings loaded = ConfigStore::LoadSettings(&loadErrors, &readable);
-        if (!readable || !loadErrors.empty()) {
+        if (!readable) {
             MessageBoxW(
                 m_hwnd,
                 (L"无法切换字体，请先修正配置文件：\n\n" + loadErrors).c_str(),
@@ -503,65 +523,26 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ShowFontMenu(int screenX, int screenY) {
-        struct FontOption {
-            std::wstring label;        // 显示在菜单上的文案
-            std::wstring applyFamily;  // 选定时应用的首选字体族名称
-            std::wstring matchFamily1; // 用于匹配当前字体的名称1
-            std::wstring matchFamily2; // 用于匹配当前字体的名称2
-        };
-
-        const std::vector<FontOption> presetOptions = {
-            { L"幼圆", L"YouYuan", L"YouYuan", L"幼圆" },
-            { L"楷体", L"KaiTi", L"KaiTi", L"楷体" },
-            { L"黑体", L"SimHei", L"SimHei", L"黑体" },
-            { L"仿宋", L"FangSong", L"FangSong", L"仿宋" },
-            { L"Cascadia Mono", L"Cascadia Mono", L"Cascadia Mono", L"" },
-            { L"默认", L"Microsoft YaHei UI", L"Microsoft YaHei UI", L"微软雅黑" }
-        };
-
+        constexpr wchar_t yaHeiFamily[] = L"Microsoft YaHei UI";
         const std::wstring currentFont = m_renderer->FontFamily();
-        int currentPresetIndex = -1;
-        for (std::size_t i = 0; i < presetOptions.size(); ++i) {
-            const auto& opt = presetOptions[i];
-            if ((!opt.matchFamily1.empty() && _wcsicmp(currentFont.c_str(), opt.matchFamily1.c_str()) == 0) ||
-                (!opt.matchFamily2.empty() && _wcsicmp(currentFont.c_str(), opt.matchFamily2.c_str()) == 0)) {
-                currentPresetIndex = static_cast<int>(i);
-                break;
-            }
-        }
-        if (currentPresetIndex < 0 && (currentFont.empty() || _wcsicmp(currentFont.c_str(), L"Microsoft YaHei UI") == 0)) {
-            currentPresetIndex = static_cast<int>(presetOptions.size() - 1);
-        }
-
-        std::vector<MenuItem> fontItems;
-        for (std::size_t i = 0; i < presetOptions.size(); ++i) {
-            std::wstring text = presetOptions[i].label;
-            if (static_cast<int>(i) == currentPresetIndex) {
-                text += L" (当前)";
-            }
-            fontItems.push_back({ IDM_FONT_PRESET_BASE + static_cast<int>(i), text });
-        }
-
-        if (currentPresetIndex < 0 && !currentFont.empty()) {
-            fontItems.push_back({ IDM_FONT_PRESET_BASE + static_cast<int>(presetOptions.size()), currentFont + L" (当前)" });
-        }
-
-        fontItems.push_back({ 0, L"" });
-        fontItems.push_back({ IDM_FONT_CHOOSE_SYSTEM, L"浏览全部系统字体..." });
-        fontItems.push_back({ IDM_FONT_CUSTOM_DIALOG, L"自定义外观设置..." });
+        const bool usingYaHei = _wcsicmp(currentFont.c_str(), yaHeiFamily) == 0 ||
+                               _wcsicmp(currentFont.c_str(), L"微软雅黑 UI") == 0;
+        const std::vector<MenuItem> fontItems = {
+            { IDM_FONT_YAHEI_UI, usingYaHei ? L"微软雅黑 UI (当前)" : L"微软雅黑 UI" },
+            { 0, L"" },
+            { IDM_FONT_CHOOSE_SYSTEM, L"浏览全部系统字体..." },
+            { IDM_FONT_CUSTOM_DIALOG, L"自定义外观设置..." },
+        };
 
         const int selected = CustomMenu::Show(
             m_hwnd, m_uiScale, screenX, screenY, fontItems,
-            m_renderer->Palette(), m_renderer->FontFamily());
+            m_renderer->Palette(), currentFont);
 
-        if (selected >= IDM_FONT_PRESET_BASE &&
-            selected < IDM_FONT_PRESET_BASE + static_cast<int>(presetOptions.size())) {
-            const std::size_t index = static_cast<std::size_t>(selected - IDM_FONT_PRESET_BASE);
-            ApplyFontFamily(presetOptions[index].applyFamily);
+        if (selected == IDM_FONT_YAHEI_UI) {
+            ApplyFontFamily(yaHeiFamily);
         } else if (selected == IDM_FONT_CHOOSE_SYSTEM) {
             LOGFONTW lf = {};
-            const std::wstring currentName = m_renderer->FontFamily();
-            wcsncpy_s(lf.lfFaceName, currentName.c_str(), _TRUNCATE);
+            wcsncpy_s(lf.lfFaceName, currentFont.c_str(), _TRUNCATE);
             lf.lfCharSet = DEFAULT_CHARSET;
             CHOOSEFONTW cf = { sizeof(CHOOSEFONTW) };
             cf.hwndOwner = m_hwnd;
@@ -653,12 +634,13 @@ namespace CodexQuotaBar {
                      0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    void MainWindow::DockToWeatherWidget() {
+    void MainWindow::DockToWeatherWidget(bool waitForProbe) {
         if (!m_hwnd || !IsWeatherDockActive() || m_dragging) return;
 
         const SIZE sz = PhysicalWindowSize();
         const WeatherWidgetPlacement placement =
-            TaskbarPlacement::FindWeatherWidgetPlacement(sz);
+            GetWeatherPlacement(sz);
+        if (waitForProbe && m_weatherMetrics.hTaskbar && m_weatherProbeState->inFlight) return;
 
         const POINT pos = placement.dockPosition;
         m_collapsedLocation = pos;
@@ -674,7 +656,72 @@ namespace CodexQuotaBar {
         RenderLayeredWindow();
         DwmFlush();
 
-        ConfigStore::SavePosition(m_collapsedLocation);
+        if (!m_weatherLayoutPending && !m_weatherProbeState->inFlight) {
+            ConfigStore::SavePosition(m_collapsedLocation);
+        }
+    }
+
+    void MainWindow::ScheduleWeatherLayout() {
+        InvalidateWeatherProbe();
+        if (!IsWeatherDockActive()) return;
+        m_weatherLayoutPending = SetTimer(m_hwnd, TIMER_WEATHER_LAYOUT_ID, 120, nullptr) != 0;
+        if (!m_weatherLayoutPending) DockToWeatherWidget(true);
+    }
+
+    void MainWindow::InvalidateWeatherProbe() {
+        ++m_weatherGeneration;
+        m_weatherProbeNeeded = true;
+        m_weatherWidgetRect.reset();
+    }
+
+    WeatherWidgetPlacement MainWindow::GetWeatherPlacement(SIZE size) {
+        RECT window = {};
+        GetWindowRect(m_hwnd, &window);
+        const POINT center = { window.left + (window.right - window.left) / 2,
+                               window.top + (window.bottom - window.top) / 2 };
+        const TaskbarMetrics metrics = TaskbarPlacement::GetTaskbarMetrics(center, m_dpiScale);
+        if (metrics.hTaskbar != m_weatherMetrics.hTaskbar ||
+            metrics.dpiScale != m_weatherMetrics.dpiScale ||
+            !EqualRect(&metrics.taskbarRect, &m_weatherMetrics.taskbarRect) ||
+            !EqualRect(&metrics.monitorRect, &m_weatherMetrics.monitorRect)) {
+            InvalidateWeatherProbe();
+        }
+        m_weatherMetrics = metrics;
+        auto state = m_weatherProbeState;
+        if (metrics.hTaskbar && m_weatherProbeNeeded && !state->canceled &&
+            !state->inFlight.exchange(true)) {
+            try {
+                const HWND hwnd = m_hwnd;
+                const auto generation = m_weatherGeneration;
+                m_weatherWorker.Submit([state, hwnd, metrics, generation](std::stop_token stop) {
+                    const auto rect = TaskbarPlacement::ProbeWeatherWidget(metrics, stop);
+                    const std::lock_guard<std::mutex> lock(state->mutex);
+                    if (state->canceled) return;
+                    state->generation = generation;
+                    state->result = rect;
+                    if (!PostMessageW(hwnd, WM_CQB_WEATHER_RESULT, 0, 0)) {
+                        state->inFlight = false;
+                    }
+                });
+                m_weatherProbeNeeded = false;
+            } catch (const std::system_error&) {
+                state->inFlight = false;
+            }
+        }
+        return TaskbarPlacement::FindWeatherWidgetPlacement(size, metrics, m_weatherWidgetRect);
+    }
+
+    void MainWindow::HandleWeatherProbeResult() {
+        {
+            const std::lock_guard<std::mutex> lock(m_weatherProbeState->mutex);
+            if (m_weatherProbeState->generation == m_weatherGeneration) {
+                m_weatherWidgetRect = m_weatherProbeState->result;
+            }
+            m_weatherProbeState->inFlight = false;
+        }
+        if (IsWeatherDockActive() && !m_dragging && !m_weatherLayoutPending) {
+            DockToWeatherWidget(true);
+        }
     }
 
     void MainWindow::ToggleCompanionMode() {
@@ -715,10 +762,15 @@ namespace CodexQuotaBar {
         if (state->canceled.load() || state->inFlight.exchange(true)) return;
         const HWND hwnd = m_hwnd.load();
         try {
-            std::thread([state, hwnd]() {
-                const DesktopProcessState processState =
-                    CompanionMode::ProbeDesktopState();
-                if (state->canceled.load() ||
+            m_companionWorker.Submit([state, hwnd](std::stop_token stop) {
+                auto processState = DesktopProcessState::QueryFailed;
+                try {
+                    processState = CompanionMode::ProbeDesktopState();
+                } catch (...) {
+                    WriteLog(LogLevel::Warning, L"伴随模式探测失败。");
+                }
+                const std::lock_guard<std::mutex> lock(state->mutex);
+                if (stop.stop_requested() || state->canceled.load() ||
                     !PostMessageW(
                         hwnd,
                         WM_CQB_COMPANION_RESULT,
@@ -726,7 +778,7 @@ namespace CodexQuotaBar {
                         0)) {
                     state->inFlight = false;
                 }
-            }).detach();
+            });
         } catch (const std::system_error&) {
             state->inFlight = false;
             WriteLog(LogLevel::Warning, L"伴随模式检测线程创建失败。");
@@ -848,7 +900,12 @@ namespace CodexQuotaBar {
         POINT clamped = pt;
 
         // 2. 找到与目标窗口矩形相交面积最大或最近的基准显示器
-        RECT targetRect = { pt.x, pt.y, pt.x + sz.cx, pt.y + sz.cy };
+        const auto farEdge = [](LONG origin, LONG extent) {
+            const auto edge = static_cast<long long>(origin) + extent;
+            return static_cast<LONG>((std::min)(
+                edge, static_cast<long long>((std::numeric_limits<LONG>::max)())));
+        };
+        RECT targetRect = { pt.x, pt.y, farEdge(pt.x, sz.cx), farEdge(pt.y, sz.cy) };
         HMONITOR hMon = MonitorFromRect(&targetRect, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         if (!hMon || !GetMonitorInfoW(hMon, &mi)) {
@@ -857,21 +914,15 @@ namespace CodexQuotaBar {
         }
         const RECT curWork = useMonitorBounds ? mi.rcMonitor : mi.rcWork;
 
+        // Once a drag ends, keep the whole window on one work area. The
+        // bounding rectangle of offset monitors contains invisible gaps.
+        if (!m_dragging || workAreas.size() == 1) {
+            return TaskbarPlacement::ClampToMonitorBounds(pt, sz, curWork);
+        }
+
         // 3. 跨显示器边界检查：
         // 只有当窗口向某一方向超出当前显示器工作区，且该方向没有相邻显示器工作区可接纳时，
         // 才钳制到当前显示器边界。存在相邻显示器时，允许平滑越过边界，仅受全局虚拟屏幕限制。
-        if (workAreas.size() == 1) {
-            // 单显示器直接钳制到该工作区
-            if (clamped.x < curWork.left) clamped.x = curWork.left;
-            if (clamped.x + sz.cx > curWork.right) clamped.x = curWork.right - sz.cx;
-            if (clamped.x < curWork.left) clamped.x = curWork.left;
-
-            if (clamped.y < curWork.top) clamped.y = curWork.top;
-            if (clamped.y + sz.cy > curWork.bottom) clamped.y = curWork.bottom - sz.cy;
-            if (clamped.y < curWork.top) clamped.y = curWork.top;
-            return clamped;
-        }
-
         // 多显示器：检查右侧
         if (clamped.x + sz.cx > curWork.right) {
             bool hasRightNeighbor = false;
@@ -1084,18 +1135,23 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::BeginShutdown() {
-        m_shuttingDown = true;
+        if (m_shuttingDown.exchange(true)) return;
+        {
+            const std::lock_guard<std::mutex> lock(m_weatherProbeState->mutex);
+            m_weatherProbeState->canceled = true;
+        }
         if (m_fetchState) {
             m_fetchState->canceled = true;
             const std::lock_guard<std::mutex> lock(m_fetchState->mutex);
             m_fetchState->pending.reset();
         }
         if (m_companionPollState) {
+            const std::lock_guard<std::mutex> lock(m_companionPollState->mutex);
             m_companionPollState->canceled = true;
         }
-        if (m_fetchThread.joinable()) {
-            m_fetchThread.detach();
-        }
+        m_fetchWorker.RequestStop();
+        m_companionWorker.RequestStop();
+        m_weatherWorker.RequestStop();
     }
 
     void MainWindow::RefreshQuota() {
@@ -1106,25 +1162,24 @@ namespace CodexQuotaBar {
         }
 
         m_syncState = SyncState::Syncing;
-        InvalidateRect(m_hwnd, NULL, FALSE);
-
-        if (m_fetchThread.joinable()) {
-            m_fetchThread.join();
-        }
+        if (IsWindowVisible(m_hwnd)) RenderLayeredWindow();
 
         HWND hwnd = m_hwnd;
         auto fetchState = m_fetchState;
 
         try {
-            m_fetchThread = std::thread([hwnd, fetchState]() {
-                QuotaSnapshot snap = CodexClient::FetchSnapshot();
-                {
-                    const std::lock_guard<std::mutex> lock(fetchState->mutex);
-                    if (fetchState->canceled.load()) return;
-                    fetchState->pending = std::move(snap);
+            m_fetchWorker.Submit([hwnd, fetchState](std::stop_token stop) {
+                QuotaSnapshot snap;
+                try {
+                    snap = CodexClient::FetchSnapshot(stop);
+                } catch (...) {
+                    WriteLog(LogLevel::Error, L"额度同步失败。");
                 }
+                if (stop.stop_requested()) return;
+                const std::lock_guard<std::mutex> lock(fetchState->mutex);
+                if (fetchState->canceled.load()) return;
+                fetchState->pending = std::move(snap);
                 if (!PostMessageW(hwnd, WM_CQB_QUOTA_RESULT, 0, 0)) {
-                    const std::lock_guard<std::mutex> lock(fetchState->mutex);
                     fetchState->pending.reset();
                     fetchState->inFlight = false;
                 }
@@ -1133,15 +1188,15 @@ namespace CodexQuotaBar {
             m_fetchState->inFlight = false;
             m_syncState = SyncState::Failed;
             WriteLog(LogLevel::Error, L"额度同步线程创建失败。");
-            InvalidateRect(m_hwnd, NULL, FALSE);
+            if (IsWindowVisible(m_hwnd)) RenderLayeredWindow();
         }
     }
 
     bool MainWindow::IsHeaderArea(POINT pt) const {
         const int headerHeight = m_settings.miniMode && !m_expanded
             ? MiniBarPhysicalHeight(m_uiScale)
-            : ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
-        return pt.y >= 0 && pt.y < headerHeight;
+            : ScaleEven(m_expanded ? 24.0f : static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
+        return pt.x >= 0 && pt.x < PhysicalWindowSize().cx && pt.y >= 0 && pt.y < headerHeight;
     }
 
     bool MainWindow::IsExpandButtonArea(POINT pt) const {
@@ -1257,6 +1312,9 @@ namespace CodexQuotaBar {
                 m_dragStartScale = m_uiScale;
                 SetCapture(m_hwnd);
                 m_dragging = GetCapture() == m_hwnd;
+                if (m_dragging && m_settings.miniMode && !m_expanded) {
+                    GetWeatherPlacement(PhysicalWindowSize());
+                }
                 return 0;
             }
             break;
@@ -1275,7 +1333,20 @@ namespace CodexQuotaBar {
                 m_lastDragCursor = cursor;
                 const SIZE sz = PhysicalWindowSize();
                 const bool allowTaskbar = m_settings.miniMode && !m_expanded;
-                const POINT clamped = ClampToScreens(DragWindowPosition(cursor, m_uiScale), sz, allowTaskbar);
+                const POINT target = DragWindowPosition(cursor, m_uiScale);
+                POINT clamped = ClampToScreens(target, sz, allowTaskbar);
+                const RECT proposed = { clamped.x, clamped.y, clamped.x + sz.cx, clamped.y + sz.cy };
+                const HMONITOR current = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+                const HMONITOR next = MonitorFromRect(&proposed, MONITOR_DEFAULTTONEAREST);
+                if (current != next) {
+                    MONITORINFO oldMonitor = { sizeof(oldMonitor) };
+                    MONITORINFO newMonitor = { sizeof(newMonitor) };
+                    if (GetMonitorInfoW(current, &oldMonitor) && GetMonitorInfoW(next, &newMonitor)) {
+                        clamped = TaskbarPlacement::HoldAtMonitorSeam(
+                            clamped, sz, oldMonitor.rcMonitor, newMonitor.rcMonitor,
+                            Scale(16.0f, m_dpiScale));
+                    }
+                }
                 SetWindowPos(m_hwnd, NULL,
                     clamped.x,
                     clamped.y,
@@ -1295,10 +1366,9 @@ namespace CodexQuotaBar {
                 const SIZE sz = PhysicalWindowSize();
 
                 if (m_settings.miniMode && !m_expanded) {
-                    const WeatherWidgetPlacement placement =
-                        TaskbarPlacement::FindWeatherWidgetPlacement(sz);
-                    const int snapThreshold = ScaleEven(24.0f, m_dpiScale);
-                    const bool snapped = TaskbarPlacement::IsNearDockPosition(
+                    const WeatherWidgetPlacement placement = GetWeatherPlacement(sz);
+                    const int snapThreshold = ScaleEven(24.0f, m_weatherMetrics.dpiScale);
+                    const bool snapped = m_weatherMetrics.hTaskbar && TaskbarPlacement::IsNearDockPosition(
                         POINT{ rc.left, rc.top }, placement.dockPosition, snapThreshold);
 
                     if (snapped != m_settings.dockToWeather && SetWeatherDocked(snapped)) {
@@ -1339,9 +1409,16 @@ namespace CodexQuotaBar {
         }
 
         case WM_CONTEXTMENU: {
-            POINT pt;
-            GetCursorPos(&pt);
+            if (m_contextMenuOpen || m_dragging) return 0;
+            POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (lParam == -1) {
+                // Keyboard context-menu requests do not include a screen position.
+                pt = { 0, 0 };
+                if (!ClientToScreen(m_hwnd, &pt)) return 0;
+            }
+            m_contextMenuOpen = true;
             HandleContextMenu(pt.x, pt.y);
+            m_contextMenuOpen = false;
             return 0;
         }
 
@@ -1381,8 +1458,6 @@ namespace CodexQuotaBar {
                     }
                 } else if (IsWindowVisible(m_hwnd)) {
                     RenderLayeredWindow();
-                } else {
-                    InvalidateRect(m_hwnd, NULL, FALSE);
                 }
             }
             m_fetchState->inFlight = false;
@@ -1394,6 +1469,10 @@ namespace CodexQuotaBar {
 
         case WM_CQB_COMPANION_RESULT:
             HandleCompanionResult(static_cast<DesktopProcessState>(wParam));
+            return 0;
+
+        case WM_CQB_WEATHER_RESULT:
+            HandleWeatherProbeResult();
             return 0;
 
         case WM_GETDPISCALEDSIZE: {
@@ -1409,19 +1488,13 @@ namespace CodexQuotaBar {
             return 0;
 
         case WM_DISPLAYCHANGE:
-            if (IsWeatherDockActive()) {
-                DockToWeatherWidget();
-            } else {
-                SyncWindowPosition(false);
-            }
+            ScheduleWeatherLayout();
+            if (!IsWeatherDockActive()) SyncWindowPosition(false);
             break;
 
         case WM_SETTINGCHANGE:
-            if (IsWeatherDockActive()) {
-                DockToWeatherWidget();
-            } else if (wParam == SPI_SETWORKAREA) {
-                SyncWindowPosition(false);
-            }
+            ScheduleWeatherLayout();
+            if (!IsWeatherDockActive() && wParam == SPI_SETWORKAREA) SyncWindowPosition(false);
             break;
 
         case WM_TIMER:
@@ -1431,15 +1504,25 @@ namespace CodexQuotaBar {
                 }
             } else if (wParam == TIMER_COMPANION_ID) {
                 PollCompanionMode();
+            } else if (wParam == TIMER_RENDER_RETRY_ID) {
+                KillTimer(m_hwnd, TIMER_RENDER_RETRY_ID);
+                if (IsWindowVisible(m_hwnd)) RenderLayeredWindow();
+            } else if (wParam == TIMER_WEATHER_LAYOUT_ID) {
+                KillTimer(m_hwnd, TIMER_WEATHER_LAYOUT_ID);
+                m_weatherLayoutPending = false;
+                DockToWeatherWidget(true);
             }
             return 0;
 
         case WM_CLOSE:
+            BeginShutdown();
             DestroyWindow(m_hwnd);
             return 0;
 
         case WM_DESTROY:
-            if (m_hasCollapsedLocation) {
+            BeginShutdown();
+            if (m_hasCollapsedLocation && (!IsWeatherDockActive() ||
+                (!m_weatherLayoutPending && !m_weatherProbeState->inFlight))) {
                 ConfigStore::SavePosition(m_collapsedLocation);
             }
             PostQuitMessage(0);
@@ -1455,9 +1538,7 @@ namespace CodexQuotaBar {
 
         default:
             if (m_wmTaskbarCreated != 0 && msg == m_wmTaskbarCreated) {
-                if (IsWeatherDockActive()) {
-                    DockToWeatherWidget();
-                }
+                ScheduleWeatherLayout();
                 return 0;
             }
             break;
@@ -1479,6 +1560,7 @@ namespace CodexQuotaBar {
             m_expanded, m_settings.miniMode, m_snapshot, m_syncState);
         if (SUCCEEDED(hr)) {
             m_renderFailureCount = 0;
+            KillTimer(m_hwnd, TIMER_RENDER_RETRY_ID);
             ValidateRect(m_hwnd, NULL);
             return hr;
         }
@@ -1493,7 +1575,7 @@ namespace CodexQuotaBar {
                 m_renderFailureCount,
                 kRenderRetryLimit);
             WriteLog(LogLevel::Warning, message);
-            InvalidateRect(m_hwnd, NULL, FALSE);
+            if (IsWindowVisible(m_hwnd)) SetTimer(m_hwnd, TIMER_RENDER_RETRY_ID, 100, nullptr);
         } else if (m_renderFailureCount == kRenderRetryLimit + 1) {
             WriteLog(LogLevel::Error, L"分层窗口连续渲染失败，已停止自动重试。");
         }

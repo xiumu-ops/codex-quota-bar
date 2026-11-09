@@ -5,6 +5,8 @@
 #include "Core/Models.h"
 #include "Core/ConfigStore.h"
 #include "Core/Settings.h"
+#include "Core/Worker.h"
+#include "UI/TaskbarPlacement.h"
 
 #include <atomic>
 #include <memory>
@@ -23,6 +25,7 @@ namespace CodexQuotaBar {
     constexpr UINT WM_CQB_TOGGLE = WM_APP + 6;
     constexpr UINT WM_CQB_QUOTA_RESULT = WM_APP + 7; // 数据从共享抓取状态读取
     constexpr UINT WM_CQB_COMPANION_RESULT = WM_APP + 8;
+    constexpr UINT WM_CQB_WEATHER_RESULT = WM_APP + 9;
 
     class MainWindow {
     public:
@@ -56,7 +59,11 @@ namespace CodexQuotaBar {
         void ToggleExpanded();
         void ToggleMiniMode();
         bool SetWeatherDocked(bool enabled);
-        void DockToWeatherWidget();
+        void DockToWeatherWidget(bool waitForProbe = false);
+        WeatherWidgetPlacement GetWeatherPlacement(SIZE size);
+        void InvalidateWeatherProbe();
+        void ScheduleWeatherLayout();
+        void HandleWeatherProbeResult();
         bool IsWeatherDockActive() const;
         void ApplyWindowZOrder();
         void RefreshQuota();
@@ -86,6 +93,15 @@ namespace CodexQuotaBar {
         };
 
         struct CompanionPollState {
+            std::mutex mutex;
+            std::atomic<bool> canceled{ false };
+            std::atomic<bool> inFlight{ false };
+        };
+
+        struct WeatherProbeState {
+            std::mutex mutex;
+            std::optional<RECT> result;
+            unsigned int generation = 0;
             std::atomic<bool> canceled{ false };
             std::atomic<bool> inFlight{ false };
         };
@@ -104,6 +120,7 @@ namespace CodexQuotaBar {
         int m_renderFailureCount = 0;
 
         bool m_expanded = false;
+        bool m_contextMenuOpen = false;
         POINT m_collapsedLocation = { 0, 0 };
         bool m_hasCollapsedLocation = false;
 
@@ -111,10 +128,19 @@ namespace CodexQuotaBar {
         std::atomic<bool> m_shuttingDown{ false };
         // 在途抓取期间收到的新刷新请求合并为一次补抓，本轮结束后自动再抓一轮
         std::atomic<bool> m_refreshQueued{ false };
-        std::thread m_fetchThread;
+        Worker m_fetchWorker;
+        Worker m_companionWorker;
+        Worker m_weatherWorker;
         std::shared_ptr<FetchResultState> m_fetchState = std::make_shared<FetchResultState>();
         std::shared_ptr<CompanionPollState> m_companionPollState =
             std::make_shared<CompanionPollState>();
+        std::shared_ptr<WeatherProbeState> m_weatherProbeState =
+            std::make_shared<WeatherProbeState>();
+        TaskbarMetrics m_weatherMetrics;
+        std::optional<RECT> m_weatherWidgetRect;
+        unsigned int m_weatherGeneration = 0;
+        bool m_weatherProbeNeeded = true;
+        bool m_weatherLayoutPending = false;
 
         // 手动拖拽状态（取代 HTCAPTION 模态循环，保留双击刷新）
         bool m_dragging = false;

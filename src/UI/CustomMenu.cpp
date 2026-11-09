@@ -10,6 +10,7 @@ namespace CodexQuotaBar {
     namespace {
 
         constexpr UINT WM_CQB_MENU_END = WM_APP + 20;
+        thread_local HWND activeMenu = nullptr;
 
         struct MenuRow {
             RECT rect{};
@@ -20,7 +21,9 @@ namespace CodexQuotaBar {
             std::vector<MenuRow> rows;
             std::vector<int> ids;
             int hover = -1;
+            int pressedRow = -1;
             int result = 0;
+            bool tracking = false;
             float dpiScale = 1.0f;
             ThemePalette palette;
 
@@ -136,6 +139,22 @@ namespace CodexQuotaBar {
             return SUCCEEDED(hr);
         }
 
+        int HitMenuRow(const MenuPopupState& state, LPARAM lParam) {
+            const POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            for (size_t i = 0; i < state.rows.size(); ++i) {
+                const auto& row = state.rows[i];
+                if (!row.text.empty() && PtInRect(&row.rect, pt)) return static_cast<int>(i);
+            }
+            return -1;
+        }
+
+        void FinishMenu(HWND hwnd, MenuPopupState* state, int result = 0) {
+            if (!state || !state->tracking) return;
+            state->tracking = false;
+            state->result = result;
+            PostMessageW(hwnd, WM_CQB_MENU_END, 0, 0);
+        }
+
         LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (msg == WM_NCCREATE) {
                 CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
@@ -164,15 +183,8 @@ namespace CodexQuotaBar {
             }
 
             case WM_MOUSEMOVE: {
-                if (!st) break;
-                POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-                int newHover = -1;
-                for (size_t i = 0; i < st->rows.size(); ++i) {
-                    if (!st->rows[i].text.empty() && PtInRect(&st->rows[i].rect, pt)) {
-                        newHover = static_cast<int>(i);
-                        break;
-                    }
-                }
+                if (!st || !st->tracking) break;
+                const int newHover = HitMenuRow(*st, lParam);
                 if (newHover != st->hover) {
                     st->hover = newHover;
                     InvalidateRect(hwnd, NULL, FALSE);
@@ -180,34 +192,37 @@ namespace CodexQuotaBar {
                 return 0;
             }
 
-            case WM_LBUTTONDOWN: {
-                if (st) {
-                    POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-                    for (size_t i = 0; i < st->rows.size(); ++i) {
-                        if (!st->rows[i].text.empty() && PtInRect(&st->rows[i].rect, pt)) {
-                            st->result = st->ids[i];
-                            break;
-                        }
-                    }
+            case WM_LBUTTONDOWN:
+                if (st && st->tracking) {
+                    st->pressedRow = HitMenuRow(*st, lParam);
+                    if (st->pressedRow < 0) FinishMenu(hwnd, st);
                 }
-                PostMessageW(hwnd, WM_CQB_MENU_END, 0, 0);
+                return 0;
+
+            case WM_LBUTTONUP: {
+                if (!st || !st->tracking) return 0;
+                const int row = HitMenuRow(*st, lParam);
+                if (row >= 0 && row == st->pressedRow) {
+                    FinishMenu(hwnd, st, st->ids[static_cast<size_t>(row)]);
+                }
+                st->pressedRow = -1;
                 return 0;
             }
 
             case WM_RBUTTONDOWN:
             case WM_MBUTTONDOWN:
-                PostMessageW(hwnd, WM_CQB_MENU_END, 0, 0);
+            case WM_CANCELMODE:
+            case WM_CAPTURECHANGED:
+            case WM_CLOSE:
+                FinishMenu(hwnd, st);
                 return 0;
 
-            case WM_CAPTURECHANGED:
-            case WM_KILLFOCUS:
-                PostMessageW(hwnd, WM_CQB_MENU_END, 0, 0);
-                return 0;
+            case WM_ACTIVATE:
+                if (LOWORD(wParam) == WA_INACTIVE) FinishMenu(hwnd, st);
+                break; // DefWindowProc assigns keyboard focus on activation.
 
             case WM_KEYDOWN:
-                if (wParam == VK_ESCAPE) {
-                    PostMessageW(hwnd, WM_CQB_MENU_END, 0, 0);
-                }
+                if (wParam == VK_ESCAPE) FinishMenu(hwnd, st);
                 return 0;
             }
 
@@ -215,6 +230,14 @@ namespace CodexQuotaBar {
         }
 
     } // namespace
+
+    void CustomMenu::Dismiss(HWND owner) {
+        const HWND hwnd = activeMenu;
+        if (!hwnd || GetWindow(hwnd, GW_OWNER) != owner) return;
+        SendMessageW(hwnd, WM_CLOSE, 0, 0);
+        if (GetCapture() == hwnd) ReleaseCapture();
+        ShowWindow(hwnd, SW_HIDE);
+    }
 
     int CustomMenu::Show(
         HWND owner,
@@ -225,6 +248,7 @@ namespace CodexQuotaBar {
         const ThemePalette& palette,
         const std::wstring& fontFamily)
     {
+        if (activeMenu) return 0;
         MenuPopupState st;
         st.dpiScale = dpiScale;
         st.palette = palette;
@@ -316,10 +340,16 @@ namespace CodexQuotaBar {
 
         ApplyPopupWindowEffects(hwnd);
 
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        UpdateWindow(hwnd);
+        // Activation can cancel mouse capture. Finish it before tracking starts.
+        ShowWindow(hwnd, SW_SHOW);
+        if (GetActiveWindow() != hwnd) {
+            DestroyWindow(hwnd);
+            return 0;
+        }
         SetCapture(hwnd);
-        SetFocus(hwnd);
+        st.tracking = true;
+        activeMenu = hwnd;
+        UpdateWindow(hwnd);
 
         // 4. 模态循环
         MSG msg = {};
@@ -328,8 +358,10 @@ namespace CodexQuotaBar {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        st.tracking = false;
+        activeMenu = nullptr;
         if (GetCapture() == hwnd) ReleaseCapture();
-        DestroyWindow(hwnd);
+        if (IsWindow(hwnd)) DestroyWindow(hwnd);
 
         if (msg.message == WM_QUIT) {
             PostQuitMessage(static_cast<int>(msg.wParam));

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 
 using CodexQuotaBar::CodexClient;
 using CodexQuotaBar::CompanionMode;
@@ -157,6 +158,19 @@ int wmain(int argc, wchar_t** argv) {
         std::chrono::steady_clock::now() - hangStarted);
     Expect(hung.success, "response is preserved when App Server does not exit after EOF");
     Expect(hangElapsed.count() < 5000, "hung App Server is cleaned up within a bounded time");
+
+    std::cout << "App Server cancellation\n";
+    _wputenv_s(L"CODEX_QUOTA_FAKE_SCENARIO", L"hang_before_initialize");
+    QuotaSnapshot canceled;
+    std::jthread fetcher([&](std::stop_token stop) {
+        canceled = CodexClient::FetchSnapshot(stop);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const auto stopStarted = std::chrono::steady_clock::now();
+    fetcher.request_stop();
+    fetcher.join();
+    Expect(!canceled.success && std::chrono::steady_clock::now() - stopStarted < std::chrono::seconds(2),
+           "canceling a blocked quota fetch stops the child process promptly");
 
     _wputenv_s(L"CODEX_QUOTA_FAKE_SCENARIO", L"");
     _wputenv_s(L"CODEX_QUOTA_CODEX_PATH", L"");

@@ -88,6 +88,10 @@ namespace CodexQuotaBar {
             static_cast<float>(MINI_SINGLE_WIDTH), uiScale));
     }
 
+    inline float MiniDividerPhysicalWidth(const MiniBarMetrics& metrics) {
+        return static_cast<float>((std::max)(2, ScaleEven(metrics.dividerThickness, 1.0f)));
+    }
+
     inline float MiniDividerHeight(int physicalHeight, const MiniBarMetrics& metrics) {
         const float pillHeight = (std::max)(
             0.0f,

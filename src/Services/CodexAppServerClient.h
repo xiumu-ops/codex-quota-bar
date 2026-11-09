@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <stop_token>
 
 namespace CodexQuotaBar {
 
@@ -13,7 +14,8 @@ namespace CodexQuotaBar {
             std::wstring& rateLimitsResponseJson,
             std::wstring& usageResponseJson,
             std::wstring& usageErrorMessage,
-            std::wstring& errorMessage);
+            std::wstring& errorMessage,
+            std::stop_token stop = {});
     };
 
 } // namespace CodexQuotaBar

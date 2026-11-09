@@ -14,6 +14,8 @@ namespace CodexQuotaBar {
 
     class CustomMenu {
     public:
+        static void Dismiss(HWND owner);
+
         // 弹出自绘菜单并模态跟踪，返回选中的命令 id（取消返回 0）
         static int Show(
             HWND owner,

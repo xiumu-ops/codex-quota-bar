@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cwchar>
+#include <utility>
 
 namespace CodexQuotaBar {
 
@@ -51,7 +52,8 @@ namespace CodexQuotaBar {
             D2D1_CAP_STYLE_ROUND,
             D2D1_CAP_STYLE_ROUND,
             D2D1_LINE_JOIN_ROUND);
-        m_pD2DFactory->CreateStrokeStyle(&strokeProps, nullptr, 0, &m_pRoundStrokeStyle);
+        hr = m_pD2DFactory->CreateStrokeStyle(&strokeProps, nullptr, 0, &m_pRoundStrokeStyle);
+        if (FAILED(hr)) return hr;
 
         hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &m_pDWriteFactory);
         if (FAILED(hr)) return hr;
@@ -156,7 +158,7 @@ namespace CodexQuotaBar {
         if (!m_pDWriteFactory) return;
 
         const wchar_t* fontFamily = m_fontFamily.c_str();
-        float s = m_dpiScale;
+        const float s = m_dpiScale;
 
         auto createSingleLineFormat = [&](
             DWRITE_FONT_WEIGHT weight,
@@ -179,8 +181,29 @@ namespace CodexQuotaBar {
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 16.0f, m_pFontRowValue);
         // 右侧百分比数值：16px 粗体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontRowValueBold);
-        // 迷你模式百分比文字：16px 粗体（偶数字号，具体行距与基线在 DrawMiniQuotaSlot 动态绑定胶囊槽物理高度）
+        // Both mini slots share a fixed number field sized for the narrowest (dual) layout.
         createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontMiniValue);
+        const MiniBarMetrics miniMetrics = ScaledMiniBarMetrics(
+            s, WindowOuterCornerRadius(m_monitorDpiScale));
+        const float miniSlotWidth = static_cast<float>(Scale(static_cast<float>(MINI_SINGLE_WIDTH), s)) -
+                                    2.0f * miniMetrics.contentInset - MiniDividerPhysicalWidth(miniMetrics) / 2.0f;
+        const float miniAvailable = (std::max)(1.0f, miniSlotWidth - 1.0f);
+        auto* miniFormat = m_pFontMiniValue.Get();
+        float widestDigit = 0.0f;
+        for (wchar_t digit = L'0'; digit <= L'9'; ++digit) {
+            widestDigit = (std::max)(widestDigit, MeasureTextWidth(std::wstring(1, digit), miniFormat));
+        }
+        const float requiredWidth = (std::max)({
+            MeasureTextWidth(L"100%", miniFormat),
+            2.0f * widestDigit + MeasureTextWidth(L"%", miniFormat),
+            MeasureTextWidth(L"---", miniFormat)
+        });
+        m_miniValueWidth = (std::min)(miniAvailable, std::ceil(requiredWidth));
+        if (requiredWidth > miniAvailable) {
+            ComPtr<IDWriteTextFormat> fitted;
+            createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f * miniAvailable / requiredWidth, fitted);
+            if (fitted) m_pFontMiniValue = std::move(fitted);
+        }
         // 常驻卡片底部说明文本：12px 常规体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, m_pFontFooter);
         // 统计子卡片数值（加粗）：16px 粗体
@@ -445,12 +468,12 @@ namespace CodexQuotaBar {
                 w - strokeInset, h - strokeInset),
             strokeRadius, strokeRadius);
         m_pRenderTarget->DrawRoundedRectangle(
-            outer, m_pBrushBorder.Get(), strokeWidth);
+            outer, m_pBrushBorder.Get(), strokeWidth, m_pRoundStrokeStyle.Get());
 
         hr = m_pRenderTarget->EndDraw();
-        if (hr == D2DERR_RECREATE_TARGET) {
+        if (FAILED(hr)) {
             DiscardDeviceResources();
-        } else if (SUCCEEDED(hr)) {
+        } else {
             hr = PresentLayeredWindow();
             if (FAILED(hr)) {
                 DiscardDeviceResources();
@@ -483,7 +506,7 @@ namespace CodexQuotaBar {
             DrawMiniQuotaSlot(pillLeft, pillTop, pillRight, pillBottom, pillRadius, *windows[0]);
         } else if (count == 2) {
             const float centerX = std::round(w * 0.5f);
-            const float divThick = (std::max)(2.0f, static_cast<float>(SnapEven(Scale(metrics.dividerThickness, 1.0f))));
+            const float divThick = MiniDividerPhysicalWidth(metrics);
             const float divHalf = divThick * 0.5f;
             const float divLeft = centerX - divHalf;
             const float divRight = centerX + divHalf;
@@ -562,15 +585,21 @@ namespace CodexQuotaBar {
                 DWRITE_LINE_SPACING_METHOD_UNIFORM,
                 pillH,
                 baseline);
-            m_pFontMiniValue->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_pFontMiniValue->SetTextAlignment(window.available
+                ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_CENTER);
             m_pFontMiniValue->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            const D2D1_RECT_F textRect = D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom);
+            const float textRight = window.available
+                ? (std::min)(pillRight, std::round((pillLeft + pillRight + m_miniValueWidth) / 2.0f))
+                : pillRight;
+            const D2D1_RECT_F textRect = D2D1::RectF(pillLeft, pillTop, textRight, pillBottom);
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
+            m_pRenderTarget->PushAxisAlignedClip(pillRect.rect, D2D1_ANTIALIAS_MODE_ALIASED);
             m_pRenderTarget->DrawTextW(
                 value.c_str(), static_cast<UINT32>(value.size()),
                 m_pFontMiniValue.Get(), textRect, brush);
+            m_pRenderTarget->PopAxisAlignedClip();
         }
     }
 
@@ -882,7 +911,8 @@ namespace CodexQuotaBar {
         const D2D1_ROUNDED_RECT strokeRect = D2D1::RoundedRect(
             D2D1::RectF(left + inset, top + inset, left + width - inset, top + height - inset),
             (std::max)(0.0f, corner - inset), (std::max)(0.0f, corner - inset));
-        m_pRenderTarget->DrawRoundedRectangle(strokeRect, m_pBrushStatsCardBorder.Get(), strokeWidth);
+        m_pRenderTarget->DrawRoundedRectangle(
+            strokeRect, m_pBrushStatsCardBorder.Get(), strokeWidth, m_pRoundStrokeStyle.Get());
     }
 
     void Direct2DRenderer::DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot) {

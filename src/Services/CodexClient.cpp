@@ -288,13 +288,13 @@ namespace CodexQuotaBar {
         return snap;
     }
 
-    QuotaSnapshot CodexClient::FetchSnapshot() {
+    QuotaSnapshot CodexClient::FetchSnapshot(std::stop_token stop) {
         std::wstring response;
         std::wstring usageResponse;
         std::wstring usageError;
         std::wstring error;
         if (CodexAppServerClient::ReadAccountData(
-                response, usageResponse, usageError, error)) {
+                response, usageResponse, usageError, error, stop)) {
             QuotaSnapshot snapshot = ParseRateLimits(response);
             const bool quotaSuccess = snapshot.success;
             const bool statsSuccess = ParseAccountUsage(usageResponse, snapshot.stats);

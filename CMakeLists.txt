@@ -18,6 +18,8 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CORE_HEADERS
     src/Core/Appearance.h
     src/Core/Constants.h
+    src/Core/WinHandle.h
+    src/Core/Worker.h
     src/Core/DpiHelper.h
     src/Core/Layout.h
     src/Core/Models.h
@@ -64,6 +66,7 @@ set(SERVICES_HEADERS
     src/Services/CodexAppServerClient.h
     src/Services/CompanionMode.h
     src/Services/PipeServer.h
+    src/Services/PipeClient.h
 )
 
 set(SERVICES_SOURCES

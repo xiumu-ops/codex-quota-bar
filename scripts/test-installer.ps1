@@ -37,16 +37,24 @@ if ($preexistingState.Count -gt 0) {
     throw "The GitHub runner contains pre-existing installer state: $($preexistingState -join ', ')"
 }
 
-function Assert-UninstallComplete([string]$targetAppDir) {
+function Assert-UninstallComplete([string]$targetAppDir, [string]$preservedFile) {
     $targetUninstaller = Join-Path $targetAppDir "Uninstall.exe"
     $uninstall = Start-Process -FilePath $targetUninstaller -ArgumentList '/quiet' -Wait -PassThru
-    if ($uninstall.ExitCode -notin 0, 3010) {
+    if ($uninstall.ExitCode -ne 0) {
         throw "Uninstaller exited with code $($uninstall.ExitCode)."
     }
-    foreach ($target in $targetAppDir, $uninstallRegistry, $shortcut) {
+    foreach ($target in $targetUninstaller, (Join-Path $targetAppDir "Codex-Quota-Bar.exe"),
+             (Join-Path $targetAppDir "config-default.json"), $uninstallRegistry, $shortcut) {
         if (Test-Path -LiteralPath $target) {
             throw "Uninstall left behind: $target"
         }
+    }
+    if ($preservedFile) {
+        if (-not (Test-Path -LiteralPath $preservedFile -PathType Leaf)) {
+            throw "Uninstall removed a file it did not install: $preservedFile"
+        }
+    } elseif (Test-Path -LiteralPath $targetAppDir) {
+        throw "Uninstall left an empty app directory: $targetAppDir"
     }
 }
 
@@ -114,10 +122,48 @@ try {
     if ($setup.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $customApp "Uninstall.exe"))) {
         throw "Custom-location installer did not create the expected payload."
     }
+    $customUninstaller = Join-Path $customApp "Uninstall.exe"
+    $customExe = Join-Path $customApp "Codex-Quota-Bar.exe"
+    $customConfig = Join-Path $customApp "config-default.json"
+    $otherData = Join-Path $env:RUNNER_TEMP "data outside the installation"
+    New-Item -ItemType Directory -Path $otherData | Out-Null
+    $otherMarker = Join-Path $otherData "outside-marker.txt"
+    Set-Content -LiteralPath $otherMarker -Value "preserve outside data"
+    New-Item -ItemType Junction -Path $customData -Target $otherData | Out-Null
+    try {
+        $probe = Start-Process -FilePath $customUninstaller -ArgumentList '/quiet', '--remove-data' -Wait -PassThru
+        if ($probe.ExitCode -ne 0) { throw "Could not start the junction test cleanup worker" }
+        foreach ($protectedPath in $otherMarker, $customExe, $customUninstaller, $uninstallRegistry) {
+            if (-not (Test-Path -LiteralPath $protectedPath)) {
+                throw "Uninstall modified state after encountering a data junction: $protectedPath"
+            }
+        }
+    } finally {
+        $dataLink = Get-Item -LiteralPath $customData -Force -ErrorAction SilentlyContinue
+        if ($dataLink -and ($dataLink.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            [IO.Directory]::Delete($customData)
+        }
+    }
+
+    $fileLock = [IO.File]::Open($customConfig, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $probe = Start-Process -FilePath $customUninstaller -ArgumentList '/quiet' -Wait -PassThru
+        if ($probe.ExitCode -ne 0) { throw "Could not start the file-lock test cleanup worker" }
+        foreach ($protectedPath in $customExe, $customConfig, $customUninstaller, $uninstallRegistry) {
+            if (-not (Test-Path -LiteralPath $protectedPath)) {
+                throw "Uninstall removed managed files or registration after a lock: $protectedPath"
+            }
+        }
+    } finally {
+        $fileLock.Dispose()
+    }
+
     New-Item -ItemType Directory -Path $customData | Out-Null
     $settingsMarker = Join-Path $customData "settings-marker.txt"
     Set-Content -LiteralPath $settingsMarker -Value "preserve"
-    Assert-UninstallComplete $customApp
+    $unrelatedFile = Join-Path $customApp "personal-file.txt"
+    Set-Content -LiteralPath $unrelatedFile -Value "not installed by the product"
+    Assert-UninstallComplete $customApp $unrelatedFile
     if (-not (Test-Path -LiteralPath $settingsMarker)) {
         throw "Quiet uninstall removed the retained user settings."
     }

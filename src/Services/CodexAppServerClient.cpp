@@ -190,6 +190,7 @@ namespace {
 
     class AppServerProcess {
     public:
+        explicit AppServerProcess(std::stop_token stop) : m_stop(stop) {}
         ~AppServerProcess() { Stop(); }
 
         bool Start(const std::wstring& executable, std::wstring& error) {
@@ -355,6 +356,7 @@ namespace {
 
             size_t offset = 0;
             while (offset < line.size()) {
+                if (m_stop.stop_requested()) return false;
                 OVERLAPPED ovl = {};
                 ovl.hEvent = m_writeEvent.Get();
                 ResetEvent(m_writeEvent.Get());
@@ -363,9 +365,15 @@ namespace {
                 DWORD written = 0;
                 BOOL ok = WriteFile(m_stdinWrite.Get(), line.data() + offset, chunk, &written, &ovl);
                 if (!ok && GetLastError() == ERROR_IO_PENDING) {
-                    const ULONGLONG now = GetTickCount64();
-                    if (now < deadline && WaitForSingleObject(
-                            m_writeEvent.Get(), static_cast<DWORD>(deadline - now)) == WAIT_OBJECT_0) {
+                    DWORD wait = WAIT_TIMEOUT;
+                    while (!m_stop.stop_requested()) {
+                        const ULONGLONG now = GetTickCount64();
+                        if (now >= deadline) break;
+                        wait = WaitForSingleObject(m_writeEvent.Get(),
+                            static_cast<DWORD>((std::min)(deadline - now, 25ULL)));
+                        if (wait != WAIT_TIMEOUT) break;
+                    }
+                    if (wait == WAIT_OBJECT_0) {
                         ok = GetOverlappedResult(m_stdinWrite.Get(), &ovl, &written, FALSE);
                     } else {
                         CancelIoEx(m_stdinWrite.Get(), &ovl);
@@ -393,8 +401,10 @@ namespace {
             std::wstring& error)
         {
             for (;;) {
+                if (m_stop.stop_requested()) return false;
                 size_t newline = pending.find('\n');
                 while (newline != std::string::npos) {
+                    if (m_stop.stop_requested()) return false;
                     std::string line = pending.substr(0, newline);
                     pending.erase(0, newline + 1);
                     if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -449,8 +459,15 @@ namespace {
 
         void Stop() {
             m_stdinWrite.Reset();
-            if (m_process.IsValid() && WaitForSingleObject(m_process.Get(), 1500) == WAIT_TIMEOUT) {
-                WriteLog(LogLevel::Warning, L"App Server 未在输入关闭后退出，正在执行有界强制清理。");
+            DWORD status = m_process.IsValid() ? WaitForSingleObject(m_process.Get(), 0) : WAIT_FAILED;
+            const ULONGLONG deadline = GetTickCount64() + 1500;
+            while (status == WAIT_TIMEOUT && !m_stop.stop_requested() && GetTickCount64() < deadline) {
+                status = WaitForSingleObject(m_process.Get(), 25);
+            }
+            if (status == WAIT_TIMEOUT) {
+                if (!m_stop.stop_requested()) {
+                    WriteLog(LogLevel::Warning, L"App Server 未在输入关闭后退出，正在执行有界强制清理。");
+                }
                 if (m_job.IsValid()) {
                     TerminateJobObject(m_job.Get(), 0);
                 } else {
@@ -465,6 +482,7 @@ namespace {
         }
 
     private:
+        std::stop_token m_stop;
         UniqueHandle m_process;
         UniqueHandle m_job;
         UniqueHandle m_stdinWrite;
@@ -490,12 +508,14 @@ namespace {
         std::wstring& rateLimitsResponseJson,
         std::wstring& usageResponseJson,
         std::wstring& usageErrorMessage,
-        std::wstring& errorMessage)
+        std::wstring& errorMessage,
+        std::stop_token stop)
     {
         rateLimitsResponseJson.clear();
         usageResponseJson.clear();
         usageErrorMessage.clear();
         errorMessage.clear();
+        if (stop.stop_requested()) return false;
 
         const std::wstring executable = ResolveCodexExecutable();
         if (executable.empty()) {
@@ -504,7 +524,8 @@ namespace {
             return false;
         }
 
-        AppServerProcess server;
+        if (stop.stop_requested()) return false;
+        AppServerProcess server(stop);
         if (!server.Start(executable, errorMessage)) {
             WriteLog(LogLevel::Error, L"同步失败：Codex App Server 子进程未能启动。");
             return false;

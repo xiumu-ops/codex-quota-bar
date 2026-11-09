@@ -1,21 +1,13 @@
 #include "Core/Constants.h"
 #include "Core/Logger.h"
+#include "Core/WinHandle.h"
 #include "UI/MainWindow.h"
 #include "Services/PipeServer.h"
+#include "Services/PipeClient.h"
 
 #include <shellapi.h>
 
 using namespace CodexQuotaBar;
-
-namespace {
-
-std::wstring CurrentPipeName() {
-    DWORD sessionId = 0;
-    if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) sessionId = 0;
-    return std::wstring(PIPE_NAME_PREFIX) + std::to_wstring(sessionId);
-}
-
-} // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
@@ -69,17 +61,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     LocalFree(argv);
 
     // 2. 单实例互斥量检查
-    HANDLE hMutex = CreateMutexW(NULL, FALSE, MUTEX_NAME);
-    if (hMutex != NULL && GetLastError() == ERROR_ALREADY_EXISTS) {
+    const WinHandle hMutex(CreateMutexW(nullptr, FALSE, MUTEX_NAME));
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         // 已有实例在运行：短时重试唤醒，避免对刚启动（尚未建好管道）的实例发命令失败
         for (int attempt = 0; attempt < 10; ++attempt) {
             if (PipeServer::SendCommand(pipeName, L"SHOW", 300) == L"OK") break;
             Sleep(100);
         }
-        CloseHandle(hMutex);
         return 0;
     }
-    if (hMutex == NULL) {
+    if (!hMutex) {
         // 创建失败仅降级：失去单实例保护，但不阻止运行
         fwprintf(stderr, L"Codex-Quota-Bar: 警告：创建互斥量失败，单实例保护不可用\n");
     }
@@ -95,7 +86,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             WriteLog(LogLevel::Warning, L"主线程已使用其他 COM 套间模型，沿用现有初始化。");
         } else {
             fwprintf(stderr, L"Codex-Quota-Bar: 初始化 COM 失败 (0x%08X)\n", static_cast<unsigned>(hrCom));
-            if (hMutex) CloseHandle(hMutex);
             WriteLog(LogLevel::Error, L"COM 初始化失败，应用终止。");
             return 1;
         }
@@ -109,7 +99,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         WriteLog(LogLevel::Error, L"主窗口或图形资源初始化失败。");
         // DirectWrite/Direct2D 对象必须在线程 COM 套间关闭前释放。
         mainWindow.reset();
-        if (hMutex) CloseHandle(hMutex);
         if (comInitialized) CoUninitialize();
         return 1;
     }
@@ -138,9 +127,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         mainWindow->BeginShutdown();
         mainWindow.reset();
         if (comInitialized) CoUninitialize();
-        if (hMutex) {
-            CloseHandle(hMutex);
-        }
         return 1;
     }
     WriteLog(LogLevel::Info, std::wstring(L"Codex-Quota-Bar ") + APP_VERSION + L" 已启动。");
@@ -169,10 +155,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             ? L"Codex-Quota-Bar 因消息循环错误退出。"
             : L"Codex-Quota-Bar 已正常退出。");
     if (comInitialized) CoUninitialize();
-
-    if (hMutex) {
-        CloseHandle(hMutex);
-    }
 
     return getMessageResult == -1 ? 1 : static_cast<int>(msg.wParam);
 }

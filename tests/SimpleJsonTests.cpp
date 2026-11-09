@@ -33,6 +33,13 @@ int main() {
     Expect(!Parses(L"01"), "leading zero is rejected");
     Expect(!Parses(L"\"\\uDC00\""), "unpaired low surrogate is rejected");
     Expect(!Parses(L"1e9999"), "non-finite number is rejected");
+    Expect(Parses(L"\uFEFF{ \"enabled\":true }"), "one leading UTF-8 BOM is accepted");
+    Expect(!Parses(L" \uFEFF{}") && !Parses(L"\uFEFF\uFEFF{}"),
+           "misplaced or repeated BOM is rejected");
+    JsonValue largeInteger;
+    Expect(JsonParser::TryParse(L"9007199254740993", largeInteger) &&
+           largeInteger.numberToken == "9007199254740993",
+           "original number token survives floating-point rounding");
 
     std::setlocale(LC_ALL, "German");
     JsonValue localeVal;

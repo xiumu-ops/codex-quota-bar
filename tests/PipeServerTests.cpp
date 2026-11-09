@@ -1,4 +1,6 @@
 #include "Services/PipeServer.h"
+#include "Services/PipeClient.h"
+#include "Core/WinHandle.h"
 
 #include <windows.h>
 #include <aclapi.h>
@@ -7,6 +9,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 using CodexQuotaBar::PipeServer;
 
@@ -24,6 +27,20 @@ void Expect(bool condition, const char* message) {
 std::wstring UniquePipeName() {
     return L"\\\\.\\pipe\\Codex-Quota-Bar-Test-" +
         std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+}
+
+HANDLE OpenClient(const std::wstring& name, DWORD extraAccess = 0) {
+    const ULONGLONG deadline = GetTickCount64() + 2000;
+    while (GetTickCount64() < deadline) {
+        HANDLE pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE | extraAccess,
+                                  0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (pipe != INVALID_HANDLE_VALUE) return pipe;
+        const DWORD error = GetLastError();
+        if (error == ERROR_PIPE_BUSY) WaitNamedPipeW(name.c_str(), 100);
+        else if (error != ERROR_FILE_NOT_FOUND) break;
+        Sleep(10);
+    }
+    return INVALID_HANDLE_VALUE;
 }
 } // namespace
 
@@ -44,28 +61,47 @@ int main() {
         return command.rfind(L"PING", 0) == 0 ? L"OK" : L"UNKNOWN";
     });
     Expect(server.Start(), "secured server starts after the squatter is removed");
+    CodexQuotaBar::WinHandle extraInstance(CreateNamedPipeW(
+        name.c_str(), PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+        1, 4096, 4096, 0, nullptr));
+    Expect(!extraInstance, "pipe rejects a second server instance");
+    const DWORD serverPid = GetCurrentProcessId();
+    const DWORD wrongPid = serverPid == 1 ? 2 : 1;
+    Expect(CodexQuotaBar::SendPipeCommand(name, L"PING", 2000, wrongPid) == L"ERROR",
+           "installer client rejects a pipe owned by a different process");
+    Expect(CodexQuotaBar::SendPipeCommand(name, L"PING", 2000, serverPid) == L"OK",
+           "installer client accepts the verified server process");
     Expect(PipeServer::SendCommand(name, L"PING", 2000) == L"OK", "normal command succeeds");
     Expect(PipeServer::SendCommand(name, L"PING " + std::wstring(3000, L'x'), 2000) == L"OK",
            "command larger than the pipe buffer succeeds");
 
-    HANDLE silent = INVALID_HANDLE_VALUE;
-    const ULONGLONG connectDeadline = GetTickCount64() + 3000;
-    while (GetTickCount64() < connectDeadline) {
-        silent = CreateFileW(
-            name.c_str(), GENERIC_READ | GENERIC_WRITE | READ_CONTROL, 0, nullptr,
-            OPEN_EXISTING, 0, nullptr);
-        if (silent != INVALID_HANDLE_VALUE) {
-            break;
+    {
+        CodexQuotaBar::WinHandle delayed(OpenClient(name));
+        const wchar_t command[] = L"PING";
+        DWORD bytes = 0;
+        const bool sent = delayed &&
+            WriteFile(delayed.Get(), command, 4 * sizeof(wchar_t), &bytes, nullptr);
+        bool available = false;
+        if (sent) {
+            const ULONGLONG deadline = GetTickCount64() + 200;
+            while (GetTickCount64() < deadline &&
+                   PeekNamedPipe(delayed.Get(), nullptr, 0, nullptr, &bytes, nullptr)) {
+                if (bytes != 0) {
+                    available = true;
+                    break;
+                }
+                Sleep(5);
+            }
         }
-        const DWORD err = GetLastError();
-        if (err == ERROR_PIPE_BUSY) {
-            WaitNamedPipeW(name.c_str(), 100);
-        } else if (err == ERROR_FILE_NOT_FOUND) {
-            Sleep(10);
-        } else {
-            break;
-        }
+        Sleep(75);
+        wchar_t response[16] = {};
+        Expect(available && ReadFile(delayed.Get(), response, sizeof(response), &bytes, nullptr) &&
+                   bytes == 3 * sizeof(wchar_t) && std::wstring_view(response, 2) == L"OK" &&
+                   response[2] == L'\0',
+               "reply stays readable when the client delays its read");
     }
+    HANDLE silent = OpenClient(name, READ_CONTROL);
     Expect(silent != INVALID_HANDLE_VALUE, "silent client connects");
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     PACL dacl = nullptr;
@@ -89,10 +125,14 @@ int main() {
            "silent client is canceled and the server recovers");
     if (silent != INVALID_HANDLE_VALUE) CloseHandle(silent);
 
-    for (int i = 0; i < 5; ++i) {
-        Expect(PipeServer::SendCommand(name, L"PING " + std::to_wstring(i), 1000) == L"OK",
-               "rapid sequential command on reused pipe handle succeeds");
+    bool repeated = true;
+    for (int i = 0; i < 128; ++i) {
+        if (PipeServer::SendCommand(name, L"PING " + std::to_wstring(i), 1000) != L"OK") {
+            repeated = false;
+            break;
+        }
     }
+    Expect(repeated, "128 consecutive commands receive complete replies");
 
     server.Stop();
 

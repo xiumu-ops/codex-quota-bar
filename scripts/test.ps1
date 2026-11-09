@@ -150,7 +150,7 @@ $ConfigBackupPrepared = $true
 # 写入用户配置，验证其与默认基线组合读取。
 $ConfigDirectory = Split-Path -Parent $ConfigFile
 New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
-Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
+Set-Content -LiteralPath $ConfigFile -Encoding utf8BOM -Value @'
 {
   "Version": 2,
   "Settings": {
@@ -158,9 +158,11 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8NoBOM -Value @'
     "CompanionMode": false,
     "AlwaysOnTop": true,
     "MiniMode": false,
-    "RefreshIntervalMinutes": 5
+    "RefreshIntervalMinutes": 5,
+    "FutureSetting": { "Flag": true }
   },
-  "Window": { "X": 120, "Y": 2000000000 }
+  "Window": { "X": 120, "Y": 2000000000, "FutureWindowField": "preserve" },
+  "FutureRoot": { "LargeInteger": 9007199254740993 }
 }
 '@
 
@@ -201,6 +203,9 @@ public struct CqbPoint { public int X; public int Y; }
 public struct CqbRect { public int Left; public int Top; public int Right; public int Bottom; }
 public static class CqbNative {
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", EntryPoint="PostMessageW")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string windowName);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint="GetClassLongPtrW")] public static extern IntPtr GetClassLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
@@ -219,6 +224,33 @@ function Get-CqbWindowRect([IntPtr]$Hwnd) {
     $rect = [CqbRect]::new()
     if (-not [CqbNative]::GetWindowRect($Hwnd, [ref]$rect)) { throw "GetWindowRect failed" }
     $rect
+}
+
+function Open-CqbContextMenu([IntPtr]$Owner) {
+    $rect = Get-CqbWindowRect $Owner
+    $point = New-CqbLParam ($rect.Left + 12) ($rect.Top + 12)
+    if (-not [CqbNative]::PostMessage($Owner, 0x007B, $Owner, $point)) {
+        throw "Could not post WM_CONTEXTMENU"
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    do {
+        $popup = [CqbNative]::FindWindow("Codex-Quota-Bar_Menu", $null)
+        if ($popup -ne [IntPtr]::Zero -and [CqbNative]::IsWindowVisible($popup)) {
+            Start-Sleep -Milliseconds 200
+            if (-not [CqbNative]::IsWindowVisible($popup)) { throw "Context menu closed during opening" }
+            return $popup
+        }
+        Start-Sleep -Milliseconds 40
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Context menu did not open"
+}
+
+function Assert-CqbContextMenuClosed([IntPtr]$Popup) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    while ([CqbNative]::IsWindowVisible($Popup) -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 40
+    }
+    if ([CqbNative]::IsWindowVisible($Popup)) { throw "Context menu did not close" }
 }
 
 $proc.Refresh()
@@ -312,6 +344,41 @@ try {
     [void][CqbNative]::SetCursorPos($savedCursor.X, $savedCursor.Y)
 }
 
+try {
+    $beforeSelection = Get-CqbWindowRect $hwnd
+    $popup = Open-CqbContextMenu $hwnd
+    $menuScale = [CqbNative]::GetDpiForWindow($popup) / 96.0
+    $firstRow = New-CqbLParam ([int](12 * $menuScale)) ([int](12 * $menuScale))
+    [void][CqbNative]::SendMessage($popup, 0x0201, [IntPtr]::new(1), $firstRow)
+    Start-Sleep -Milliseconds 200
+    if (-not [CqbNative]::IsWindowVisible($popup)) {
+        throw "Menu item activated before the left button was released"
+    }
+    [void][CqbNative]::SendMessage($popup, 0x0202, [IntPtr]::Zero, $firstRow)
+    Assert-CqbContextMenuClosed $popup
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    do {
+        $afterSelection = Get-CqbWindowRect $hwnd
+        $heightChanged = ($afterSelection.Bottom - $afterSelection.Top) -ne
+            ($beforeSelection.Bottom - $beforeSelection.Top)
+        if (-not $heightChanged) { Start-Sleep -Milliseconds 40 }
+    } while (-not $heightChanged -and [DateTime]::UtcNow -lt $deadline)
+    if (-not $heightChanged) { throw "Releasing the first menu item did not toggle details" }
+
+    $popup = Open-CqbContextMenu $hwnd
+    [void][CqbNative]::PostMessage($popup, 0x0100, [IntPtr]::new(0x1B), [IntPtr]::Zero)
+    Assert-CqbContextMenuClosed $popup
+
+    $popup = Open-CqbContextMenu $hwnd
+    [void][CqbNative]::SendMessage($hwnd, 0x8005, [IntPtr]::Zero, [IntPtr]::Zero)
+    Assert-CqbContextMenuClosed $popup
+    if ([CqbNative]::IsWindowVisible($hwnd)) { throw "Hide left the main window visible" }
+    [void][CqbNative]::SendMessage($hwnd, 0x8004, [IntPtr]::Zero, [IntPtr]::Zero)
+    Write-Host "  [PASS] 右键菜单保持打开，松开左键选择，Esc 和隐藏命令关闭菜单" -ForegroundColor Green
+} catch {
+    Fail-Test "右键菜单回归测试失败：$($_.Exception.Message)"
+}
+
 # 4. 单实例互斥：第二实例裸启动应返回 0
 Write-Host "[4/9] 单实例互斥..." -ForegroundColor Yellow
 Expect-ExitCode "第二实例裸启动" "" 0
@@ -374,6 +441,16 @@ if (@(Get-TargetProcesses).Count -gt 0) {
     Write-Host "  [PASS] 退出后进程已结束" -ForegroundColor Green
 }
 Expect-ExitCode "退出后 --refresh 应失败" '"--refresh"' 1
+$savedConfig = Get-Content -LiteralPath $ConfigFile -Raw
+$saved = $savedConfig | ConvertFrom-Json
+if ($saved.Settings.FutureSetting.Flag -eq $true -and
+    $saved.Window.FutureWindowField -eq "preserve" -and
+    $savedConfig -match '"LargeInteger"\s*:\s*9007199254740993\b' -and
+    $saved.Window.Y -ne 2000000000) {
+    Write-Host "  [PASS] 含 BOM 的配置可读取并保存，未知字段保持原值" -ForegroundColor Green
+} else {
+    Fail-Test "带 BOM 的配置保存失败或未知字段被改写"
+}
 
 # 9. 使用 stdio FakeCodexAppServer 验证主程序冷启动自动同步与迷你栏双额度缩放。
 Write-Host "[9/9] App Server 冷启动同步与迷你栏缩放..." -ForegroundColor Yellow

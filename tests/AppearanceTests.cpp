@@ -59,6 +59,20 @@ int main() {
     Expect(TryParseBackgroundTransparency(30.0, transparency), "integer number parsed");
     Expect(transparency == 30, "parsed transparency value");
     Expect(!TryParseBackgroundTransparency(30.5, transparency), "fraction rejected");
+    Expect(!IsSupportedUserScale(1e308) && !IsSupportedUserScale(1e20),
+           "out-of-range user scale is rejected before integer conversion");
+
+    const RECT monitor = { -1920, 0, 0, 1080 };
+    const RECT hiddenBottom = TaskbarPlacement::NormalizeTaskbarRect(
+        { -1920, 1078, 0, 1150 }, monitor, true, 12, 72);
+    const RECT expectedBottom = { -1920, 1008, 0, 1080 };
+    Expect(EqualRect(&hiddenBottom, &expectedBottom),
+           "bottom auto-hide taskbar is restored to its full thickness");
+    const RECT hiddenLeft = TaskbarPlacement::NormalizeTaskbarRect(
+        { -1920, 0, -1918, 1080 }, monitor, false, 12, 72);
+    const RECT expectedLeft = { -1920, 0, -1848, 1080 };
+    Expect(EqualRect(&hiddenLeft, &expectedLeft),
+           "vertical auto-hide sliver uses the monitor's DPI-scaled thickness");
 
     QuotaSnapshot noQuota;
     Expect(MiniQuotaSlotCount(noQuota) == 1, "empty mini bar keeps one slot");
@@ -162,6 +176,11 @@ int main() {
 
         // A monitor to the left of the primary has negative physical coordinates.
         const RECT taskbar = { -1920, 1080 - test.taskbarHeight, 0, 1080 };
+        const RECT restored = TaskbarPlacement::NormalizeTaskbarRect(
+            { -1920, 1078, 0, 1080 }, monitor, true, ScaleEven(24.0f, test.monitorScale),
+            ScaleEven(48.0f, test.monitorScale));
+        Expect(EqualRect(&restored, &taskbar),
+               "hidden taskbar thickness matches the display scale");
         const RECT slot = { -1900, taskbar.top, -1600, taskbar.bottom };
         const POINT dock = TaskbarPlacement::ComputeDockPosition(slot, taskbar, true, size);
         Expect(dock.x - slot.left == slot.right - (dock.x + size.cx) &&
@@ -262,6 +281,37 @@ int main() {
     const POINT offBottom = { 26, 1200 };
     Expect(TaskbarPlacement::ClampToMonitorBounds(offBottom, miniDual, monRect).y == 1080 - 28,
            "offscreen bottom clamped to monitor bottom");
+
+    // The adjacent display starts at y=500. After dragging, the window
+    // must fit on the selected work area instead of spanning the gap.
+    const POINT inDisplayGap = { 1780, 425 };
+    const RECT leftWorkArea = { 0, 0, 1920, 1040 };
+    const POINT settled = TaskbarPlacement::ClampToMonitorBounds(
+        inDisplayGap, SIZE{ BAR_WIDTH, COLLAPSED_HEIGHT }, leftWorkArea);
+    Expect(settled.x == 1540 && settled.y == 425,
+           "settled window fits entirely on the selected offset display");
+
+    const RECT rightMonitor = { 1920, 0, 3840, 1080 };
+    const RECT upperMonitor = { 0, -1080, 1920, 0 };
+    const SIZE standardBar = { BAR_WIDTH, COLLAPSED_HEIGHT };
+    for (const auto& test : miniDpiCases) {
+        const LONG margin = Scale(16.0f, test.monitorScale);
+        const POINT crossing = { 1731, 30 };
+        const POINT held = TaskbarPlacement::HoldAtMonitorSeam(
+            crossing, standardBar, monRect, rightMonitor, margin);
+        Expect(held.x == 1729 && held.y == crossing.y,
+               "horizontal seam holds the center without pushing the whole bar back");
+        const POINT pastMargin = { 1730 + margin, 30 };
+        const POINT released = TaskbarPlacement::HoldAtMonitorSeam(
+            pastMargin, standardBar, monRect, rightMonitor, margin);
+        Expect(released.x == pastMargin.x && released.y == pastMargin.y,
+               "cursor motion resumes at the monitor's scaled seam margin");
+        const POINT crossingUp = { 42, -53 };
+        const POINT heldUp = TaskbarPlacement::HoldAtMonitorSeam(
+            crossingUp, standardBar, monRect, upperMonitor, margin);
+        Expect(heldUp.x == crossingUp.x && heldUp.y == -51,
+               "vertical seam holds the center without changing horizontal position");
+    }
 
     const SIZE oversized = { 2500, 1200 };
     const POINT clampedOver = TaskbarPlacement::ClampToMonitorBounds(POINT{ 100, 100 }, oversized, monRect);

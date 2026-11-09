@@ -12,6 +12,7 @@
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 namespace CodexQuotaBar {
 
@@ -34,6 +35,7 @@ namespace CodexQuotaBar {
         std::wstring m_pipeName;
         CommandHandler m_handler;
         std::atomic<bool> m_running{ false };
+        std::mutex m_lifecycleMutex;
         std::thread m_serverThread;
         HANDLE m_stopEvent = NULL;
         HANDLE m_ioEvent = NULL; // 每次重叠 I/O 复用的完成事件

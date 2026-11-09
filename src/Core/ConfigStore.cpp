@@ -1,14 +1,15 @@
 #include "Core/ConfigStore.h"
 #include "Core/Settings.h"
+#include "Core/Logger.h"
 #include "Core/SimpleJson.h"
 
 #include <knownfolders.h>
+#include <objbase.h>
 #include <shlobj.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <initializer_list>
 #include <limits>
 #include <locale>
 #include <map>
@@ -25,6 +26,7 @@ namespace {
     struct ConfigData {
         AppSettings settings;
         StoredState state;
+        JsonValue userDocument;
     };
 
     enum class ReadStatus {
@@ -81,33 +83,6 @@ namespace {
         errors += L"- " + message;
     }
 
-    bool IsKnownKey(
-        const std::wstring& key,
-        std::initializer_list<std::wstring_view> allowed)
-    {
-        for (const std::wstring_view candidate : allowed) {
-            if (key == candidate) return true;
-        }
-        return false;
-    }
-
-    void ValidateKnownKeys(
-        const JsonValue& object,
-        std::wstring_view path,
-        std::initializer_list<std::wstring_view> allowed,
-        std::wstring& errors)
-    {
-        if (!object.is_object()) return;
-        for (const auto& [name, unused] : object.objVal) {
-            static_cast<void>(unused);
-            if (!IsKnownKey(name, allowed)) {
-                AppendValidationError(
-                    errors,
-                    std::wstring(path) + L"." + name + L" 不是支持的字段");
-            }
-        }
-    }
-
     ReadStatus ReadJson(const std::filesystem::path& path, JsonValue& root) {
         std::error_code error;
         const bool exists = std::filesystem::exists(path, error);
@@ -121,10 +96,9 @@ namespace {
         if (size <= 0 || size > kMaxConfigBytes) return ReadStatus::Invalid;
         file.seekg(0, std::ios::beg);
 
-        std::stringstream stream;
-        stream << file.rdbuf();
-        const std::string utf8 = stream.str();
-        if (utf8.empty() || utf8.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+        std::string utf8(static_cast<size_t>(size), '\0');
+        if (!file.read(utf8.data(), static_cast<std::streamsize>(size)) ||
+            file.peek() != std::char_traits<char>::eof() || file.bad()) {
             return ReadStatus::Invalid;
         }
 
@@ -152,11 +126,6 @@ namespace {
             AppendValidationError(errors, L"Settings.Appearance 必须是对象");
             return;
         }
-        ValidateKnownKeys(
-            object,
-            L"Settings.Appearance",
-            { L"Mode", L"FontFamily", L"BackgroundTransparency", L"Colors" },
-            errors);
 
         if (object.has_key(L"Mode")) {
             if (!object[L"Mode"].is_string()) {
@@ -202,10 +171,7 @@ namespace {
         }
         for (const auto& [name, value] : colors.objVal) {
             const std::wstring path = L"Settings.Appearance.Colors." + name;
-            if (!IsSupportedAppearanceColor(name)) {
-                AppendValidationError(errors, path + L" 不是支持的颜色字段");
-                continue;
-            }
+            if (!IsSupportedAppearanceColor(name)) continue;
             uint32_t rgb = 0;
             if (!value.is_string() ||
                 !TryParseAppearanceColor(value.as_string(), rgb)) {
@@ -222,12 +188,6 @@ namespace {
         std::wstring& errors)
     {
         if (!object.is_object()) return;
-        ValidateKnownKeys(
-            object,
-            L"Settings",
-            { L"UserScale", L"CompanionMode", L"AlwaysOnTop", L"MiniMode",
-              L"DockToWeather", L"RefreshIntervalMinutes", L"Appearance" },
-            errors);
 
         if (object.has_key(L"UserScale")) {
             const JsonValue& userScale = object[L"UserScale"];
@@ -295,11 +255,6 @@ namespace {
     void ValidateDefaultConfigShape(const JsonValue& root, std::wstring& errors) {
         const JsonValue& settings = root[L"Settings"];
         const JsonValue& appearance = settings[L"Appearance"];
-        ValidateKnownKeys(
-            root,
-            L"config-default.json",
-            { L"Version", L"Settings", L"Window" },
-            errors);
         if (!HasConfigVersion2(root) || !root.has_key(L"Window") ||
             !root[L"Window"].is_null()) {
             AppendValidationError(
@@ -344,11 +299,6 @@ namespace {
     }
 
     void ValidateUserConfigShape(const JsonValue& root, std::wstring& errors) {
-        ValidateKnownKeys(
-            root,
-            L"config-users.json",
-            { L"Version", L"Settings", L"Window" },
-            errors);
         if (!HasConfigVersion2(root) ||
             !root.has_key(L"Settings") || !root[L"Settings"].is_object()) {
             AppendValidationError(
@@ -366,7 +316,6 @@ namespace {
             AppendValidationError(errors, L"Window 必须是包含 X、Y 的对象或 null");
             return;
         }
-        ValidateKnownKeys(object, L"Window", { L"X", L"Y" }, errors);
         int x = 0;
         int y = 0;
         if (!object.has_key(L"X") || !object[L"X"].is_number() ||
@@ -471,99 +420,181 @@ namespace {
         return errors.empty();
     }
 
-    bool WriteConfig(const std::filesystem::path& path, const ConfigData& data) {
+    JsonValue& ObjectMember(JsonValue& object, const wchar_t* name) {
+        object.type = JsonType::Object;
+        return object.objVal[name];
+    }
+
+    JsonValue Number(double number) {
+        JsonValue value;
+        value.type = JsonType::Number;
+        value.numVal = number;
+        return value;
+    }
+
+    JsonValue Boolean(bool flag) {
+        JsonValue value;
+        value.type = JsonType::Boolean;
+        value.boolVal = flag;
+        return value;
+    }
+
+    JsonValue String(const std::wstring& text) {
+        JsonValue value;
+        value.type = JsonType::String;
+        value.strVal = text;
+        return value;
+    }
+
+    void UpdateUserDocument(ConfigData& data) {
+        auto& root = data.userDocument;
+        ObjectMember(root, L"Version") = Number(2);
+        auto& settings = ObjectMember(root, L"Settings");
+        ObjectMember(settings, L"UserScale") = Number(std::round(data.settings.userScale * 5.0) / 5.0);
+        ObjectMember(settings, L"CompanionMode") = Boolean(data.settings.companionMode);
+        ObjectMember(settings, L"AlwaysOnTop") = Boolean(data.settings.alwaysOnTop);
+        ObjectMember(settings, L"MiniMode") = Boolean(data.settings.miniMode);
+        ObjectMember(settings, L"DockToWeather") = Boolean(data.settings.dockToWeather);
+        ObjectMember(settings, L"RefreshIntervalMinutes") = Number(data.settings.refreshIntervalMinutes);
+        auto& appearance = ObjectMember(settings, L"Appearance");
+        const auto& current = data.settings.appearance;
+        ObjectMember(appearance, L"Mode") = String(
+            current.mode == AppearanceMode::Custom ? L"Custom" : L"Default");
+        ObjectMember(appearance, L"FontFamily") = String(current.fontFamily);
+        ObjectMember(appearance, L"BackgroundTransparency") = Number(current.backgroundTransparency);
+        auto& colors = ObjectMember(appearance, L"Colors");
+        colors.type = JsonType::Object;
+        for (const auto& [name, color] : current.colors) {
+            colors.objVal[name] = String(color);
+        }
+
+        auto& window = ObjectMember(root, L"Window");
+        if (data.state.hasPosition) {
+            ObjectMember(window, L"X") = Number(data.state.position.x);
+            ObjectMember(window, L"Y") = Number(data.state.position.y);
+        } else {
+            window = {};
+        }
+    }
+
+    bool WriteJsonValue(std::ostream& stream, const JsonValue& value, size_t depth = 0) {
+        switch (value.type) {
+        case JsonType::Null: stream << "null"; break;
+        case JsonType::Boolean: stream << (value.boolVal ? "true" : "false"); break;
+        case JsonType::Number:
+            if (value.numberToken.empty()) stream << value.numVal;
+            else stream << value.numberToken;
+            break;
+        case JsonType::String: {
+            std::string quoted;
+            if (!JsonString(value.strVal, quoted)) return false;
+            stream << quoted;
+            break;
+        }
+        case JsonType::Array: {
+            stream << '[';
+            bool first = true;
+            for (const auto& item : value.arrVal) {
+                if (!first) stream << ", ";
+                if (!WriteJsonValue(stream, item, depth + 1)) return false;
+                first = false;
+            }
+            stream << ']';
+            break;
+        }
+        case JsonType::Object: {
+            stream << '{';
+            bool first = true;
+            for (const auto& [key, item] : value.objVal) {
+                std::string quoted;
+                if (!JsonString(key, quoted)) return false;
+                stream << (first ? "\n" : ",\n") << std::string((depth + 1) * 2, ' ')
+                       << quoted << ": ";
+                if (!WriteJsonValue(stream, item, depth + 1)) return false;
+                first = false;
+            }
+            if (!first) stream << '\n' << std::string(depth * 2, ' ');
+            stream << '}';
+            break;
+        }
+        }
+        return stream.good();
+    }
+
+    bool WriteConfig(const std::filesystem::path& path, ConfigData& data) {
+        UpdateUserDocument(data);
+        std::ostringstream stream;
+        stream.imbue(std::locale::classic());
+        stream << std::setprecision(std::numeric_limits<double>::max_digits10);
+        if (!WriteJsonValue(stream, data.userDocument)) return false;
+        stream << '\n';
+        const auto json = stream.str();
+        if (json.size() > static_cast<size_t>(kMaxConfigBytes)) return false;
+
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         if (error) return false;
 
-        const std::filesystem::path temporary = path.wstring() + L".tmp";
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        if (!file.is_open()) return false;
-        std::string fontFamily;
-        if (!JsonString(data.settings.appearance.fontFamily, fontFamily)) {
-            file.close();
-            DeleteFileW(temporary.c_str());
-            return false;
-        }
-        file.imbue(std::locale::classic());
-        file << std::setprecision(9);
-        file << "{\n";
-        file << "  \"Version\": 2,\n";
-        file << "  \"Settings\": {\n";
-        file << "    \"UserScale\": " << data.settings.userScale << ",\n";
-        file << "    \"CompanionMode\": "
-             << (data.settings.companionMode ? "true" : "false") << ",\n";
-        file << "    \"AlwaysOnTop\": "
-             << (data.settings.alwaysOnTop ? "true" : "false") << ",\n";
-        file << "    \"MiniMode\": "
-             << (data.settings.miniMode ? "true" : "false") << ",\n";
-        file << "    \"DockToWeather\": "
-             << (data.settings.dockToWeather ? "true" : "false") << ",\n";
-        file << "    \"RefreshIntervalMinutes\": "
-             << data.settings.refreshIntervalMinutes << ",\n";
-        file << "    \"Appearance\": {\n";
-        file << "      \"Mode\": \""
-             << (data.settings.appearance.mode == AppearanceMode::Custom
-                     ? "Custom" : "Default")
-             << "\",\n";
-        file << "      \"FontFamily\": " << fontFamily << ",\n";
-        file << "      \"BackgroundTransparency\": "
-             << data.settings.appearance.backgroundTransparency << ",\n";
-        file << "      \"Colors\": {";
-        if (!data.settings.appearance.colors.empty()) file << "\n";
-        size_t colorIndex = 0;
-        for (const auto& [name, value] : data.settings.appearance.colors) {
-            std::string key;
-            std::string color;
-            if (!JsonString(name, key) || !JsonString(value, color)) {
-                file.close();
-                DeleteFileW(temporary.c_str());
-                return false;
+        GUID id = {};
+        wchar_t suffix[40] = {};
+        if (FAILED(CoCreateGuid(&id)) || StringFromGUID2(id, suffix, _countof(suffix)) == 0) return false;
+        const std::wstring temporary = path.wstring() + L".tmp-" + suffix;
+        const std::wstring backup = temporary + L".bak";
+        const HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
+                                        CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        const auto length = static_cast<DWORD>(json.size());
+        const bool flushed = WriteFile(file, json.data(), length, &written, nullptr) &&
+                             written == length && FlushFileBuffers(file);
+        CloseHandle(file);
+
+        if (flushed) {
+            for (DWORD attempt = 0; attempt < 6; ++attempt) {
+                if (ReplaceFileW(path.c_str(), temporary.c_str(), backup.c_str(), 0, nullptr, nullptr)) {
+                    DeleteFileW(backup.c_str());
+                    return true;
+                }
+                DWORD status = GetLastError();
+                if (status == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2) {
+                    // ReplaceFile may have moved the original to backup already.
+                    if (!MoveFileExW(backup.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) {
+                        WriteLog(LogLevel::Error, L"配置替换失败；原文件保留在 " + backup);
+                    }
+                    break;
+                }
+                if (status == ERROR_FILE_NOT_FOUND) {
+                    if (MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) return true;
+                    status = GetLastError();
+                }
+                if (status != ERROR_SHARING_VIOLATION && status != ERROR_LOCK_VIOLATION &&
+                    status != ERROR_ACCESS_DENIED && status != ERROR_ALREADY_EXISTS &&
+                    status != ERROR_FILE_EXISTS && status != ERROR_UNABLE_TO_REMOVE_REPLACED) break;
+                if (attempt < 5) Sleep(15U * (attempt + 1));
             }
-            file << "        " << key << ": " << color;
-            if (++colorIndex < data.settings.appearance.colors.size()) file << ",";
-            file << "\n";
         }
-        if (!data.settings.appearance.colors.empty()) file << "      ";
-        file << "}\n";
-        file << "    }\n";
-        file << "  },\n";
-        if (data.state.hasPosition) {
-            file << "  \"Window\": { \"X\": " << data.state.position.x
-                 << ", \"Y\": " << data.state.position.y << " }\n";
-        } else {
-            file << "  \"Window\": null\n";
-        }
-        file << "}\n";
-        file.flush();
-        const bool written = file.good();
-        file.close();
-        if (!written || !MoveFileExW(temporary.c_str(), path.c_str(),
-                                     MOVEFILE_REPLACE_EXISTING |
-                                         MOVEFILE_WRITE_THROUGH)) {
-            DeleteFileW(temporary.c_str());
-            return false;
-        }
-        return true;
+        DeleteFileW(temporary.c_str());
+        return false;
     }
 
     ConfigData LoadData(
         ReadStatus* readStatus = nullptr,
-        std::wstring* validationErrors = nullptr)
+        std::wstring* validationErrors = nullptr,
+        bool includeDefaultWarnings = true)
     {
         if (validationErrors) validationErrors->clear();
         ConfigData data;
         std::wstring errors;
 
         JsonValue defaultRoot;
-        const ReadStatus defaultStatus = ReadJson(DefaultConfigPath(), defaultRoot);
-        if (defaultStatus == ReadStatus::Valid) {
-            ValidateDefaultConfigShape(defaultRoot, errors);
-            ReadSettingsObject(defaultRoot[L"Settings"], data.settings, errors);
+        std::wstring defaultErrors;
+        if (ReadJson(DefaultConfigPath(), defaultRoot) == ReadStatus::Valid) {
+            AppSettings baseline;
+            ValidateDefaultConfigShape(defaultRoot, defaultErrors);
+            ReadSettingsObject(defaultRoot[L"Settings"], baseline, defaultErrors);
+            if (defaultErrors.empty()) data.settings = std::move(baseline);
         } else {
-            AppendValidationError(
-                errors,
-                L"config-default.json 不是有效的 UTF-8 JSON，或文件不可读取");
+            AppendValidationError(defaultErrors, L"无法读取 config-default.json，已使用内置默认设置");
         }
         data.settings.defaultAppearance = data.settings.appearance;
 
@@ -573,19 +604,21 @@ namespace {
         JsonValue root;
         const ReadStatus userStatus = ReadJson(userConfigPath, root);
 
-        const ReadStatus combinedStatus =
-            defaultStatus == ReadStatus::Valid ? userStatus : ReadStatus::Invalid;
-        if (readStatus) *readStatus = combinedStatus;
         if (userStatus == ReadStatus::Valid) {
             ValidateUserConfigShape(root, errors);
-            ReadSettingsObject(root[L"Settings"], data.settings, errors);
-            ReadWindowObject(root[L"Window"], data.state, errors);
+            if (errors.empty()) {
+                ReadSettingsObject(root[L"Settings"], data.settings, errors);
+                ReadWindowObject(root[L"Window"], data.state, errors);
+                data.userDocument = std::move(root);
+            }
         } else if (userStatus == ReadStatus::Invalid) {
-            AppendValidationError(
-                errors,
-                L"config-users.json 不是有效的 UTF-8 JSON，或文件不可读取");
+            AppendValidationError(errors, L"config-users.json 不是有效的 UTF-8 JSON，或文件不可读取");
         }
-        if (validationErrors) *validationErrors = errors;
+        if (readStatus) *readStatus = errors.empty() ? userStatus : ReadStatus::Invalid;
+        if (validationErrors) {
+            *validationErrors = errors;
+        }
+        if (includeDefaultWarnings && !defaultErrors.empty()) WriteLog(LogLevel::Warning, defaultErrors);
         return data;
     }
 
@@ -615,7 +648,7 @@ namespace {
         if (validationError) validationError->clear();
         ReadStatus status = ReadStatus::Missing;
         std::wstring errors;
-        ConfigData data = LoadData(&status, &errors);
+        ConfigData data = LoadData(&status, &errors, false);
         ValidateAppSettings(settings, errors);
         if (status == ReadStatus::Invalid || !errors.empty()) {
             if (validationError) *validationError = errors;
@@ -633,11 +666,15 @@ namespace {
         const std::lock_guard<std::mutex> lock(g_configMutex);
         ReadStatus status = ReadStatus::Missing;
         std::wstring errors;
-        ConfigData data = LoadData(&status, &errors);
+        ConfigData data = LoadData(&status, &errors, false);
         if (status == ReadStatus::Invalid || !errors.empty()) return;
+        if (data.state.hasPosition && data.state.position.x == position.x &&
+            data.state.position.y == position.y) return;
         data.state.position = position;
         data.state.hasPosition = true;
-        WriteConfig(ConfigDirectory() / L"config-users.json", data);
+        if (!WriteConfig(ConfigDirectory() / L"config-users.json", data)) {
+            WriteLog(LogLevel::Warning, L"窗口位置未保存：config-users.json 写入失败。");
+        }
     }
 
     std::wstring ConfigStore::DataDirectory() {
