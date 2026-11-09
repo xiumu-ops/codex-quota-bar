@@ -8,7 +8,7 @@
 namespace CodexQuotaBar {
 
     struct MenuItem {
-        int id = 0;
+        int id = 0; // 有文字时，0 表示禁用项
         std::wstring text; // 空字符串表示分隔线
     };
 

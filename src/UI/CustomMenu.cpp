@@ -122,7 +122,7 @@ namespace CodexQuotaBar {
                 }
 
                 if (st->pFontMenu) {
-                    st->pMenuBrush->SetColor(st->palette.text);
+                    st->pMenuBrush->SetColor(st->ids[i] != 0 ? st->palette.text : st->palette.muted);
                     D2D1_RECT_F textRect = D2D1::RectF(rc.left + padX, rc.top, rc.right - padX, rc.bottom);
                     st->pMenuRenderTarget->DrawTextW(
                         row.text.c_str(), static_cast<UINT32>(row.text.size()),
@@ -146,6 +146,10 @@ namespace CodexQuotaBar {
                 if (!row.text.empty() && PtInRect(&row.rect, pt)) return static_cast<int>(i);
             }
             return -1;
+        }
+
+        bool IsMenuRowEnabled(const MenuPopupState& state, int row) {
+            return row >= 0 && state.ids[static_cast<size_t>(row)] != 0;
         }
 
         void FinishMenu(HWND hwnd, MenuPopupState* state, int result = 0) {
@@ -184,7 +188,8 @@ namespace CodexQuotaBar {
 
             case WM_MOUSEMOVE: {
                 if (!st || !st->tracking) break;
-                const int newHover = HitMenuRow(*st, lParam);
+                const int row = HitMenuRow(*st, lParam);
+                const int newHover = IsMenuRowEnabled(*st, row) ? row : -1;
                 if (newHover != st->hover) {
                     st->hover = newHover;
                     InvalidateRect(hwnd, NULL, FALSE);
@@ -194,8 +199,9 @@ namespace CodexQuotaBar {
 
             case WM_LBUTTONDOWN:
                 if (st && st->tracking) {
-                    st->pressedRow = HitMenuRow(*st, lParam);
-                    if (st->pressedRow < 0) FinishMenu(hwnd, st);
+                    const int row = HitMenuRow(*st, lParam);
+                    st->pressedRow = IsMenuRowEnabled(*st, row) ? row : -1;
+                    if (row < 0) FinishMenu(hwnd, st);
                 }
                 return 0;
 

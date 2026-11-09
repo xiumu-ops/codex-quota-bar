@@ -201,6 +201,11 @@ using System;
 using System.Runtime.InteropServices;
 public struct CqbPoint { public int X; public int Y; }
 public struct CqbRect { public int Left; public int Top; public int Right; public int Bottom; }
+public struct CqbGuiThreadInfo {
+    public uint Size, Flags;
+    public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret;
+    public CqbRect CaretRect;
+}
 public static class CqbNative {
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", EntryPoint="PostMessageW")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -209,6 +214,8 @@ public static class CqbNative {
     [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint="GetClassLongPtrW")] public static extern IntPtr GetClassLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+    [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint threadId, ref CqbGuiThreadInfo info);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out CqbRect rect);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out CqbPoint point);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -452,8 +459,8 @@ if ($saved.Settings.FutureSetting.Flag -eq $true -and
     Fail-Test "带 BOM 的配置保存失败或未知字段被改写"
 }
 
-# 9. 使用 stdio FakeCodexAppServer 验证主程序冷启动自动同步与迷你栏双额度缩放。
-Write-Host "[9/9] App Server 冷启动同步与迷你栏缩放..." -ForegroundColor Yellow
+# 9. 冷启动组件模式时，旧配置中关闭的迷你与置顶仍应被强制开启。
+Write-Host "[9/9] App Server 冷启动同步与组件模式锁定..." -ForegroundColor Yellow
 $fakeCodexPath = Join-Path $CMakeBuildDir "Release\FakeCodexAppServer.exe"
 $oldCodexPath = $env:CODEX_QUOTA_CODEX_PATH
 $oldScenario = $env:CODEX_QUOTA_FAKE_SCENARIO
@@ -465,7 +472,9 @@ try {
         $env:CODEX_QUOTA_CODEX_PATH = $fakeCodexPath
         $env:CODEX_QUOTA_FAKE_SCENARIO = "happy"
         $miniConfig = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
-        $miniConfig.Settings.MiniMode = $true
+        $miniConfig.Settings.MiniMode = $false
+        $miniConfig.Settings.AlwaysOnTop = $false
+        $miniConfig.Settings | Add-Member -NotePropertyName DockToWeather -NotePropertyValue $true -Force
         $miniConfig.Settings.UserScale = 1.2
         $miniConfig | ConvertTo-Json -Depth 10 | Set-Content `
             -LiteralPath $ConfigFile -Encoding utf8NoBOM
@@ -510,6 +519,28 @@ try {
                     Fail-Test "双额度迷你栏尺寸不正确"
                 }
                 if ($miniHwnd -ne [IntPtr]::Zero) {
+                    $style = [CqbNative]::GetWindowLongPtr($miniHwnd, -20).ToInt64()
+                    if (($style -band 0x8) -eq 0) {
+                        Fail-Test "旧配置关闭置顶时，组件模式未强制置顶"
+                    }
+
+                    $gui = [CqbGuiThreadInfo]::new()
+                    $gui.Size = [Runtime.InteropServices.Marshal]::SizeOf($gui)
+                    $threadId = [CqbNative]::GetWindowThreadProcessId($miniHwnd, [IntPtr]::Zero)
+                    $hit = New-CqbLParam 4 4
+                    try {
+                        [void][CqbNative]::SendMessage($miniHwnd, 0x0201, [IntPtr]::new(1), $hit)
+                        if ($threadId -eq 0 -or -not [CqbNative]::GetGUIThreadInfo($threadId, [ref]$gui)) {
+                            Fail-Test "无法读取组件窗口的鼠标捕获状态"
+                        } elseif ($gui.Capture -eq $miniHwnd) {
+                            Fail-Test "组件模式仍可通过左键开始拖动"
+                        } else {
+                            Write-Host "  [PASS] 组件模式禁止拖动，旧设置的迷你和置顶自动开启" -ForegroundColor Green
+                        }
+                    } finally {
+                        [void][CqbNative]::SendMessage($miniHwnd, 0x0202, [IntPtr]::Zero, $hit)
+                    }
+
                     $classStyle = [CqbNative]::GetClassLongPtr($miniHwnd, -26).ToInt64()
                     if (($classStyle -band 0x00020000) -eq 0) {
                         Write-Host "  [PASS] 迷你栏仅使用 DWM 原生投影，无固定下偏阴影" -ForegroundColor Green

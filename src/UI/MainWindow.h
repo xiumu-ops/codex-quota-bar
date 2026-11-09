@@ -58,7 +58,7 @@ namespace CodexQuotaBar {
         void ToggleVisible();
         void ToggleExpanded();
         void ToggleMiniMode();
-        bool SetWeatherDocked(bool enabled);
+        bool SetComponentMode(bool enabled);
         void DockToWeatherWidget(bool waitForProbe = false);
         WeatherWidgetPlacement GetWeatherPlacement(SIZE size);
         void InvalidateWeatherProbe();

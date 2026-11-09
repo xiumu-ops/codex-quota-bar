@@ -614,6 +614,7 @@ namespace {
         } else if (userStatus == ReadStatus::Invalid) {
             AppendValidationError(errors, L"config-users.json 不是有效的 UTF-8 JSON，或文件不可读取");
         }
+        if (data.settings.dockToWeather) data.settings.SetComponentMode(true);
         if (readStatus) *readStatus = errors.empty() ? userStatus : ReadStatus::Invalid;
         if (validationErrors) {
             *validationErrors = errors;

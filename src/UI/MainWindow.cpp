@@ -36,7 +36,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_COMPANION_MODE = 2004;
     constexpr int IDM_ALWAYS_ON_TOP = 2005;
     constexpr int IDM_MINI_MODE = 2006;
-    constexpr int IDM_DOCK_TO_WEATHER = 2007;
+    constexpr int IDM_COMPONENT_MODE = 2007;
     constexpr int IDM_REFRESH_INTERVAL_SUB = 2200;
     constexpr int IDM_REFRESH_INTERVAL_BASE = 2201; // 二级菜单：刷新档位 id 基址（+0..4）
     constexpr int IDM_APPEARANCE_SUB = 2300;
@@ -173,11 +173,7 @@ namespace CodexQuotaBar {
             return false;
         }
 
-        SetWindowPos(
-            m_hwnd,
-            m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        ApplyWindowZOrder();
         if (m_companionMode) {
             CompanionMode::ConfigureAutoStart(true);
         }
@@ -240,6 +236,7 @@ namespace CodexQuotaBar {
         if (m_hwnd) {
             if (m_companionMode && !m_codexDesktopRunning) return;
             ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
+            if (IsWeatherDockActive()) ApplyWindowZOrder();
             RenderLayeredWindow();
         }
     }
@@ -557,7 +554,7 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ToggleAlwaysOnTop() {
-        if (!m_hwnd) return;
+        if (!m_hwnd || IsWeatherDockActive()) return;
 
         const bool previous = m_settings.alwaysOnTop;
         m_settings.alwaysOnTop = !previous;
@@ -571,15 +568,12 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ToggleMiniMode() {
+        if (IsWeatherDockActive()) return;
+
         const bool previous = m_settings.miniMode;
-        const bool previousDock = m_settings.dockToWeather;
         m_settings.miniMode = !previous;
-        if (!m_settings.miniMode && m_settings.dockToWeather) {
-            m_settings.dockToWeather = false;
-        }
         if (!SaveSettingsWithFeedback()) {
             m_settings.miniMode = previous;
-            m_settings.dockToWeather = previousDock;
             return;
         }
 
@@ -590,46 +584,46 @@ namespace CodexQuotaBar {
         if (!m_expanded) {
             ApplyWindowZOrder();
             ApplyUiScale();
-            if (!IsWeatherDockActive() && m_hasCollapsedLocation) {
+            if (m_hasCollapsedLocation) {
                 ConfigStore::SavePosition(m_collapsedLocation);
             }
         }
     }
 
-    bool MainWindow::SetWeatherDocked(bool enabled) {
+    bool MainWindow::SetComponentMode(bool enabled) {
         const bool previousDock = m_settings.dockToWeather;
         const bool previousMini = m_settings.miniMode;
+        const bool previousTopmost = m_settings.alwaysOnTop;
         const bool previousExpanded = m_expanded;
-        m_settings.dockToWeather = enabled;
-        if (enabled) {
-            m_settings.miniMode = true;
-            m_expanded = false;
-        }
+        m_settings.SetComponentMode(enabled);
+        if (enabled) m_expanded = false;
 
         if (!SaveSettingsWithFeedback()) {
             m_settings.dockToWeather = previousDock;
             m_settings.miniMode = previousMini;
+            m_settings.alwaysOnTop = previousTopmost;
             m_expanded = previousExpanded;
             return false;
         }
 
+        ApplyWindowZOrder();
         if (enabled) {
             ApplyUiScale();
         } else {
-            ApplyWindowZOrder();
             SyncWindowPosition(true);
         }
         return true;
     }
 
     bool MainWindow::IsWeatherDockActive() const {
-        return m_settings.miniMode && m_settings.dockToWeather && !m_expanded;
+        return m_settings.dockToWeather;
     }
 
     void MainWindow::ApplyWindowZOrder() {
-        const bool topmost = m_settings.alwaysOnTop || IsWeatherDockActive();
+        const bool componentMode = IsWeatherDockActive();
+        const bool topmost = m_settings.alwaysOnTop || componentMode;
         const bool currentlyTopmost = (GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
-        if (topmost == currentlyTopmost) return;
+        if (!componentMode && topmost == currentlyTopmost) return;
         SetWindowPos(m_hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
                      0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
@@ -750,8 +744,7 @@ namespace CodexQuotaBar {
         } else {
             KillTimer(m_hwnd, TIMER_COMPANION_ID);
             m_codexDesktopRunning = false;
-            ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
-            RenderLayeredWindow();
+            Show();
         }
     }
 
@@ -804,8 +797,7 @@ namespace CodexQuotaBar {
             m_codexDesktopRunning = true;
             m_codexMissingPolls = 0;
             if (!IsWindowVisible(m_hwnd)) {
-                ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
-                RenderLayeredWindow();
+                Show();
                 if (!wasRunning) RefreshQuota();
             }
             return;
@@ -1035,6 +1027,8 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::ToggleExpanded() {
+        if (IsWeatherDockActive()) return;
+
         HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(MONITORINFO) };
         GetMonitorInfoW(hMon, &mi);
@@ -1071,10 +1065,6 @@ namespace CodexQuotaBar {
         targetLeft = clamped.x;
         targetTop = clamped.y;
         if (!m_expanded) {
-            if (IsWeatherDockActive()) {
-                DockToWeatherWidget();
-                return;
-            }
             m_collapsedLocation = clamped;
             m_hasCollapsedLocation = true;
         }
@@ -1209,15 +1199,19 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::HandleContextMenu(int screenX, int screenY) {
+        const bool componentMode = IsWeatherDockActive();
         const std::vector<MenuItem> items = {
-            { IDM_TOGGLE_EXPAND, m_expanded ? L"收起详情" : L"展开详情" },
-            { IDM_MINI_MODE, m_settings.miniMode ? L"迷你模式：开" : L"迷你模式：关" },
-            { IDM_DOCK_TO_WEATHER, m_settings.dockToWeather ? L"固定到天气组件：开" : L"固定到天气组件：关" },
+            { componentMode ? 0 : IDM_TOGGLE_EXPAND, componentMode ? L"展开详情（已锁定）"
+                : (m_expanded ? L"收起详情" : L"展开详情") },
+            { componentMode ? 0 : IDM_MINI_MODE, componentMode ? L"迷你模式：开（已锁定）"
+                : (m_settings.miniMode ? L"迷你模式：开" : L"迷你模式：关") },
+            { IDM_COMPONENT_MODE, componentMode ? L"组件模式：开" : L"组件模式：关" },
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_FONT_SUB, L"字体选择" },
             { IDM_APPEARANCE_SUB, L"外观配置" },
-            { IDM_ALWAYS_ON_TOP, m_settings.alwaysOnTop ? L"置顶模式：开" : L"置顶模式：关" },
+            { componentMode ? 0 : IDM_ALWAYS_ON_TOP, componentMode ? L"置顶模式：开（已锁定）"
+                : (m_settings.alwaysOnTop ? L"置顶模式：开" : L"置顶模式：关") },
             { IDM_COMPANION_MODE, m_companionMode ? L"伴随模式：开" : L"伴随模式：关" },
             { 0, L"" }, // 分隔线
             { IDM_EXIT, L"退出" },
@@ -1232,8 +1226,8 @@ namespace CodexQuotaBar {
             ToggleExpanded();
         } else if (cmd == IDM_MINI_MODE) {
             ToggleMiniMode();
-        } else if (cmd == IDM_DOCK_TO_WEATHER) {
-            SetWeatherDocked(!m_settings.dockToWeather);
+        } else if (cmd == IDM_COMPONENT_MODE) {
+            SetComponentMode(!IsWeatherDockActive());
         } else if (cmd == IDM_REFRESH) {
             RefreshQuota();
         } else if (cmd == IDM_REFRESH_INTERVAL_SUB) {
@@ -1303,6 +1297,7 @@ namespace CodexQuotaBar {
             return 0;
 
         case WM_LBUTTONDOWN: {
+            if (IsWeatherDockActive()) return 0;
             const POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             POINT screenPt = pt;
             if (!m_dragging && IsHeaderArea(pt) && !IsExpandButtonArea(pt) &&
@@ -1371,13 +1366,7 @@ namespace CodexQuotaBar {
                     const bool snapped = m_weatherMetrics.hTaskbar && TaskbarPlacement::IsNearDockPosition(
                         POINT{ rc.left, rc.top }, placement.dockPosition, snapThreshold);
 
-                    if (snapped != m_settings.dockToWeather && SetWeatherDocked(snapped)) {
-                        return 0;
-                    }
-                    if (IsWeatherDockActive()) {
-                        DockToWeatherWidget();
-                        return 0;
-                    }
+                    if (snapped && SetComponentMode(true)) return 0;
                 }
 
                 OnWindowMoved();
@@ -1394,8 +1383,7 @@ namespace CodexQuotaBar {
         case WM_CAPTURECHANGED:
             if (m_dragging) {
                 m_dragging = false;
-                if (IsWeatherDockActive()) DockToWeatherWidget();
-                else OnWindowMoved();
+                OnWindowMoved();
             }
             break;
 

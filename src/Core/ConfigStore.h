@@ -29,6 +29,14 @@ namespace CodexQuotaBar {
         AppearanceSettings appearance;
         // config-default.json 中的只读外观基线，不写入用户配置。
         AppearanceSettings defaultAppearance;
+
+        void SetComponentMode(bool enabled) {
+            dockToWeather = enabled;
+            if (enabled) {
+                miniMode = true;
+                alwaysOnTop = true;
+            }
+        }
     };
 
     // 安装版默认配置位于 app\config-default.json；用户设置位于
