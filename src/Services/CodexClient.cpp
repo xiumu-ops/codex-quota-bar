@@ -38,12 +38,17 @@ namespace CodexQuotaBar {
             { 1000000LL, L'M' },
             { 1000LL, L'K' }
         };
+        constexpr size_t unitCount = sizeof(units) / sizeof(units[0]);
 
-        for (const Unit& unit : units) {
+        for (size_t i = 0; i < unitCount; ++i) {
+            const Unit& unit = units[i];
             if (tokens < unit.divisor) continue;
             const double scaled = static_cast<double>(tokens) / static_cast<double>(unit.divisor);
             wchar_t number[32] = {};
             swprintf_s(number, L"%.2f", scaled);
+            if (wcscmp(number, L"1000.00") == 0 && i > 0) {
+                return std::wstring(L"1.00 ") + units[i - 1].suffix;
+            }
             return std::wstring(number) + L' ' + unit.suffix;
         }
         return std::to_wstring(tokens);
@@ -294,19 +299,18 @@ namespace CodexQuotaBar {
             const bool quotaSuccess = snapshot.success;
             const bool statsSuccess = ParseAccountUsage(usageResponse, snapshot.stats);
             snapshot.statsSynchronized = statsSuccess;
-            if (quotaSuccess && statsSuccess) return snapshot;
-
-            snapshot.success = false;
-            if (!quotaSuccess) {
-                if (error.empty()) error = snapshot.errorMessage;
-            } else if (!statsSuccess) {
-                snapshot.errorMessage = usageError.empty()
-                    ? L"Token 统计响应格式错误"
-                    : L"Token 统计同步失败：" + usageError;
+            if (quotaSuccess) {
+                if (!statsSuccess) {
+                    snapshot.errorMessage = usageError.empty()
+                        ? L"Token 统计响应格式错误"
+                        : L"Token 统计同步失败：" + usageError;
+                }
+                return snapshot;
             }
 
-            if (quotaSuccess || !usageResponse.empty()) return snapshot;
+            snapshot.success = false;
             if (error.empty()) error = snapshot.errorMessage;
+            if (!usageResponse.empty()) return snapshot;
         }
 
         QuotaSnapshot unavailable;

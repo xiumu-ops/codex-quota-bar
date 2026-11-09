@@ -226,7 +226,7 @@ namespace {
             object,
             L"Settings",
             { L"UserScale", L"CompanionMode", L"AlwaysOnTop", L"MiniMode",
-              L"RefreshIntervalMinutes", L"Appearance" },
+              L"DockToWeather", L"RefreshIntervalMinutes", L"Appearance" },
             errors);
 
         if (object.has_key(L"UserScale")) {
@@ -259,6 +259,13 @@ namespace {
                 settings.miniMode = object[L"MiniMode"].as_bool(false);
             } else {
                 AppendValidationError(errors, L"Settings.MiniMode 必须是布尔值");
+            }
+        }
+        if (object.has_key(L"DockToWeather")) {
+            if (object[L"DockToWeather"].is_bool()) {
+                settings.dockToWeather = object[L"DockToWeather"].as_bool(false);
+            } else {
+                AppendValidationError(errors, L"Settings.DockToWeather 必须是布尔值");
             }
         }
         if (object.has_key(L"RefreshIntervalMinutes")) {
@@ -490,6 +497,8 @@ namespace {
              << (data.settings.alwaysOnTop ? "true" : "false") << ",\n";
         file << "    \"MiniMode\": "
              << (data.settings.miniMode ? "true" : "false") << ",\n";
+        file << "    \"DockToWeather\": "
+             << (data.settings.dockToWeather ? "true" : "false") << ",\n";
         file << "    \"RefreshIntervalMinutes\": "
              << data.settings.refreshIntervalMinutes << ",\n";
         file << "    \"Appearance\": {\n";

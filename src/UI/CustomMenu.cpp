@@ -200,6 +200,7 @@ namespace CodexQuotaBar {
                 return 0;
 
             case WM_CAPTURECHANGED:
+            case WM_KILLFOCUS:
                 PostMessageW(hwnd, WM_CQB_MENU_END, 0, 0);
                 return 0;
 

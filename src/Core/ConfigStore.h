@@ -24,6 +24,7 @@ namespace CodexQuotaBar {
         bool companionMode = false;
         bool alwaysOnTop = true;
         bool miniMode = false;
+        bool dockToWeather = false;
         int refreshIntervalMinutes = 1;
         AppearanceSettings appearance;
         // config-default.json 中的只读外观基线，不写入用户配置。

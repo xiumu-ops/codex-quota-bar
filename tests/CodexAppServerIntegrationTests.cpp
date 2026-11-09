@@ -102,7 +102,7 @@ int wmain(int argc, wchar_t** argv) {
     Expect(!freePlan.weekly.available,
            "missing secondary quota remains unavailable instead of being fabricated");
 
-    std::cout << "Token unit precision\n";
+    std::cout << "Token unit precision and boundary rounding\n";
     QuotaSnapshot smallUnits = Fetch(L"token_units_small");
     Expect(smallUnits.success && smallUnits.stats.totalTokens == L"2.30 M" &&
            smallUnits.stats.peakTokens == L"1.20 K",
@@ -111,6 +111,14 @@ int wmain(int argc, wchar_t** argv) {
     Expect(largeUnits.success && largeUnits.stats.totalTokens == L"4.50 T" &&
            largeUnits.stats.peakTokens == L"3.40 B",
            "B and T units keep two decimals including trailing zeroes");
+    QuotaSnapshot boundaryUnits = Fetch(L"token_rounding_boundary");
+    Expect(boundaryUnits.success && boundaryUnits.stats.totalTokens == L"1.00 M" &&
+           boundaryUnits.stats.peakTokens == L"1.00 B",
+           "boundary rounding upgrades unit instead of displaying 1000.00");
+    QuotaSnapshot belowBoundary = Fetch(L"token_rounding_below_boundary");
+    Expect(belowBoundary.success && belowBoundary.stats.totalTokens == L"999.99 K" &&
+           belowBoundary.stats.peakTokens == L"999.99 M",
+           "just below boundary keeps lower unit at 999.99");
 
     std::cout << "Nullable official usage fields\n";
     QuotaSnapshot nullable = Fetch(L"nullable");
@@ -122,14 +130,14 @@ int wmain(int argc, wchar_t** argv) {
 
     std::cout << "Invalid usage field type\n";
     QuotaSnapshot invalidType = Fetch(L"invalid_type");
-    Expect(!invalidType.success, "non-null invalid field type fails synchronization");
+    Expect(invalidType.success, "quota synchronization succeeds even with invalid usage summary");
     Expect(!invalidType.statsSynchronized, "invalid summary is not marked synchronized");
     Expect(invalidType.window.available && invalidType.weekly.available,
            "quota data survives malformed usage fields");
 
     std::cout << "Partial failure handling\n";
     QuotaSnapshot usageError = Fetch(L"usage_error");
-    Expect(!usageError.success, "usage endpoint error marks full synchronization failed");
+    Expect(usageError.success, "quota synchronization succeeds even with usage endpoint failure");
     Expect(!usageError.statsSynchronized, "failed usage request is not marked synchronized");
     Expect(usageError.window.available && usageError.weekly.available,
            "quota data survives a usage endpoint failure");

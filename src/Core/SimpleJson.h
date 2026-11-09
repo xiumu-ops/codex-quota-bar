@@ -1,11 +1,13 @@
 #pragma once
 
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -387,21 +389,18 @@ namespace CodexQuotaBar {
 
             JsonValue val;
             val.type = JsonType::Number;
-            try {
-                size_t consumed = 0;
-                const std::wstring token = s.substr(start, idx - start);
-                val.numVal = std::stod(token, &consumed);
-                if (consumed != token.size() || !std::isfinite(val.numVal)) {
-                    ok = false;
-                    return {};
-                }
-            } catch (const std::invalid_argument&) {
-                ok = false;
-                return {};
-            } catch (const std::out_of_range&) {
+            std::string token;
+            token.reserve(idx - start);
+            for (size_t i = start; i < idx; ++i) {
+                token.push_back(static_cast<char>(s[i]));
+            }
+            double number = 0.0;
+            const auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), number);
+            if (ec != std::errc{} || ptr != token.data() + token.size() || !std::isfinite(number)) {
                 ok = false;
                 return {};
             }
+            val.numVal = number;
             return val;
         }
     };

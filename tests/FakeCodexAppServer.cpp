@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
             if (!Contains(line, "\"method\":\"initialize\"") ||
                 !Contains(line, "\"id\":1") ||
                 !Contains(line, "\"name\":\"codex_quota_bar\"") ||
-                !Contains(line, "\"version\":\"2.8.0\"")) {
+                !Contains(line, "\"version\":\"3.0.0\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
             // 非 JSON 诊断行用于覆盖客户端的输出降噪路径。
@@ -129,6 +129,20 @@ int main(int argc, char** argv) {
                 std::cout
                     << "{\"id\":3,\"result\":{\"summary\":{"
                        "\"lifetimeTokens\":4500000000000,\"peakDailyTokens\":3400000000,"
+                       "\"longestRunningTurnSec\":null,\"currentStreakDays\":null"
+                       "}}}"
+                    << std::endl;
+            } else if (scenario == "token_rounding_boundary") {
+                std::cout
+                    << "{\"id\":3,\"result\":{\"summary\":{"
+                       "\"lifetimeTokens\":999995,\"peakDailyTokens\":999995000,"
+                       "\"longestRunningTurnSec\":null,\"currentStreakDays\":null"
+                       "}}}"
+                    << std::endl;
+            } else if (scenario == "token_rounding_below_boundary") {
+                std::cout
+                    << "{\"id\":3,\"result\":{\"summary\":{"
+                       "\"lifetimeTokens\":999994,\"peakDailyTokens\":999994000,"
                        "\"longestRunningTurnSec\":null,\"currentStreakDays\":null"
                        "}}}"
                     << std::endl;

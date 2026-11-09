@@ -55,6 +55,8 @@ namespace CodexQuotaBar {
         void ToggleVisible();
         void ToggleExpanded();
         void ToggleMiniMode();
+        void ToggleDockToWeather();
+        void DockToWeatherWidget();
         void RefreshQuota();
         void ToggleAlwaysOnTop();
         void ToggleCompanionMode();
@@ -69,7 +71,7 @@ namespace CodexQuotaBar {
         SIZE CollapsedPhysicalWindowSize() const;
         SIZE PhysicalWindowSize() const;
         void ApplyCurrentWindowEffects() const;
-        POINT ClampToScreens(POINT pt, SIZE sz) const;
+        POINT ClampToScreens(POINT pt, SIZE sz, bool allowTaskbarArea = false) const;
 
         struct FetchResultState {
             std::mutex mutex;
@@ -86,8 +88,9 @@ namespace CodexQuotaBar {
         std::atomic<HWND> m_hwnd{ NULL };
         float m_dpiScale = 1.0f;  // 系统 DPI 系数（96 基准）
         float m_uiScale = 1.0f;   // 总缩放 = dpiScale × 用户档位（几何/字体/命中统一使用）
-        int m_userScaleLevel = 2; // 用户缩放档位索引（0.75/0.875/1.0/1.125/1.25）
+        int m_userScaleLevel = DEFAULT_USER_SCALE_LEVEL; // 用户缩放档位索引（20%~180%，步长 20%）
         int m_refreshIntervalLevel = 0; // 自动刷新档位索引（1/5/10/30/60 分钟）
+        UINT m_wmTaskbarCreated = 0;
         int m_currentDpi = 96;
         AppSettings m_settings;
         bool m_companionMode = false;

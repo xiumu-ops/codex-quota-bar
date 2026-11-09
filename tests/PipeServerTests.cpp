@@ -89,6 +89,11 @@ int main() {
            "silent client is canceled and the server recovers");
     if (silent != INVALID_HANDLE_VALUE) CloseHandle(silent);
 
+    for (int i = 0; i < 5; ++i) {
+        Expect(PipeServer::SendCommand(name, L"PING " + std::to_wstring(i), 1000) == L"OK",
+               "rapid sequential command on reused pipe handle succeeds");
+    }
+
     server.Stop();
     _wputenv_s(L"CODEX_QUOTA_DISABLE_LOG", L"");
     return g_failures == 0 ? 0 : 1;

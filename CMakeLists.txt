@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
-project(Codex-Quota-Bar VERSION 2.8.0 LANGUAGES CXX)
+project(Codex-Quota-Bar VERSION 3.0.0 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Codex-Quota-Bar supports Windows 11 x64 with MSVC only.")
@@ -49,12 +49,14 @@ set(UI_HEADERS
     src/UI/CustomMenu.h
     src/UI/AppearanceDialog.h
     src/UI/WindowEffects.h
+    src/UI/TaskbarPlacement.h
 )
 
 set(UI_SOURCES
     src/UI/MainWindow.cpp
     src/UI/CustomMenu.cpp
     src/UI/AppearanceDialog.cpp
+    src/UI/TaskbarPlacement.cpp
 )
 
 set(SERVICES_HEADERS
@@ -143,6 +145,7 @@ target_link_libraries(CodexQuotaBarApp
     gdi32
     shell32
     ole32
+    oleaut32
     comdlg32
     d2d1
     dwrite

@@ -5,6 +5,7 @@
     "CompanionMode": false,
     "AlwaysOnTop": true,
     "MiniMode": false,
+    "DockToWeather": false,
     "RefreshIntervalMinutes": 1,
     "Appearance": {
       "Mode": "Default",

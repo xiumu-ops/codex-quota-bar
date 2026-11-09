@@ -1,5 +1,7 @@
 #include "Core/SimpleJson.h"
 
+#include <clocale>
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -31,6 +33,14 @@ int main() {
     Expect(!Parses(L"01"), "leading zero is rejected");
     Expect(!Parses(L"\"\\uDC00\""), "unpaired low surrogate is rejected");
     Expect(!Parses(L"1e9999"), "non-finite number is rejected");
+
+    std::setlocale(LC_ALL, "German");
+    JsonValue localeVal;
+    Expect(JsonParser::TryParse(L"{\"usedPercent\":37.5,\"rate\":0.001}", localeVal) &&
+           std::abs(localeVal[L"usedPercent"].as_double() - 37.5) < 1e-9 &&
+           std::abs(localeVal[L"rate"].as_double() - 0.001) < 1e-9,
+           "floating-point numbers parse independently of C runtime locale");
+    std::setlocale(LC_ALL, "C");
 
     std::wstring maxDepth;
     for (size_t i = 0; i < JsonParser::kMaxDepth; ++i) maxDepth += L'[';

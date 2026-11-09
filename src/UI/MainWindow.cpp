@@ -10,6 +10,7 @@
 #include "Core/Settings.h"
 #include "Core/ConfigStore.h"
 #include "UI/WindowEffects.h"
+#include "UI/TaskbarPlacement.h"
 #include "resources/resource.h"
 
 #include <commdlg.h>
@@ -33,8 +34,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_COMPANION_MODE = 2004;
     constexpr int IDM_ALWAYS_ON_TOP = 2005;
     constexpr int IDM_MINI_MODE = 2006;
-    constexpr int IDM_SCALE_SUB = 2100;        // 一级菜单：进入缩放子菜单
-    constexpr int IDM_SCALE_LEVEL_BASE = 2101; // 二级菜单：档位 id 基址（+0..4）
+    constexpr int IDM_DOCK_TO_WEATHER = 2007;
     constexpr int IDM_REFRESH_INTERVAL_SUB = 2200;
     constexpr int IDM_REFRESH_INTERVAL_BASE = 2201; // 二级菜单：刷新档位 id 基址（+0..4）
     constexpr int IDM_APPEARANCE_SUB = 2300;
@@ -61,16 +61,6 @@ namespace CodexQuotaBar {
                 }
             }
             return best;
-        }
-
-        // 档位 → 百分比文案："75%" / "87.5%" / "100%" / "112.5%" / "125%"
-        std::wstring ScaleLevelText(int level) {
-            wchar_t buf[16] = {};
-            swprintf_s(
-                buf,
-                L"%g%%",
-                USER_SCALE_LEVELS[static_cast<std::size_t>(level)] * 100.0);
-            return buf;
         }
 
         int ClosestRefreshIntervalLevel(int minutes) {
@@ -188,6 +178,8 @@ namespace CodexQuotaBar {
         }
         ApplyAppearance(settingsErrors);
 
+        m_wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+
         // 获取当前屏幕 DPI 并确定初始窗口坐标，再统一完成缩放渲染与分层提交
         UINT dpi = GetDpiForWindow(m_hwnd);
         if (dpi == 0) dpi = BASE_DPI;
@@ -199,7 +191,12 @@ namespace CodexQuotaBar {
         const SIZE initialPhysical = PhysicalWindowSize();
         POINT initialPosition = {};
         auto stored = ConfigStore::LoadState();
-        if (stored.hasPosition) {
+        if (m_settings.miniMode && m_settings.dockToWeather) {
+            const WeatherWidgetPlacement placement =
+                TaskbarPlacement::FindWeatherWidgetPlacement(
+                    initialPhysical, m_dpiScale, m_uiScale);
+            initialPosition = ClampToScreens(placement.dockPosition, initialPhysical, true);
+        } else if (stored.hasPosition) {
             initialPosition = ClampToScreens(stored.position, initialPhysical);
         } else {
             RECT rcWork = {};
@@ -275,6 +272,11 @@ namespace CodexQuotaBar {
         m_renderer->Resize(
             static_cast<UINT>(targetW),
             static_cast<UINT>(targetH));
+
+        if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+            DockToWeatherWidget();
+            return;
+        }
 
         RECT rc = {};
         GetWindowRect(m_hwnd, &rc);
@@ -587,9 +589,10 @@ namespace CodexQuotaBar {
             return;
         }
 
+        const bool isDockedMini = m_settings.miniMode && m_settings.dockToWeather && !m_expanded;
         SetWindowPos(
             m_hwnd,
-            m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+            (m_settings.alwaysOnTop || isDockedMini) ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         SyncWindowPosition(false);
@@ -598,6 +601,9 @@ namespace CodexQuotaBar {
     void MainWindow::ToggleMiniMode() {
         const bool previous = m_settings.miniMode;
         m_settings.miniMode = !previous;
+        if (!m_settings.miniMode && m_settings.dockToWeather) {
+            m_settings.dockToWeather = false;
+        }
         if (!SaveSettingsWithFeedback()) {
             m_settings.miniMode = previous;
             return;
@@ -608,11 +614,90 @@ namespace CodexQuotaBar {
             return;
         }
         if (!m_expanded) {
+            if (!m_settings.miniMode && !m_settings.alwaysOnTop) {
+                SetWindowPos(
+                    m_hwnd,
+                    HWND_NOTOPMOST,
+                    0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
             ApplyUiScale();
-            if (m_hasCollapsedLocation) {
+            if (m_settings.miniMode && m_settings.dockToWeather) {
+                DockToWeatherWidget();
+            } else if (m_hasCollapsedLocation) {
                 ConfigStore::SavePosition(m_collapsedLocation);
             }
         }
+    }
+
+    void MainWindow::ToggleDockToWeather() {
+        const bool previous = m_settings.dockToWeather;
+        m_settings.dockToWeather = !previous;
+
+        if (m_settings.dockToWeather) {
+            if (!m_settings.miniMode) {
+                m_settings.miniMode = true;
+            }
+            if (m_expanded) {
+                m_expanded = false;
+            }
+        }
+
+        if (!SaveSettingsWithFeedback()) {
+            m_settings.dockToWeather = previous;
+            return;
+        }
+
+        if (m_settings.dockToWeather) {
+            ApplyUiScale();
+            DockToWeatherWidget();
+        } else {
+            if (!m_settings.alwaysOnTop) {
+                SetWindowPos(
+                    m_hwnd,
+                    HWND_NOTOPMOST,
+                    0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+            RECT rc = {};
+            GetWindowRect(m_hwnd, &rc);
+            const SIZE sz = PhysicalWindowSize();
+            const POINT clamped = ClampToScreens({ rc.left, rc.top }, sz, false);
+            m_collapsedLocation = clamped;
+            m_hasCollapsedLocation = true;
+            SetWindowPos(
+                m_hwnd, NULL,
+                clamped.x, clamped.y,
+                sz.cx, sz.cy,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+            RenderLayeredWindow();
+            DwmFlush();
+            ConfigStore::SavePosition(m_collapsedLocation);
+        }
+    }
+
+    void MainWindow::DockToWeatherWidget() {
+        if (!m_hwnd || !m_settings.miniMode || m_expanded) return;
+
+        const SIZE sz = PhysicalWindowSize();
+        const WeatherWidgetPlacement placement =
+            TaskbarPlacement::FindWeatherWidgetPlacement(sz, m_dpiScale, m_uiScale);
+
+        const POINT pos = ClampToScreens(placement.dockPosition, sz, true);
+        m_collapsedLocation = pos;
+        m_hasCollapsedLocation = true;
+
+        SetWindowPos(
+            m_hwnd, HWND_TOPMOST,
+            pos.x, pos.y,
+            sz.cx, sz.cy,
+            SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+
+        ApplyCurrentWindowEffects();
+        RenderLayeredWindow();
+        DwmFlush();
+
+        ConfigStore::SavePosition(m_collapsedLocation);
     }
 
     void MainWindow::ToggleCompanionMode() {
@@ -741,22 +826,146 @@ namespace CodexQuotaBar {
         }
     }
 
-    POINT MainWindow::ClampToScreens(POINT pt, SIZE sz) const {
-        HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi = { sizeof(MONITORINFO) };
-        GetMonitorInfoW(hMon, &mi);
-        // 置顶只控制窗口层级，不改变可停靠范围。任务栏等系统保留区域
-        // 可能覆盖同为 TOPMOST 的分层窗口，因此所有模式统一使用工作区。
-        const RECT area = mi.rcWork;
+    POINT MainWindow::ClampToScreens(POINT pt, SIZE sz, bool allowTaskbarArea) const {
+        std::vector<RECT> workAreas;
+        const bool useMonitorBounds = allowTaskbarArea ||
+            (m_settings.miniMode && m_settings.dockToWeather && !m_expanded);
+
+        struct EnumContext {
+            std::vector<RECT>* pAreas;
+            bool useMonitor;
+        } ctx = { &workAreas, useMonitorBounds };
+
+        EnumDisplayMonitors(
+            NULL, NULL,
+            [](HMONITOR hMon, HDC, LPRECT, LPARAM lParam) -> BOOL {
+                auto* pCtx = reinterpret_cast<EnumContext*>(lParam);
+                MONITORINFO mi = { sizeof(MONITORINFO) };
+                if (GetMonitorInfoW(hMon, &mi)) {
+                    pCtx->pAreas->push_back(pCtx->useMonitor ? mi.rcMonitor : mi.rcWork);
+                }
+                return TRUE;
+            },
+            reinterpret_cast<LPARAM>(&ctx));
+
+        if (workAreas.empty()) {
+            RECT rcDefault = {};
+            if (useMonitorBounds) {
+                rcDefault = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+            } else {
+                SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcDefault, 0);
+            }
+            workAreas.push_back(rcDefault);
+        }
+
+        // 1. 计算所有显示器工作区构成的虚拟屏幕外包围矩形
+        RECT virtualWork = workAreas[0];
+        for (size_t i = 1; i < workAreas.size(); ++i) {
+            virtualWork.left = (std::min)(virtualWork.left, workAreas[i].left);
+            virtualWork.top = (std::min)(virtualWork.top, workAreas[i].top);
+            virtualWork.right = (std::max)(virtualWork.right, workAreas[i].right);
+            virtualWork.bottom = (std::max)(virtualWork.bottom, workAreas[i].bottom);
+        }
 
         POINT clamped = pt;
-        if (clamped.x < area.left) clamped.x = area.left;
-        if (clamped.x + sz.cx > area.right) clamped.x = area.right - sz.cx;
-        if (clamped.x < area.left) clamped.x = area.left;
 
-        if (clamped.y < area.top) clamped.y = area.top;
-        if (clamped.y + sz.cy > area.bottom) clamped.y = area.bottom - sz.cy;
-        if (clamped.y < area.top) clamped.y = area.top;
+        // 2. 找到与目标窗口矩形相交面积最大或最近的基准显示器
+        RECT targetRect = { pt.x, pt.y, pt.x + sz.cx, pt.y + sz.cy };
+        HMONITOR hMon = MonitorFromRect(&targetRect, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(MONITORINFO) };
+        if (!hMon || !GetMonitorInfoW(hMon, &mi)) {
+            mi.rcWork = virtualWork;
+            mi.rcMonitor = virtualWork;
+        }
+        const RECT curWork = useMonitorBounds ? mi.rcMonitor : mi.rcWork;
+
+        // 3. 跨显示器边界检查：
+        // 只有当窗口向某一方向超出当前显示器工作区，且该方向没有相邻显示器工作区可接纳时，
+        // 才钳制到当前显示器边界。存在相邻显示器时，允许平滑越过边界，仅受全局虚拟屏幕限制。
+        if (workAreas.size() == 1) {
+            // 单显示器直接钳制到该工作区
+            if (clamped.x < curWork.left) clamped.x = curWork.left;
+            if (clamped.x + sz.cx > curWork.right) clamped.x = curWork.right - sz.cx;
+            if (clamped.x < curWork.left) clamped.x = curWork.left;
+
+            if (clamped.y < curWork.top) clamped.y = curWork.top;
+            if (clamped.y + sz.cy > curWork.bottom) clamped.y = curWork.bottom - sz.cy;
+            if (clamped.y < curWork.top) clamped.y = curWork.top;
+            return clamped;
+        }
+
+        // 多显示器：检查右侧
+        if (clamped.x + sz.cx > curWork.right) {
+            bool hasRightNeighbor = false;
+            for (const RECT& area : workAreas) {
+                if (area.right > curWork.right &&
+                    area.left <= curWork.right &&
+                    (clamped.y < area.bottom && clamped.y + sz.cy > area.top)) {
+                    hasRightNeighbor = true;
+                    break;
+                }
+            }
+            if (!hasRightNeighbor) {
+                clamped.x = curWork.right - sz.cx;
+            }
+        }
+
+        // 检查左侧
+        if (clamped.x < curWork.left) {
+            bool hasLeftNeighbor = false;
+            for (const RECT& area : workAreas) {
+                if (area.left < curWork.left &&
+                    area.right >= curWork.left &&
+                    (clamped.y < area.bottom && clamped.y + sz.cy > area.top)) {
+                    hasLeftNeighbor = true;
+                    break;
+                }
+            }
+            if (!hasLeftNeighbor) {
+                clamped.x = curWork.left;
+            }
+        }
+
+        // 检查下方
+        if (clamped.y + sz.cy > curWork.bottom) {
+            bool hasBottomNeighbor = false;
+            for (const RECT& area : workAreas) {
+                if (area.bottom > curWork.bottom &&
+                    area.top <= curWork.bottom &&
+                    (clamped.x < area.right && clamped.x + sz.cx > area.left)) {
+                    hasBottomNeighbor = true;
+                    break;
+                }
+            }
+            if (!hasBottomNeighbor) {
+                clamped.y = curWork.bottom - sz.cy;
+            }
+        }
+
+        // 检查上方
+        if (clamped.y < curWork.top) {
+            bool hasTopNeighbor = false;
+            for (const RECT& area : workAreas) {
+                if (area.top < curWork.top &&
+                    area.bottom >= curWork.top &&
+                    (clamped.x < area.right && clamped.x + sz.cx > area.left)) {
+                    hasTopNeighbor = true;
+                    break;
+                }
+            }
+            if (!hasTopNeighbor) {
+                clamped.y = curWork.top;
+            }
+        }
+
+        // 4. 最终保证窗口落在虚拟屏幕整体范围内
+        if (clamped.x < virtualWork.left) clamped.x = virtualWork.left;
+        if (clamped.x + sz.cx > virtualWork.right) clamped.x = virtualWork.right - sz.cx;
+        if (clamped.x < virtualWork.left) clamped.x = virtualWork.left;
+
+        if (clamped.y < virtualWork.top) clamped.y = virtualWork.top;
+        if (clamped.y + sz.cy > virtualWork.bottom) clamped.y = virtualWork.bottom - sz.cy;
+        if (clamped.y < virtualWork.top) clamped.y = virtualWork.top;
 
         return clamped;
     }
@@ -833,6 +1042,10 @@ namespace CodexQuotaBar {
         targetLeft = clamped.x;
         targetTop = clamped.y;
         if (!m_expanded) {
+            if (m_settings.miniMode && m_settings.dockToWeather) {
+                DockToWeatherWidget();
+                return;
+            }
             m_collapsedLocation = clamped;
             m_hasCollapsedLocation = true;
         }
@@ -957,6 +1170,7 @@ namespace CodexQuotaBar {
         const std::vector<MenuItem> items = {
             { IDM_TOGGLE_EXPAND, m_expanded ? L"收起详情" : L"展开详情" },
             { IDM_MINI_MODE, m_settings.miniMode ? L"迷你模式：开" : L"迷你模式：关" },
+            { IDM_DOCK_TO_WEATHER, m_settings.dockToWeather ? L"固定到天气组件：开" : L"固定到天气组件：关" },
             { IDM_REFRESH, L"立即刷新" },
             { IDM_REFRESH_INTERVAL_SUB, L"刷新间隔" },
             { IDM_FONT_SUB, L"字体选择" },
@@ -976,6 +1190,8 @@ namespace CodexQuotaBar {
             ToggleExpanded();
         } else if (cmd == IDM_MINI_MODE) {
             ToggleMiniMode();
+        } else if (cmd == IDM_DOCK_TO_WEATHER) {
+            ToggleDockToWeather();
         } else if (cmd == IDM_REFRESH) {
             RefreshQuota();
         } else if (cmd == IDM_REFRESH_INTERVAL_SUB) {
@@ -993,22 +1209,6 @@ namespace CodexQuotaBar {
                 interval < IDM_REFRESH_INTERVAL_BASE +
                     static_cast<int>(REFRESH_INTERVAL_MINUTES.size())) {
                 ApplyRefreshInterval(interval - IDM_REFRESH_INTERVAL_BASE);
-            }
-        } else if (cmd == IDM_SCALE_SUB) {
-            std::vector<MenuItem> scaleItems;
-            for (std::size_t i = 0; i < USER_SCALE_LEVELS.size(); ++i) {
-                const int level = static_cast<int>(i);
-                std::wstring text = ScaleLevelText(level);
-                if (level == m_userScaleLevel) text += L" (当前)";
-                scaleItems.push_back({ IDM_SCALE_LEVEL_BASE + level, text });
-            }
-            const int level = CustomMenu::Show(
-                m_hwnd, m_uiScale, screenX, screenY, scaleItems,
-                m_renderer->Palette(), m_renderer->FontFamily());
-            if (level >= IDM_SCALE_LEVEL_BASE &&
-                level < IDM_SCALE_LEVEL_BASE +
-                    static_cast<int>(USER_SCALE_LEVELS.size())) {
-                ApplyUserScale(level - IDM_SCALE_LEVEL_BASE);
             }
         } else if (cmd == IDM_FONT_SUB) {
             ShowFontMenu(screenX, screenY);
@@ -1090,7 +1290,8 @@ namespace CodexQuotaBar {
                 }
                 const SIZE sz = PhysicalWindowSize();
                 POINT targetPos = { m_dragWindowPos.x + deltaX, m_dragWindowPos.y + deltaY };
-                POINT clamped = ClampToScreens(targetPos, sz);
+                const bool allowTaskbar = m_settings.miniMode && !m_expanded;
+                POINT clamped = ClampToScreens(targetPos, sz, allowTaskbar);
                 SetWindowPos(m_hwnd, NULL,
                     clamped.x,
                     clamped.y,
@@ -1104,6 +1305,29 @@ namespace CodexQuotaBar {
             if (m_dragging) {
                 m_dragging = false;
                 ReleaseCapture();
+
+                RECT rc = {};
+                GetWindowRect(m_hwnd, &rc);
+                const SIZE sz = PhysicalWindowSize();
+
+                if (m_settings.miniMode && !m_expanded) {
+                    const WeatherWidgetPlacement placement =
+                        TaskbarPlacement::FindWeatherWidgetPlacement(sz, m_dpiScale, m_uiScale);
+                    const int snapThreshold = ScaleEven(24.0f, m_dpiScale);
+                    const bool snapped = TaskbarPlacement::IsNearDockPosition(
+                        POINT{ rc.left, rc.top }, placement.dockPosition, snapThreshold);
+
+                    if (snapped) {
+                        m_settings.dockToWeather = true;
+                        SaveSettingsWithFeedback();
+                        DockToWeatherWidget();
+                        return 0;
+                    } else if (m_settings.dockToWeather) {
+                        m_settings.dockToWeather = false;
+                        SaveSettingsWithFeedback();
+                    }
+                }
+
                 OnWindowMoved();
                 return 0;
             }
@@ -1166,7 +1390,9 @@ namespace CodexQuotaBar {
                     previousMiniWidth != MiniBarLogicalWidth(m_snapshot);
                 if (miniWidthChanged) {
                     ApplyUiScale();
-                    if (m_hasCollapsedLocation) {
+                    if (m_settings.dockToWeather) {
+                        DockToWeatherWidget();
+                    } else if (m_hasCollapsedLocation) {
                         ConfigStore::SavePosition(m_collapsedLocation);
                     }
                 } else if (IsWindowVisible(m_hwnd)) {
@@ -1188,14 +1414,23 @@ namespace CodexQuotaBar {
 
         case 0x02E0: // WM_DPICHANGED
             OnDpiChanged(LOWORD(wParam), reinterpret_cast<const RECT*>(lParam));
+            if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+                DockToWeatherWidget();
+            }
             return 0;
 
         case WM_DISPLAYCHANGE:
-            SyncWindowPosition(false);
+            if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+                DockToWeatherWidget();
+            } else {
+                SyncWindowPosition(false);
+            }
             break;
 
         case WM_SETTINGCHANGE:
-            if (wParam == SPI_SETWORKAREA) {
+            if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+                DockToWeatherWidget();
+            } else if (wParam == SPI_SETWORKAREA) {
                 SyncWindowPosition(false);
             }
             break;
@@ -1228,6 +1463,15 @@ namespace CodexQuotaBar {
             m_hwnd = NULL;
             return result;
         }
+
+        default:
+            if (m_wmTaskbarCreated != 0 && msg == m_wmTaskbarCreated) {
+                if (m_settings.miniMode && m_settings.dockToWeather && !m_expanded) {
+                    DockToWeatherWidget();
+                }
+                return 0;
+            }
+            break;
         }
 
         return DefWindowProcW(m_hwnd, msg, wParam, lParam);

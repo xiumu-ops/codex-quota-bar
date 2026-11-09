@@ -333,7 +333,7 @@ bool RegisterUninstaller(const std::filesystem::path& installDir,
     const std::wstring quietCommand = uninstallCommand + L" /quiet";
     bool ok =
         SetRegistryString(key, L"DisplayName", kProductName) &&
-        SetRegistryString(key, L"DisplayVersion", L"2.8.0") &&
+        SetRegistryString(key, L"DisplayVersion", L"3.0.0") &&
         SetRegistryString(key, L"Publisher", L"xiumu-ops") &&
         SetRegistryString(key, L"InstallLocation", installDir.wstring()) &&
         SetRegistryString(key, L"UserDataDir", userDataDir.wstring()) &&

@@ -101,11 +101,6 @@ namespace CodexQuotaBar {
     void PipeServer::ServerThreadLoop(HANDLE initialPipe) {
         HANDLE hPipe = initialPipe;
         while (m_running) {
-            if (hPipe == INVALID_HANDLE_VALUE) {
-                WriteLog(LogLevel::Error, L"IPC 管道被占用或无法安全重建，服务已停止。");
-                break;
-            }
-
             OVERLAPPED ovl = {};
             ovl.hEvent = m_ioEvent;
             ResetEvent(m_ioEvent);
@@ -115,28 +110,26 @@ namespace CodexQuotaBar {
                 DWORD err = GetLastError();
                 if (err == ERROR_IO_PENDING) {
                     DWORD wait = WaitIoOrStop(m_ioEvent, m_stopEvent);
-                    if (wait == WAIT_OBJECT_0 + 1) {
-                        CancelAndDrainIo(hPipe, ovl);
-                        CloseHandle(hPipe);
-                        hPipe = INVALID_HANDLE_VALUE;
-                        break;
-                    }
                     if (wait != WAIT_OBJECT_0) {
                         CancelAndDrainIo(hPipe, ovl);
-                        CloseHandle(hPipe);
-                        hPipe = INVALID_HANDLE_VALUE;
                         break;
                     }
                     DWORD transferred = 0;
                     connected = GetOverlappedResult(hPipe, &ovl, &transferred, FALSE);
                     if (!connected) {
-                        CloseHandle(hPipe);
-                        hPipe = m_running ? CreateServerPipe() : INVALID_HANDLE_VALUE;
+                        if (GetLastError() == ERROR_INVALID_HANDLE) {
+                            WriteLog(LogLevel::Error, L"IPC 管道句柄无效，服务已停止。");
+                            break;
+                        }
+                        DisconnectNamedPipe(hPipe);
                         continue;
                     }
                 } else if (err != ERROR_PIPE_CONNECTED) {
-                    CloseHandle(hPipe);
-                    hPipe = m_running ? CreateServerPipe() : INVALID_HANDLE_VALUE;
+                    if (err == ERROR_INVALID_HANDLE) {
+                        WriteLog(LogLevel::Error, L"IPC 管道句柄无效，服务已停止。");
+                        break;
+                    }
+                    DisconnectNamedPipe(hPipe);
                     continue;
                 } else {
                     connected = TRUE;
@@ -227,11 +220,14 @@ namespace CodexQuotaBar {
                 }
             }
 
-            DisconnectNamedPipe(hPipe);
-            CloseHandle(hPipe);
-            hPipe = m_running ? CreateServerPipe() : INVALID_HANDLE_VALUE;
+            if (!DisconnectNamedPipe(hPipe) && GetLastError() == ERROR_INVALID_HANDLE) {
+                WriteLog(LogLevel::Error, L"IPC 管道句柄无效，服务已停止。");
+                break;
+            }
         }
-        if (hPipe != INVALID_HANDLE_VALUE) CloseHandle(hPipe);
+        if (hPipe != INVALID_HANDLE_VALUE) {
+            CloseHandle(hPipe);
+        }
         m_running = false;
     }
 
@@ -267,8 +263,7 @@ namespace CodexQuotaBar {
             if (error == ERROR_PIPE_BUSY) {
                 WaitNamedPipeW(pipeName.c_str(), waitRemaining);
             } else {
-                // 服务端处理完上一位客户端后会短暂关闭并重建实例。
-                // ERROR_FILE_NOT_FOUND 在这个窗口内是可恢复状态。
+                // 等待服务端启动并建立管道实例
                 Sleep((std::min)(waitRemaining, 10UL));
             }
         }

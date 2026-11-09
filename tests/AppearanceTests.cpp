@@ -1,6 +1,7 @@
 #include "Core/Appearance.h"
 #include "Core/Layout.h"
 #include "Core/Settings.h"
+#include "UI/TaskbarPlacement.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -180,6 +181,71 @@ int main() {
     Expect(!TryParseConfigInteger(2.7, integer),
            "fractional config integer rejected");
 
-    std::cout << "Appearance tests passed\n";
+    // TaskbarPlacement 任务栏天气组件贴靠与居中几何测试
+    const RECT tbRect = { 0, 1032, 1920, 1080 }; // 标准 1080p 底部 48px 任务栏
+    const RECT slotLeft = { 12, 1032, 152, 1080 }; // Windows 11 居中对齐时左侧 140px 天气槽
+    const SIZE miniDual = { 112, 28 };
+    const SIZE miniSingle = { 56, 28 };
+
+    // 1. 实测组件存在时：居中贴靠 (centerInSlot = true)
+    const POINT dockDualCentered = TaskbarPlacement::ComputeDockPosition(slotLeft, tbRect, true, miniDual, true);
+    Expect(dockDualCentered.y == 1042, "mini dual bar vertically centered in 48px taskbar (1032 + (48-28)/2 = 1042)");
+    Expect(dockDualCentered.x == 26, "mini dual bar horizontally centered inside 140px weather slot (12 + (140-112)/2 = 26)");
+
+    const POINT dockSingleCentered = TaskbarPlacement::ComputeDockPosition(slotLeft, tbRect, true, miniSingle, true);
+    Expect(dockSingleCentered.y == 1042, "mini single bar vertically centered in taskbar");
+    Expect(dockSingleCentered.x == 54, "mini single bar horizontally centered inside weather slot (12 + (140-56)/2 = 54)");
+
+    // 2. 几何回退模式：统一左对齐锚定 (centerInSlot = false)
+    const POINT dockDualAnchored = TaskbarPlacement::ComputeDockPosition(slotLeft, tbRect, true, miniDual, false);
+    Expect(dockDualAnchored.y == 1042, "mini dual bar vertically centered in taskbar");
+    Expect(dockDualAnchored.x == 12, "mini dual bar left-anchored to weather slot left edge (12px)");
+
+    const POINT dockSingleAnchored = TaskbarPlacement::ComputeDockPosition(slotLeft, tbRect, true, miniSingle, false);
+    Expect(dockSingleAnchored.y == 1042, "mini single bar vertically centered in taskbar");
+    Expect(dockSingleAnchored.x == 12, "mini single bar left-anchored to weather slot left edge (12px)");
+
+    // 3. 垂直任务栏测试
+    const RECT tbVertical = { 0, 0, 60, 1080 };
+    const RECT slotVertical = { 0, 12, 60, 152 };
+    const POINT dockVertical = TaskbarPlacement::ComputeDockPosition(slotVertical, tbVertical, false, miniDual, true);
+    Expect(dockVertical.x == 0, "vertical taskbar aligns horizontally when slot <= bar width");
+    Expect(dockVertical.y == 12 + (140 - 28) / 2, "vertical taskbar centers vertically inside slot");
+
+    // 4. 屏幕监视器边界钳制测试
+    const RECT monRect = { 0, 0, 1920, 1080 };
+    const POINT inside = TaskbarPlacement::ClampToMonitorBounds(dockDualCentered, miniDual, monRect);
+    Expect(inside.x == dockDualCentered.x && inside.y == dockDualCentered.y, "in-bounds dock position is preserved");
+
+    const POINT offLeft = { -50, 1042 };
+    Expect(TaskbarPlacement::ClampToMonitorBounds(offLeft, miniDual, monRect).x == 0,
+           "offscreen left clamped to monitor left");
+
+    const POINT offRight = { 1900, 1042 };
+    Expect(TaskbarPlacement::ClampToMonitorBounds(offRight, miniDual, monRect).x == 1920 - 112,
+           "offscreen right clamped to monitor right minus bar width");
+
+    const POINT offTop = { 26, -20 };
+    Expect(TaskbarPlacement::ClampToMonitorBounds(offTop, miniDual, monRect).y == 0,
+           "offscreen top clamped to monitor top");
+
+    const POINT offBottom = { 26, 1200 };
+    Expect(TaskbarPlacement::ClampToMonitorBounds(offBottom, miniDual, monRect).y == 1080 - 28,
+           "offscreen bottom clamped to monitor bottom");
+
+    const SIZE oversized = { 2500, 1200 };
+    const POINT clampedOver = TaskbarPlacement::ClampToMonitorBounds(POINT{ 100, 100 }, oversized, monRect);
+    Expect(clampedOver.x == 0 && clampedOver.y == 0,
+           "oversized dimensions clamped to monitor top-left");
+
+    // 5. 吸附检测测试
+    Expect(TaskbarPlacement::IsNearDockPosition(POINT{ 26, 1042 }, dockDualCentered, 24),
+           "exact dock position triggers snap");
+    Expect(TaskbarPlacement::IsNearDockPosition(POINT{ 35, 1050 }, dockDualCentered, 24),
+           "within snap threshold triggers snap");
+    Expect(!TaskbarPlacement::IsNearDockPosition(POINT{ 70, 1042 }, dockDualCentered, 24),
+           "beyond snap threshold does not trigger snap");
+
+    std::cout << "Appearance and TaskbarPlacement tests passed\n";
     return 0;
 }
