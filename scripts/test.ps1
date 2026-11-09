@@ -17,6 +17,12 @@ function Get-TargetProcesses {
 }
 
 $script:Failures = 0
+
+function Fail-Test([string]$message) {
+    Write-Host "  [FAIL] $message" -ForegroundColor Red
+    Write-Host "::error::$message"
+    $script:Failures++
+}
 $ConfigFile = Join-Path $env:LOCALAPPDATA "Codex-Quota-Bar\data\config-users.json"
 $DefaultConfigFile = Join-Path (Split-Path -Parent $ExePath) "config-default.json"
 $backupId = [Guid]::NewGuid().ToString("N")
@@ -55,9 +61,11 @@ foreach ($external in $ExternalInstances) {
 Write-Host "Building executable from current sources..." -ForegroundColor Yellow
 & (Join-Path $ScriptDir "build.ps1")
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $ExePath)) {
+    Write-Host "::error::Build failed; aborting tests."
     throw "Build failed; aborting tests."
 }
 if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
+    Write-Host "::error::Default configuration was not copied beside the application."
     throw "Default configuration was not copied beside the application."
 }
 $defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
@@ -65,6 +73,7 @@ if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
     $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0 -or
     $defaultConfig.Settings.AlwaysOnTop -ne $true -or
     $defaultConfig.Settings.MiniMode -ne $false) {
+    Write-Host "::error::Default configuration content is incomplete."
     throw "Default configuration content is incomplete."
 }
 
@@ -95,8 +104,7 @@ function Expect-ExitCode {
     if ($code -eq $Expected) {
         Write-Host "  [PASS] $Name -> exit $code" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] $Name -> expected $Expected, got $code" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "$Name -> expected $Expected, got $code"
     }
 }
 
@@ -112,15 +120,13 @@ $CMakeBuildDir = Join-Path $ProjectRoot ".build\tests"
 $protocolTestsBuilt = $true
 & cmake -S $ProjectRoot -B $CMakeBuildDir -DBUILD_TESTING=ON
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  [FAIL] CMake 测试工程配置失败" -ForegroundColor Red
-    $script:Failures++
+    Fail-Test "CMake 测试工程配置失败"
     $protocolTestsBuilt = $false
 }
 if ($protocolTestsBuilt) {
     & cmake --build $CMakeBuildDir --config Release --target FakeCodexAppServer CodexAppServerIntegrationTests SimpleJsonTests AppearanceTests PipeServerTests
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [FAIL] App Server 测试程序构建失败" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "App Server 测试程序构建失败"
         $protocolTestsBuilt = $false
     }
 }
@@ -130,8 +136,7 @@ if ($protocolTestsBuilt) {
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [PASS] App Server、IPC 安全、JSON 边界与异常兼容路径" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] App Server 协议集成测试失败" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "App Server 协议集成测试失败"
     }
 }
 
@@ -164,6 +169,7 @@ Write-Host "[2/9] 进程启动..." -ForegroundColor Yellow
 $proc = Start-Process -FilePath $ExePath -PassThru
 Start-Sleep -Milliseconds 800
 if (-not $proc -or $proc.HasExited) {
+    Write-Host "::error::Process failed to start or exited early."
     throw "Process failed to start or exited early."
 }
 Write-Host "  Process running (PID: $($proc.Id))" -ForegroundColor Green
@@ -180,12 +186,10 @@ try {
     if ($configOk) {
         Write-Host "  [PASS] 用户配置与默认配置组合读取正常" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 用户配置与默认配置组合读取不完整" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "用户配置与默认配置组合读取不完整"
     }
 } catch {
-    Write-Host "  [FAIL] 统一配置读取异常：$($_.Exception.Message)" -ForegroundColor Red
-    $script:Failures++
+    Fail-Test "统一配置读取异常：$($_.Exception.Message)"
 }
 
 # 3. 展开态主动拖动后，收起位置必须保持在拖动后的左上角。
@@ -222,26 +226,26 @@ $hwnd = [IntPtr]$proc.MainWindowHandle
 $savedCursor = [CqbPoint]::new()
 [void][CqbNative]::GetCursorPos([ref]$savedCursor)
 try {
-    if ($hwnd -eq [IntPtr]::Zero) { throw "Main window handle is unavailable" }
+    if ($hwnd -eq [IntPtr]::Zero) { Write-Host "::error::Main window handle is unavailable"
+    throw "Main window handle is unavailable" }
 
     $workArea = [CqbRect]::new()
     if (-not [CqbNative]::SystemParametersInfo(48, 0, [ref]$workArea, 0)) {
-        throw "SystemParametersInfo(SPI_GETWORKAREA) failed"
+        Write-Host "::error::SystemParametersInfo(SPI_GETWORKAREA) failed"
+    throw "SystemParametersInfo(SPI_GETWORKAREA) failed"
     }
     $initialRect = Get-CqbWindowRect $hwnd
     if ($initialRect.Bottom -le $workArea.Bottom) {
         Write-Host "  [PASS] 置顶窗口启动位置受工作区约束" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 置顶窗口仍可被任务栏完全遮挡" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "置顶窗口仍可被任务栏完全遮挡"
     }
 
     $extendedStyle = [CqbNative]::GetWindowLongPtr($hwnd, -20).ToInt64()
     if (($extendedStyle -band 0x8) -ne 0) {
         Write-Host "  [PASS] 置顶模式开启且未改变工作区约束" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 置顶模式开启后窗口不是 TOPMOST" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "置顶模式开启后窗口不是 TOPMOST"
     }
 
     $collapsedBefore = Get-CqbWindowRect $hwnd
@@ -255,7 +259,8 @@ try {
     $expandedBeforeDrag = Get-CqbWindowRect $hwnd
     if (($expandedBeforeDrag.Bottom - $expandedBeforeDrag.Top) -le
         ($collapsedBefore.Bottom - $collapsedBefore.Top)) {
-        throw "Window did not expand"
+        Write-Host "::error::Window did not expand"
+    throw "Window did not expand"
     }
 
     $startX = [int][Math]::Round(20.0 * $uiScale)
@@ -289,12 +294,10 @@ try {
     if ($dragMoved -and $anchorKept) {
         Write-Host "  [PASS] 收起后保持展开态拖动位置" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 展开拖动位置未保持（moved=$dragMoved, anchor=$anchorKept）" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "展开拖动位置未保持（moved=$dragMoved, anchor=$anchorKept）"
     }
 } catch {
-    Write-Host "  [FAIL] 展开拖动回归测试异常：$($_.Exception.Message)" -ForegroundColor Red
-    $script:Failures++
+    Fail-Test "展开拖动回归测试异常：$($_.Exception.Message)"
 } finally {
     [void][CqbNative]::SetCursorPos($savedCursor.X, $savedCursor.Y)
 }
@@ -339,8 +342,7 @@ try {
     if ($refreshAfterSilent.ExitCode -eq 0 -and $timer.ElapsedMilliseconds -lt 3500) {
         Write-Host "  [PASS] 空连接超时后 IPC 自动恢复（$($timer.ElapsedMilliseconds)ms）" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] 空连接阻塞 IPC（exit=$($refreshAfterSilent.ExitCode), $($timer.ElapsedMilliseconds)ms）" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "空连接阻塞 IPC（exit=$($refreshAfterSilent.ExitCode), $($timer.ElapsedMilliseconds)ms）"
     }
 } finally {
     $silentClient.Dispose()
@@ -357,8 +359,7 @@ Write-Host "[8/9] EXIT 优雅退出..." -ForegroundColor Yellow
 Expect-ExitCode "--exit" '"--exit"' 0
 Start-Sleep -Milliseconds 800
 if (@(Get-TargetProcesses).Count -gt 0) {
-    Write-Host "  [FAIL] 退出后进程仍在运行" -ForegroundColor Red
-    $script:Failures++
+    Fail-Test "退出后进程仍在运行"
 } else {
     Write-Host "  [PASS] 退出后进程已结束" -ForegroundColor Green
 }
@@ -372,8 +373,7 @@ $oldScenario = $env:CODEX_QUOTA_FAKE_SCENARIO
 $appB = $null
 try {
     if (-not (Test-Path -LiteralPath $fakeCodexPath)) {
-        Write-Host "  [FAIL] FakeCodexAppServer 测试程序不存在" -ForegroundColor Red
-        $script:Failures++
+        Fail-Test "FakeCodexAppServer 测试程序不存在"
     } else {
         $env:CODEX_QUOTA_CODEX_PATH = $fakeCodexPath
         $env:CODEX_QUOTA_FAKE_SCENARIO = "happy"
@@ -386,8 +386,7 @@ try {
         $appB = Start-Process -FilePath $ExePath -PassThru
         Start-Sleep -Milliseconds 300
         if (-not $appB -or $appB.HasExited) {
-            Write-Host "  [FAIL] 迷你栏实例启动失败" -ForegroundColor Red
-            $script:Failures++
+            Fail-Test "迷你栏实例启动失败"
         } else {
             $pipeReady = $false
             $pipeDeadline = (Get-Date).AddSeconds(5)
@@ -420,21 +419,18 @@ try {
                 if ($miniSizeOk) {
                     Write-Host "  [PASS] 双额度迷你栏尺寸响应 120% 用户缩放" -ForegroundColor Green
                 } else {
-                    Write-Host "  [FAIL] 双额度迷你栏尺寸不正确" -ForegroundColor Red
-                    $script:Failures++
+                    Fail-Test "双额度迷你栏尺寸不正确"
                 }
                 if ($miniHwnd -ne [IntPtr]::Zero) {
                     $classStyle = [CqbNative]::GetClassLongPtr($miniHwnd, -26).ToInt64()
                     if (($classStyle -band 0x00020000) -eq 0) {
                         Write-Host "  [PASS] 迷你栏仅使用 DWM 原生投影，无固定下偏阴影" -ForegroundColor Green
                     } else {
-                        Write-Host "  [FAIL] 迷你栏仍叠加固定 CS_DROPSHADOW 投影" -ForegroundColor Red
-                        $script:Failures++
+                        Fail-Test "迷你栏仍叠加固定 CS_DROPSHADOW 投影"
                     }
                 }
             } else {
-                Write-Host "  [FAIL] App Server 实例管道未在 5 秒内就绪" -ForegroundColor Red
-                $script:Failures++
+                Fail-Test "App Server 实例管道未在 5 秒内就绪"
             }
         }
     }

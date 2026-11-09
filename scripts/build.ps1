@@ -68,6 +68,7 @@ cl.exe /nologo $CompileFlags /EHsc /std:c++20 /utf-8 /W4 /WX /permissive- /Zc:pr
 $command = $command -replace "`r?`n", " "
 cmd.exe /d /c $command
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputFile)) {
+    Write-Host "::error::Application build failed with exit code $LASTEXITCODE"
     throw "Application build failed."
 }
 Copy-Item -LiteralPath $DefaultConfigSource -Destination $DefaultConfigOutput -Force
