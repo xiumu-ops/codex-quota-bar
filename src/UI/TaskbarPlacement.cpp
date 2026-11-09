@@ -7,19 +7,29 @@
 #include <ole2.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
+#include <vector>
+#include <cwchar>
+
+#pragma comment(lib, "uiautomationcore.lib")
 
 namespace CodexQuotaBar {
 namespace {
+
+    constexpr PROPERTYID kPropAutomationId = 30011; // UIA_AutomationIdPropertyId
+    constexpr PROPERTYID kPropClassName = 30012;    // UIA_ClassNamePropertyId
+
+    static const GUID kClsidCUIAutomation = { 0xff48dba4, 0x60ef, 0x4201, { 0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e } };
+    static const GUID kIidIUIAutomation = { 0x30cbe57d, 0xd9d0, 0x452a, { 0xab, 0x13, 0x7a, 0xc0, 0xac, 0x48, 0x25, 0xee } };
 
     bool TryFindWeatherWidgetUIA(HWND hTaskbar, const RECT& taskbarRect, RECT& widgetRect) {
         if (!hTaskbar || !IsWindow(hTaskbar)) return false;
 
         Microsoft::WRL::ComPtr<IUIAutomation> automation;
         HRESULT hr = CoCreateInstance(
-            __uuidof(CUIAutomation),
+            kClsidCUIAutomation,
             nullptr,
             CLSCTX_INPROC_SERVER,
-            __uuidof(IUIAutomation),
+            kIidIUIAutomation,
             reinterpret_cast<void**>(automation.GetAddressOf()));
 
         if (FAILED(hr) || !automation) return false;
@@ -49,7 +59,7 @@ namespace {
             if (varId.bstrVal) {
                 Microsoft::WRL::ComPtr<IUIAutomationCondition> cond;
                 if (SUCCEEDED(automation->CreatePropertyCondition(
-                        UIA_AutomationIdPropertyId, varId, cond.GetAddressOf())) && cond) {
+                        kPropAutomationId, varId, cond.GetAddressOf())) && cond) {
                     conditions.push_back(cond);
                 }
                 VariantClear(&varId);
@@ -64,7 +74,7 @@ namespace {
             if (varClass.bstrVal) {
                 Microsoft::WRL::ComPtr<IUIAutomationCondition> cond;
                 if (SUCCEEDED(automation->CreatePropertyCondition(
-                        UIA_ClassNamePropertyId, varClass, cond.GetAddressOf())) && cond) {
+                        kPropClassName, varClass, cond.GetAddressOf())) && cond) {
                     conditions.push_back(cond);
                 }
                 VariantClear(&varClass);

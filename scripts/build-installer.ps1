@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$CertificateThumbprint = $env:CODEX_QUOTA_SIGN_CERT_THUMBPRINT,
     [string]$TimestampUrl = "http://timestamp.digicert.com"
 )

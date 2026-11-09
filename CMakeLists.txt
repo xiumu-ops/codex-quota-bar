@@ -151,6 +151,7 @@ target_link_libraries(CodexQuotaBarApp
     dwrite
     dwmapi
     advapi32
+    uiautomationcore
 )
 
 include(CTest)
