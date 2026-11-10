@@ -29,6 +29,7 @@ namespace CodexQuotaBar {
     constexpr UINT_PTR TIMER_COMPANION_ID = 1002;
     constexpr UINT_PTR TIMER_RENDER_RETRY_ID = 1003;
     constexpr UINT_PTR TIMER_WEATHER_LAYOUT_ID = 1004;
+    constexpr UINT_PTR TIMER_COMPONENT_ZORDER_ID = 1005;
 
     constexpr int IDM_TOGGLE_EXPAND = 2001;
     constexpr int IDM_REFRESH = 2002;
@@ -50,6 +51,7 @@ namespace CodexQuotaBar {
 
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
+        constexpr UINT kComponentZOrderCheckMs = 100;
         constexpr int kRenderRetryLimit = 3;
         // 数值 → 最接近档位索引（配置读回时归一）
         int ClosestScaleLevel(float value) {
@@ -237,6 +239,7 @@ namespace CodexQuotaBar {
             if (m_companionMode && !m_codexDesktopRunning) return;
             ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
             if (IsWeatherDockActive()) ApplyWindowZOrder();
+            UpdateComponentZOrderTimer();
             RenderLayeredWindow();
         }
     }
@@ -245,6 +248,7 @@ namespace CodexQuotaBar {
         if (m_hwnd) {
             CustomMenu::Dismiss(m_hwnd);
             ShowWindow(m_hwnd, SW_HIDE);
+            UpdateComponentZOrderTimer();
         }
     }
 
@@ -612,6 +616,7 @@ namespace CodexQuotaBar {
         } else {
             SyncWindowPosition(true);
         }
+        UpdateComponentZOrderTimer();
         return true;
     }
 
@@ -626,6 +631,34 @@ namespace CodexQuotaBar {
         if (!componentMode && topmost == currentlyTopmost) return;
         SetWindowPos(m_hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
                      0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
+    void MainWindow::UpdateComponentZOrderTimer() {
+        if (IsWeatherDockActive() && IsWindowVisible(m_hwnd)) {
+            SetTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID, kComponentZOrderCheckMs, nullptr);
+        } else {
+            KillTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID);
+        }
+    }
+
+    void MainWindow::RestoreComponentZOrder() {
+        const HWND taskbar = m_weatherMetrics.hTaskbar;
+        if (!IsWeatherDockActive() || !IsWindowVisible(m_hwnd) || m_contextMenuOpen ||
+            !taskbar || !IsWindowVisible(taskbar)) return;
+
+        RECT componentRect = {};
+        RECT taskbarRect = {};
+        RECT overlap = {};
+        if (!GetWindowRect(m_hwnd, &componentRect) || !GetWindowRect(taskbar, &taskbarRect) ||
+            !IntersectRect(&overlap, &componentRect, &taskbarRect)) return;
+
+        const POINT center = { overlap.left + (overlap.right - overlap.left) / 2,
+                               overlap.top + (overlap.bottom - overlap.top) / 2 };
+        // Explorer can raise its taskbar above an already-topmost component.
+        const HWND coveringWindow = WindowFromPoint(center);
+        if (coveringWindow && GetAncestor(coveringWindow, GA_ROOT) == taskbar) {
+            ApplyWindowZOrder();
+        }
     }
 
     void MainWindow::DockToWeatherWidget(bool waitForProbe) {
@@ -1499,6 +1532,8 @@ namespace CodexQuotaBar {
                 KillTimer(m_hwnd, TIMER_WEATHER_LAYOUT_ID);
                 m_weatherLayoutPending = false;
                 DockToWeatherWidget(true);
+            } else if (wParam == TIMER_COMPONENT_ZORDER_ID) {
+                RestoreComponentZOrder();
             }
             return 0;
 

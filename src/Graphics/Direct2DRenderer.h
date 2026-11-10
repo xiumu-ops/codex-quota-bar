@@ -84,7 +84,6 @@ namespace CodexQuotaBar {
         float m_monitorDpiScale = 1.0f;
         float m_userScale = 1.0f;
         float m_dpiScale = 1.0f;
-        float m_miniValueWidth = 0.0f;
         UINT m_width = 0;
         UINT m_height = 0;
 

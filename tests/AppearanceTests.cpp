@@ -130,6 +130,8 @@ int main() {
            "100% mini pill corner stays concentric with 8px outer corner");
     Expect(MiniDividerHeight(28, miniAt100) == 12.0f,
            "100% divider spans the concentric pill's straight center section");
+    Expect(MiniDualSlotWidth(112.0f, miniAt100) == 53.0f,
+           "100% dual bar leaves only a two-pixel center gap between equal slots");
 
     const MiniBarMetrics miniAt120 = ScaledMiniBarMetrics(1.2f);
     Expect(miniAt120.outerCornerRadius == 8.0f,

@@ -217,6 +217,10 @@ public static class CqbNative {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
     [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint threadId, ref CqbGuiThreadInfo info);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out CqbRect rect);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(CqbPoint point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+    public static IntPtr RootWindowAt(CqbPoint point) { return GetAncestor(WindowFromPoint(point), 2); }
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out CqbPoint point);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, out CqbRect rect, uint flags);
@@ -258,6 +262,60 @@ function Assert-CqbContextMenuClosed([IntPtr]$Popup) {
         Start-Sleep -Milliseconds 40
     }
     if ([CqbNative]::IsWindowVisible($Popup)) { throw "Context menu did not close" }
+}
+
+function Assert-CqbTaskbarRecovery([IntPtr]$Component) {
+    $taskbar = [CqbNative]::FindWindow("Shell_TrayWnd", $null)
+    if ($taskbar -eq [IntPtr]::Zero -or -not [CqbNative]::IsWindowVisible($taskbar) -or
+        ([CqbNative]::GetWindowLongPtr($taskbar, -20).ToInt64() -band 0x8) -eq 0) {
+        Write-Host "  [SKIP] 当前桌面没有可用于遮挡测试的置顶任务栏"
+        return
+    }
+    # Let the initial weather-widget probe finish before checking a fixed position.
+    Start-Sleep -Milliseconds 1500
+    $before = Get-CqbWindowRect $Component
+    $tray = Get-CqbWindowRect $taskbar
+    $left = [Math]::Max($before.Left, $tray.Left)
+    $top = [Math]::Max($before.Top, $tray.Top)
+    $right = [Math]::Min($before.Right, $tray.Right)
+    $bottom = [Math]::Min($before.Bottom, $tray.Bottom)
+    if ($right -le $left -or $bottom -le $top) {
+        Write-Host "  [SKIP] 组件与主任务栏没有重叠"
+        return
+    }
+    $point = [CqbPoint]::new()
+    $point.X = $left + [Math]::Floor(($right - $left) / 2)
+    $point.Y = $top + [Math]::Floor(($bottom - $top) / 2)
+    $windowAtPoint = [CqbNative]::RootWindowAt($point)
+    if ($windowAtPoint -eq $taskbar) {
+        Fail-Test "组件在模拟遮挡前已不可见"
+        return
+    }
+    if ($windowAtPoint -ne $Component) {
+        Write-Host "  [SKIP] 组件测试点被其他窗口覆盖"
+        return
+    }
+
+    # Only lower the test window in the topmost group. Leave Explorer itself alone.
+    $keepGeometryAndFocus = 0x0013 # SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+    if (-not [CqbNative]::SetWindowPos($Component, $taskbar, 0, 0, 0, 0, $keepGeometryAndFocus)) {
+        Fail-Test "无法模拟任务栏盖住组件"
+        return
+    }
+    try {
+        $deadline = [DateTime]::UtcNow.AddSeconds(2)
+        while ([CqbNative]::RootWindowAt($point) -ne $Component -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 30
+        }
+        $after = Get-CqbWindowRect $Component
+        if ([CqbNative]::RootWindowAt($point) -ne $Component -or -not $before.Equals($after)) {
+            Fail-Test "任务栏遮挡后组件未在原位置恢复"
+        } else {
+            Write-Host "  [PASS] 组件被同为置顶窗口的任务栏遮挡后在原位置恢复" -ForegroundColor Green
+        }
+    } finally {
+        [void][CqbNative]::SetWindowPos($Component, [IntPtr]::new(-1), 0, 0, 0, 0, $keepGeometryAndFocus)
+    }
 }
 
 $proc.Refresh()
@@ -540,6 +598,8 @@ try {
                     } finally {
                         [void][CqbNative]::SendMessage($miniHwnd, 0x0202, [IntPtr]::Zero, $hit)
                     }
+
+                    Assert-CqbTaskbarRecovery $miniHwnd
 
                     $classStyle = [CqbNative]::GetClassLongPtr($miniHwnd, -26).ToInt64()
                     if (($classStyle -band 0x00020000) -eq 0) {

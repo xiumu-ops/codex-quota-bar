@@ -66,6 +66,8 @@ namespace CodexQuotaBar {
         void HandleWeatherProbeResult();
         bool IsWeatherDockActive() const;
         void ApplyWindowZOrder();
+        void UpdateComponentZOrderTimer();
+        void RestoreComponentZOrder();
         void RefreshQuota();
         void ToggleAlwaysOnTop();
         void ToggleCompanionMode();

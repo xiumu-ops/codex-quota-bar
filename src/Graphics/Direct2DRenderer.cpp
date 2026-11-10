@@ -181,13 +181,12 @@ namespace CodexQuotaBar {
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 16.0f, m_pFontRowValue);
         // 右侧百分比数值：16px 粗体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontRowValueBold);
-        // Both mini slots share a fixed number field sized for the narrowest (dual) layout.
+        // Fit the longest percentage in the narrower dual-slot layout.
         createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontMiniValue);
         const MiniBarMetrics miniMetrics = ScaledMiniBarMetrics(
             s, WindowOuterCornerRadius(m_monitorDpiScale));
-        const float miniSlotWidth = static_cast<float>(Scale(static_cast<float>(MINI_SINGLE_WIDTH), s)) -
-                                    2.0f * miniMetrics.contentInset - MiniDividerPhysicalWidth(miniMetrics) / 2.0f;
-        const float miniAvailable = (std::max)(1.0f, miniSlotWidth - 1.0f);
+        const float dualBarWidth = static_cast<float>(2 * Scale(static_cast<float>(MINI_SINGLE_WIDTH), s));
+        const float miniAvailable = (std::max)(1.0f, MiniDualSlotWidth(dualBarWidth, miniMetrics) - 1.0f);
         auto* miniFormat = m_pFontMiniValue.Get();
         float widestDigit = 0.0f;
         for (wchar_t digit = L'0'; digit <= L'9'; ++digit) {
@@ -198,11 +197,14 @@ namespace CodexQuotaBar {
             2.0f * widestDigit + MeasureTextWidth(L"%", miniFormat),
             MeasureTextWidth(L"---", miniFormat)
         });
-        m_miniValueWidth = (std::min)(miniAvailable, std::ceil(requiredWidth));
         if (requiredWidth > miniAvailable) {
             ComPtr<IDWriteTextFormat> fitted;
             createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f * miniAvailable / requiredWidth, fitted);
             if (fitted) m_pFontMiniValue = std::move(fitted);
+        }
+        if (m_pFontMiniValue) {
+            m_pFontMiniValue->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_pFontMiniValue->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
         // 常驻卡片底部说明文本：12px 常规体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, m_pFontFooter);
@@ -505,19 +507,11 @@ namespace CodexQuotaBar {
             const float pillRight = w - pad;
             DrawMiniQuotaSlot(pillLeft, pillTop, pillRight, pillBottom, pillRadius, *windows[0]);
         } else if (count == 2) {
-            const float centerX = std::round(w * 0.5f);
-            const float divThick = MiniDividerPhysicalWidth(metrics);
-            const float divHalf = divThick * 0.5f;
-            const float divLeft = centerX - divHalf;
-            const float divRight = centerX + divHalf;
+            const float divLeft = pad + MiniDualSlotWidth(w, metrics);
+            const float divRight = w - divLeft;
 
-            const float pill0Left = pad;
-            const float pill0Right = divLeft - pad;
-            const float pill1Left = divRight + pad;
-            const float pill1Right = w - pad;
-
-            DrawMiniQuotaSlot(pill0Left, pillTop, pill0Right, pillBottom, pillRadius, *windows[0]);
-            DrawMiniQuotaSlot(pill1Left, pillTop, pill1Right, pillBottom, pillRadius, *windows[1]);
+            DrawMiniQuotaSlot(pad, pillTop, divLeft, pillBottom, pillRadius, *windows[0]);
+            DrawMiniQuotaSlot(divRight, pillTop, w - pad, pillBottom, pillRadius, *windows[1]);
 
             int divHPx = static_cast<int>(std::round(MiniDividerHeight(static_cast<int>(m_height), metrics)));
             if (divHPx % 2 != 0) divHPx -= 1;
@@ -525,7 +519,7 @@ namespace CodexQuotaBar {
             const float dividerHeight = static_cast<float>(divHPx);
             const float dividerTop = std::round((h - dividerHeight) * 0.5f);
             const float dividerBottom = dividerTop + dividerHeight;
-            const float divCorner = divHalf;
+            const float divCorner = (divRight - divLeft) / 2.0f;
             const D2D1_ROUNDED_RECT divRect = D2D1::RoundedRect(
                 D2D1::RectF(divLeft, dividerTop, divRight, dividerBottom),
                 divCorner, divCorner);
@@ -545,19 +539,19 @@ namespace CodexQuotaBar {
             ? std::to_wstring(static_cast<int>(std::round(window.remainingPercent))) + L"%"
             : L"---";
 
-        const float pillW = (std::max)(0.0f, pillRight - pillLeft);
-
         // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观与透明度逻辑）
         const D2D1_ROUNDED_RECT pillRect = D2D1::RoundedRect(
             D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),
             pillRadius, pillRadius);
         m_pRenderTarget->FillRoundedRectangle(pillRect, m_pBrushTrackBg.Get());
 
-        // 2. 拓宽内部进度条（接入已有 ProgressBrushFor 色彩梯度与透明度继承）
-        if (window.available && window.remainingPercent > 0.0) {
-            float fillW = (std::max)(pillRadius * 2.0f, pillW * static_cast<float>(window.remainingPercent / 100.0));
-            fillW = (std::min)(fillW, pillW);
-            fillW = std::round(fillW);
+        // 2. 裁剪完整圆角槽，让右端弧线随进度缩短自然过渡到直边。
+        const float pillWidth = (std::max)(0.0f, pillRight - pillLeft);
+        const float fillW = window.available
+            ? std::round(pillWidth *
+                static_cast<float>(std::clamp(window.remainingPercent, 0.0, 100.0) / 100.0))
+            : 0.0f;
+        if (fillW > 0.0f && pillBottom > pillTop) {
             ID2D1SolidColorBrush* statusBrush = ProgressBrushFor(window.remainingPercent);
             if (statusBrush && m_pBrushHalo) {
                 const float backgroundOpacity =
@@ -566,13 +560,23 @@ namespace CodexQuotaBar {
                 tintColor.a = 0.32f * backgroundOpacity;
                 m_pBrushHalo->SetColor(tintColor);
 
-                m_pRenderTarget->PushAxisAlignedClip(
-                    D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),
-                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                const D2D1_ROUNDED_RECT fillRect = D2D1::RoundedRect(
-                    D2D1::RectF(pillLeft, pillTop, pillLeft + fillW, pillBottom),
-                    pillRadius, pillRadius);
-                m_pRenderTarget->FillRoundedRectangle(fillRect, m_pBrushHalo.Get());
+                const D2D1_RECT_F fillClip = D2D1::RectF(
+                    pillLeft, pillTop, pillLeft + fillW, pillBottom);
+                // 低额度时恢复小圆角，仍以实际比例限制宽度。
+                const float lowFillRadius = (std::max)(0.0f,
+                    (std::min)(2.0f * pillRadius - fillW, fillW * 0.5f));
+                ComPtr<ID2D1RoundedRectangleGeometry> lowFillMask;
+                if (lowFillRadius > 0.0f) {
+                    m_pD2DFactory->CreateRoundedRectangleGeometry(
+                        D2D1::RoundedRect(fillClip, lowFillRadius, lowFillRadius),
+                        lowFillMask.GetAddressOf());
+                }
+                m_pRenderTarget->PushAxisAlignedClip(fillClip, D2D1_ANTIALIAS_MODE_ALIASED);
+                if (lowFillMask) {
+                    m_pRenderTarget->PushLayer(D2D1::LayerParameters(fillClip, lowFillMask.Get()), nullptr);
+                }
+                m_pRenderTarget->FillRoundedRectangle(pillRect, m_pBrushHalo.Get());
+                if (lowFillMask) m_pRenderTarget->PopLayer();
                 m_pRenderTarget->PopAxisAlignedClip();
             }
         }
@@ -585,20 +589,13 @@ namespace CodexQuotaBar {
                 DWRITE_LINE_SPACING_METHOD_UNIFORM,
                 pillH,
                 baseline);
-            m_pFontMiniValue->SetTextAlignment(window.available
-                ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_CENTER);
-            m_pFontMiniValue->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            const float textRight = window.available
-                ? (std::min)(pillRight, std::round((pillLeft + pillRight + m_miniValueWidth) / 2.0f))
-                : pillRight;
-            const D2D1_RECT_F textRect = D2D1::RectF(pillLeft, pillTop, textRight, pillBottom);
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent)
                 : m_pBrushProgressBlue.Get();
             m_pRenderTarget->PushAxisAlignedClip(pillRect.rect, D2D1_ANTIALIAS_MODE_ALIASED);
             m_pRenderTarget->DrawTextW(
                 value.c_str(), static_cast<UINT32>(value.size()),
-                m_pFontMiniValue.Get(), textRect, brush);
+                m_pFontMiniValue.Get(), pillRect.rect, brush);
             m_pRenderTarget->PopAxisAlignedClip();
         }
     }
