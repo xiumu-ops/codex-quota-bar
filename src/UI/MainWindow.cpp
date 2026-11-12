@@ -721,6 +721,8 @@ namespace CodexQuotaBar {
         const SIZE sz = PhysicalWindowSize();
         const WeatherWidgetPlacement placement =
             GetWeatherPlacement(sz);
+        // Refresh process-scoped hooks after Explorer recreates the taskbar.
+        UpdateComponentZOrderTimer();
         if (waitForProbe && m_weatherMetrics.hTaskbar && m_weatherProbeState->inFlight) return;
 
         const POINT pos = placement.dockPosition;
