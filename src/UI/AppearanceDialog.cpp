@@ -826,7 +826,8 @@ namespace {
                     state->fontFocused = false;
                 }
                 if (HIWORD(wParam) == EN_CHANGE) {
-                    const std::wstring fontName = ReadFieldText(state->fontEdit);
+                    // EDIT can notify during CreateWindowEx, before fontEdit is assigned.
+                    const std::wstring fontName = ReadFieldText(reinterpret_cast<HWND>(lParam));
                     state->fontInvalid = fontName.empty() || !CheckFontFamilyExists(state->writeFactory.Get(), fontName);
                     state->appliedNotice = false;
                     state->invalidField = -1;
