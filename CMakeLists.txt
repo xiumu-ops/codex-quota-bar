@@ -180,6 +180,7 @@ if(BUILD_TESTING)
     add_executable(AppearanceTests
         tests/AppearanceTests.cpp
         src/Core/Appearance.cpp
+        src/Graphics/Theme.cpp
     )
     cqb_configure_target(AppearanceTests)
 

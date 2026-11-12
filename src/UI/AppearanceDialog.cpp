@@ -26,9 +26,10 @@ namespace {
     constexpr int kTransparencyEditControlId = 200;
     constexpr int kFontEditControlId = 201;
     constexpr int kScaleEditControlId = 202;
-    constexpr size_t kColorCount = 19;
+    constexpr size_t kColorCount = 23;
+    constexpr size_t kLeftColorCount = (kColorCount + 1) / 2;
     constexpr float kDialogWidth = 714.0f;
-    constexpr float kDialogHeight = 496.0f;
+    constexpr float kDialogHeight = 564.0f;
 
     struct ColorSpec {
         const wchar_t* key;
@@ -55,6 +56,10 @@ namespace {
         { L"SyncBusy", L"同步进行" },
         { L"MenuHover", L"菜单悬停" },
         { L"MenuDivider", L"菜单分隔线" },
+        { L"ProgressHighText", L"充足数字" },
+        { L"ProgressMediumText", L"中等数字" },
+        { L"ProgressLowText", L"偏低数字" },
+        { L"ProgressCriticalText", L"告急数字" },
     }};
 
     struct ColorField {
@@ -144,8 +149,8 @@ namespace {
         };
 
         for (size_t index = 0; index < kColorCount; ++index) {
-            const bool leftColumn = index < 10;
-            const int row = static_cast<int>(leftColumn ? index : index - 10);
+            const bool leftColumn = index < kLeftColorCount;
+            const int row = static_cast<int>(leftColumn ? index : index - kLeftColorCount);
             const float columnX = leftColumn ? 18.0f : 386.0f;
             ColorField& field = state.fields[index];
             field.outline = outlineAt(columnX + 112.0f, 58.0f + row * 34.0f);
@@ -155,9 +160,9 @@ namespace {
             placeEdit(field.edit, field.outline);
         }
 
-        state.transparencyOutline = outlineAt(498.0f, 364.0f);
-        state.scaleOutline = outlineAt(498.0f, 398.0f);
-        state.fontOutline = outlineAt(130.0f, 398.0f);
+        state.transparencyOutline = outlineAt(498.0f, 432.0f);
+        state.scaleOutline = outlineAt(498.0f, 466.0f);
+        state.fontOutline = outlineAt(130.0f, 466.0f);
         placeEdit(state.transparencyEdit, state.transparencyOutline);
         placeEdit(state.scaleEdit, state.scaleOutline);
         placeEdit(state.fontEdit, state.fontOutline);
@@ -165,7 +170,7 @@ namespace {
         state.fontBrowseRect = { browseLeft, state.fontOutline.top,
                                  browseLeft + pixels(36.0f), state.fontOutline.bottom };
 
-        const int buttonTop = pixels(448.0f);
+        const int buttonTop = pixels(516.0f);
         const int buttonBottom = buttonTop + pixels(34.0f);
         const int buttonWidth = pixels(88.0f);
         const auto buttonAt = [&](float x) {
@@ -382,7 +387,7 @@ namespace {
                 static_cast<float>(field.outline.top),
                 static_cast<float>(field.outline.right),
                 static_cast<float>(field.outline.bottom));
-            const int column = index < 10 ? 0 : 1;
+            const int column = index < kLeftColorCount ? 0 : 1;
             const float labelLeft = column == 0 ? leftColX : rightColX;
             DrawText(
                 state, kColorSpecs[index].label, state->bodyFont.Get(),
@@ -561,9 +566,9 @@ namespace {
             state, hint, state->hintFont.Get(),
             D2D1::RectF(
                 leftColX,
-                static_cast<float>(Scale(444.0f, scale)),
+                static_cast<float>(Scale(512.0f, scale)),
                 hintRight,
-                static_cast<float>(Scale(482.0f, scale))),
+                static_cast<float>(Scale(550.0f, scale))),
             state->invalidField >= 0
                 ? state->palette.progressRed
                 : (state->appliedNotice

@@ -30,7 +30,8 @@ namespace CodexQuotaBar {
             bool expanded,
             bool miniMode,
             const QuotaSnapshot& snapshot,
-            SyncState syncState);
+            SyncState syncState,
+            bool forcePresent = false);
 
     private:
         HRESULT CreateDeviceResources();
@@ -75,7 +76,9 @@ namespace CodexQuotaBar {
         void DrawResetSubCard(float topY, float height, const QuotaSnapshot& snapshot);
         void DrawSubCardFrame(float left, float top, float width, float height, float corner);
 
-        ID2D1SolidColorBrush* ProgressBrushFor(double remainingPercent) const;
+        bool HasSameContent(bool expanded, bool miniMode,
+                            const QuotaSnapshot& snapshot, SyncState syncState) const;
+        ID2D1SolidColorBrush* ProgressBrushFor(double remainingPercent, bool text = false) const;
         float MeasureTextWidth(
             const std::wstring& text,
             IDWriteTextFormat* format) const;
@@ -90,6 +93,11 @@ namespace CodexQuotaBar {
         ThemePalette m_palette;
         std::wstring m_fontFamily = L"Microsoft YaHei UI";
         int m_backgroundTransparency = 0;
+        bool m_frameValid = false;
+        bool m_lastExpanded = false;
+        bool m_lastMini = false;
+        SyncState m_lastSyncState = SyncState::Waiting;
+        QuotaSnapshot m_lastSnapshot;
 
         // 设备无关资源 (Device-Independent Resources)
         ComPtr<ID2D1Factory> m_pD2DFactory;
@@ -121,6 +129,7 @@ namespace CodexQuotaBar {
         ComPtr<ID2D1SolidColorBrush> m_pBrushProgressYellow;
         ComPtr<ID2D1SolidColorBrush> m_pBrushProgressOrange;
         ComPtr<ID2D1SolidColorBrush> m_pBrushProgressRed;
+        std::array<ComPtr<ID2D1SolidColorBrush>, 4> m_pBrushProgressText;
         ComPtr<ID2D1SolidColorBrush> m_pBrushBorder;
         ComPtr<ID2D1SolidColorBrush> m_pBrushDivider;
         ComPtr<ID2D1SolidColorBrush> m_pBrushChevron;

@@ -134,8 +134,9 @@ namespace {
                 const std::wstring mode = object[L"Mode"].as_string();
                 if (mode == L"Default") appearance.mode = AppearanceMode::Default;
                 else if (mode == L"Custom") appearance.mode = AppearanceMode::Custom;
+                else if (mode == L"Dark") appearance.mode = AppearanceMode::Dark;
                 else AppendValidationError(
-                    errors, L"Settings.Appearance.Mode 只能是 Default 或 Custom");
+                    errors, L"Settings.Appearance.Mode 只能是 Default、Dark 或 Custom");
             }
         }
 
@@ -179,6 +180,19 @@ namespace {
                 continue;
             }
             appearance.colors[name] = value.as_string();
+        }
+        // Older custom themes used the progress color for percentage text too.
+        // Preserve that choice unless a separate text color was supplied.
+        for (const wchar_t* accent : {
+                L"ProgressHigh", L"ProgressMedium", L"ProgressLow", L"ProgressCritical" }) {
+            const std::wstring textName = std::wstring(accent) + L"Text";
+            if (colors.has_key(accent) && !colors.has_key(textName)) {
+                uint32_t rgb = 0;
+                const auto& value = colors[accent];
+                if (value.is_string() && TryParseAppearanceColor(value.as_string(), rgb)) {
+                    appearance.colors[textName] = value.as_string();
+                }
+            }
         }
     }
 
@@ -459,7 +473,8 @@ namespace {
         auto& appearance = ObjectMember(settings, L"Appearance");
         const auto& current = data.settings.appearance;
         ObjectMember(appearance, L"Mode") = String(
-            current.mode == AppearanceMode::Custom ? L"Custom" : L"Default");
+            current.mode == AppearanceMode::Custom ? L"Custom" :
+            current.mode == AppearanceMode::Dark ? L"Dark" : L"Default");
         ObjectMember(appearance, L"FontFamily") = String(current.fontFamily);
         ObjectMember(appearance, L"BackgroundTransparency") = Number(current.backgroundTransparency);
         auto& colors = ObjectMember(appearance, L"Colors");

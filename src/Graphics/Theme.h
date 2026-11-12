@@ -2,6 +2,7 @@
 
 #include "Core/Appearance.h"
 #include "Graphics/D2DCommon.h"
+#include <array>
 
 namespace CodexQuotaBar {
 
@@ -17,6 +18,9 @@ namespace CodexQuotaBar {
         D2D1_COLOR_F progressYellow;
         D2D1_COLOR_F progressOrange;
         D2D1_COLOR_F progressRed;
+        // 顺序为充足、中等、偏低、告急。数字与填充分开配色。
+        std::array<D2D1_COLOR_F, 4> progressText;
+        std::array<D2D1_COLOR_F, 4> miniFill;
         D2D1_COLOR_F border;
         D2D1_COLOR_F divider;
         D2D1_COLOR_F chevron;
@@ -28,6 +32,7 @@ namespace CodexQuotaBar {
 
         // 淡青白主题：纯白卡片底、中性深灰主文字、浅灰辅助文字、红橙黄绿状态梯度
         static ThemePalette Light();
+        static ThemePalette Dark();
         static ThemePalette Custom(const AppearanceSettings& settings);
     };
 

@@ -9,9 +9,9 @@ namespace CodexQuotaBar {
 
     constexpr int BASE_DPI = 96;
     constexpr int BAR_WIDTH = 380;
-    // 紧凑悬浮卡片：四周边距留白统一 8px，行与卡片间隔边距统一 6px；展开态追加统计与重置子卡片。
-    constexpr int COLLAPSED_HEIGHT = 104;
-    constexpr int EXPANDED_HEIGHT = 256;
+    // 标准面板包含额度行和同步状态，展开态追加统计与重置卡片。
+    constexpr int COLLAPSED_HEIGHT = 196;
+    constexpr int EXPANDED_HEIGHT = 348;
     constexpr int MINI_DUAL_WIDTH = 112;
     constexpr int MINI_SINGLE_WIDTH = 56;
     constexpr int MINI_HEIGHT = 28;

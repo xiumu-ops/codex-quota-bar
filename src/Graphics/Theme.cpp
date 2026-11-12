@@ -4,25 +4,56 @@ namespace CodexQuotaBar {
 
     ThemePalette ThemePalette::Light() {
         ThemePalette p;
-        p.surface = D2D1::ColorF(0xFFFFFF);            // 纯白卡片底
-        p.statsCardBg = D2D1::ColorF(0xFAFAFA);        // 子卡片极淡灰（与纯白底区分层次）
-        p.statsCardBorder = D2D1::ColorF(0xE0E0E0);    // 浅灰子卡片边框
-        p.text = D2D1::ColorF(0x333333);               // 现代清晰深灰主文字
-        p.muted = D2D1::ColorF(0x757575);              // 浅灰辅助文字
-        p.trackBg = D2D1::ColorF(0xEAEAEA);            // 进度条底色（增强对比度）
-        p.progressBlue = D2D1::ColorF(0x757575);       // 未返回占位：浅灰
-        p.progressGreen = D2D1::ColorF(0x159957);      // 充足：绿
-        p.progressYellow = D2D1::ColorF(0xD9A900);     // 中量：加深黄
-        p.progressOrange = D2D1::ColorF(0xD76B26);     // 低中量：橙
-        p.progressRed = D2D1::ColorF(0xC00000);        // 告急：红
-        p.border = D2D1::ColorF(0xE5E5E5);             // 细腻浅灰外描边（精致轮廓）
-        p.divider = D2D1::ColorF(0xE0E0E0);            // 分隔线（与子卡片边框同色）
-        p.chevron = D2D1::ColorF(0x5F5F5F);            // 中灰折叠箭头
-        p.syncSuccess = D2D1::ColorF(0x159957);        // 同步成功：绿
-        p.syncIdle = D2D1::ColorF(0xA8A8A8);           // 尚未同步：浅灰
-        p.syncBusy = D2D1::ColorF(0xD9A900);           // 正在同步：加深黄
-        p.menuHover = D2D1::ColorF(0xF0F0F0);          // 菜单悬停背景
-        p.menuDivider = D2D1::ColorF(0xEAEAEA);        // 菜单分隔线
+        p.surface = D2D1::ColorF(0xFFFFFF);
+        p.statsCardBg = D2D1::ColorF(0xF5F7F6);
+        p.statsCardBorder = p.statsCardBg;
+        p.text = D2D1::ColorF(0x242C29);
+        p.muted = D2D1::ColorF(0x626E68);
+        p.trackBg = D2D1::ColorF(0xE9EEEB);
+        p.progressBlue = p.muted;
+        p.progressGreen = D2D1::ColorF(0x20945E);
+        p.progressYellow = D2D1::ColorF(0xB99637);
+        p.progressOrange = D2D1::ColorF(0xC78043);
+        p.progressRed = D2D1::ColorF(0xCA4D54);
+        p.progressText = { D2D1::ColorF(0x146B42), D2D1::ColorF(0x725713),
+                           D2D1::ColorF(0x934A1A), D2D1::ColorF(0x9C3035) };
+        p.miniFill = { D2D1::ColorF(0xCBE6D5), D2D1::ColorF(0xEEE3C3),
+                      D2D1::ColorF(0xF1DCC7), D2D1::ColorF(0xEFC5C7) };
+        p.border = D2D1::ColorF(0xE6EBE8);
+        p.divider = D2D1::ColorF(0xEDF0EE);
+        p.chevron = p.muted;
+        p.syncSuccess = p.progressGreen;
+        p.syncIdle = D2D1::ColorF(0xA8A8A8);
+        p.syncBusy = p.progressYellow;
+        p.menuHover = D2D1::ColorF(0xEEF3F0);
+        p.menuDivider = p.divider;
+        return p;
+    }
+
+    ThemePalette ThemePalette::Dark() {
+        ThemePalette p = Light();
+        p.surface = D2D1::ColorF(0x202426);
+        p.statsCardBg = D2D1::ColorF(0x292F2C);
+        p.statsCardBorder = p.statsCardBg;
+        p.text = D2D1::ColorF(0xEDF2EF);
+        p.muted = D2D1::ColorF(0xABB9B1);
+        p.trackBg = D2D1::ColorF(0x353E38);
+        p.progressBlue = p.muted;
+        p.progressGreen = D2D1::ColorF(0x65BE8A);
+        p.progressYellow = D2D1::ColorF(0xC6AD61);
+        p.progressOrange = D2D1::ColorF(0xD7A576);
+        p.progressRed = D2D1::ColorF(0xE88B92);
+        p.progressText = { D2D1::ColorF(0xA4E8BA), D2D1::ColorF(0xF0DA99),
+                           D2D1::ColorF(0xF9CEAC), D2D1::ColorF(0xFFC1C4) };
+        p.miniFill = { D2D1::ColorF(0x315442), D2D1::ColorF(0x504A32),
+                      D2D1::ColorF(0x584333), D2D1::ColorF(0x61373B) };
+        p.border = D2D1::ColorF(0x3B443E);
+        p.divider = D2D1::ColorF(0x363E38);
+        p.chevron = p.muted;
+        p.syncSuccess = p.progressGreen;
+        p.syncBusy = p.progressYellow;
+        p.menuHover = D2D1::ColorF(0x343E37);
+        p.menuDivider = p.divider;
         return p;
     }
 
@@ -43,6 +74,10 @@ namespace CodexQuotaBar {
             else if (name == L"ProgressMedium") p.progressYellow = color;
             else if (name == L"ProgressLow") p.progressOrange = color;
             else if (name == L"ProgressCritical") p.progressRed = color;
+            else if (name == L"ProgressHighText") p.progressText[0] = color;
+            else if (name == L"ProgressMediumText") p.progressText[1] = color;
+            else if (name == L"ProgressLowText") p.progressText[2] = color;
+            else if (name == L"ProgressCriticalText") p.progressText[3] = color;
             else if (name == L"OuterBorder") p.border = color;
             else if (name == L"Divider") p.divider = color;
             else if (name == L"Chevron") p.chevron = color;
@@ -51,6 +86,27 @@ namespace CodexQuotaBar {
             else if (name == L"SyncBusy") p.syncBusy = color;
             else if (name == L"MenuHover") p.menuHover = color;
             else if (name == L"MenuDivider") p.menuDivider = color;
+        }
+        const ThemePalette defaults = Light();
+        const D2D1_COLOR_F accents[] = {
+            p.progressGreen, p.progressYellow, p.progressOrange, p.progressRed
+        };
+        const D2D1_COLOR_F defaultAccents[] = {
+            defaults.progressGreen, defaults.progressYellow,
+            defaults.progressOrange, defaults.progressRed
+        };
+        const auto sameColor = [](const D2D1_COLOR_F& a, const D2D1_COLOR_F& b) {
+            return a.r == b.r && a.g == b.g && a.b == b.b;
+        };
+        for (size_t index = 0; index < p.miniFill.size(); ++index) {
+            if (!sameColor(accents[index], defaultAccents[index]) ||
+                !sameColor(p.trackBg, defaults.trackBg)) {
+                const auto& accent = accents[index];
+                p.miniFill[index] = D2D1::ColorF(
+                    p.trackBg.r * 0.8f + accent.r * 0.2f,
+                    p.trackBg.g * 0.8f + accent.g * 0.2f,
+                    p.trackBg.b * 0.8f + accent.b * 0.2f);
+            }
         }
         return p;
     }

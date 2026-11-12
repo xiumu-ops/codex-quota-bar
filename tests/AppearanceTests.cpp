@@ -2,6 +2,7 @@
 #include "Core/Layout.h"
 #include "Core/Settings.h"
 #include "UI/TaskbarPlacement.h"
+#include "Graphics/Theme.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -35,7 +36,25 @@ int main() {
     Expect(IsSupportedAppearanceColor(L"MenuHover"), "menu color field");
     Expect(!IsSupportedAppearanceColor(L"surface"), "color fields are case-sensitive");
     Expect(!IsSupportedAppearanceColor(L"Accent"), "unknown color field rejected");
-    Expect(DefaultAppearanceColors().size() == 19, "complete default color template");
+    Expect(DefaultAppearanceColors().size() == 23, "complete default color template");
+    Expect(IsSupportedAppearanceColor(L"ProgressMediumText"), "separate percentage text color");
+    const auto luminance = [](const D2D1_COLOR_F& color) {
+        const auto linear = [](float channel) {
+            return channel <= 0.04045f ? channel / 12.92f
+                : std::pow((channel + 0.055f) / 1.055f, 2.4f);
+        };
+        return 0.2126f * linear(color.r) + 0.7152f * linear(color.g) + 0.0722f * linear(color.b);
+    };
+    for (const auto& palette : { ThemePalette::Light(), ThemePalette::Dark() }) {
+        for (size_t index = 0; index < palette.progressText.size(); ++index) {
+            const float text = luminance(palette.progressText[index]);
+            for (const auto& background : { palette.trackBg, palette.miniFill[index], palette.surface }) {
+                const float fill = luminance(background);
+                const float contrast = ((std::max)(text, fill) + 0.05f) / ((std::min)(text, fill) + 0.05f);
+                Expect(contrast >= 4.5f, "default percentage text contrasts with both filled and empty areas");
+            }
+        }
+    }
 
     Expect(IsValidFontFamilyName(L"Microsoft YaHei UI"), "valid font family");
     Expect(IsValidFontFamilyName(L"Segoe UI"), "valid Segoe UI font");
@@ -112,50 +131,50 @@ int main() {
            "standard bar maintains unified standard round corner preference");
     Expect(miniAt80.outerCornerRadius == 8.0f,
            "80% mini outer corner matches unified 96-DPI DWMWCP_ROUND (8px)");
-    Expect(miniAt80.contentInset == 2.0f,
+    Expect(miniAt80.contentInset == 3.0f,
            "mini content inset follows 80% user scale");
-    Expect(miniAt80.pillCornerRadius == 6.0f,
+    Expect(miniAt80.pillCornerRadius == 5.0f,
            "80% mini pill corner stays concentric with 8px outer corner");
-    Expect(miniAt80.dividerThickness == 1.0f,
-           "mini divider remains one visible physical pixel at 80%");
+    Expect(miniAt80.centerGap == 4.0f,
+           "mini center gap rounds to even physical pixels at 80%");
     Expect(miniAt80.outerBorderThickness == 1.0f,
            "mini border remains one visible physical pixel at 80%");
 
     const MiniBarMetrics miniAt100 = ScaledMiniBarMetrics(1.0f);
     Expect(miniAt100.outerCornerRadius == 8.0f,
            "100% mini outer corner matches 96-DPI DWMWCP_ROUND (8px)");
-    Expect(miniAt100.contentInset == 2.0f,
-           "100% mini content inset stays 2px");
-    Expect(miniAt100.pillCornerRadius == 6.0f,
+    Expect(miniAt100.contentInset == 4.0f,
+           "100% mini content inset is four pixels");
+    Expect(miniAt100.pillCornerRadius == 4.0f,
            "100% mini pill corner stays concentric with 8px outer corner");
-    Expect(MiniDividerHeight(28, miniAt100) == 12.0f,
-           "100% divider spans the concentric pill's straight center section");
-    Expect(MiniDualSlotWidth(112.0f, miniAt100) == 53.0f,
-           "100% dual bar leaves only a two-pixel center gap between equal slots");
+    Expect(miniAt100.centerGap == 4.0f,
+           "100% center gap is four empty pixels");
+    Expect(MiniDualSlotWidth(112.0f, miniAt100) == 50.0f,
+           "100% dual bar has two equal fifty-pixel slots");
 
     const MiniBarMetrics miniAt120 = ScaledMiniBarMetrics(1.2f);
     Expect(miniAt120.outerCornerRadius == 8.0f,
            "120% user scale at 96 DPI keeps 8px outer corner aligned with DWM");
-    Expect(miniAt120.contentInset == 2.0f,
+    Expect(miniAt120.contentInset == 5.0f,
            "mini content inset follows 120% user scale");
-    Expect(miniAt120.pillCornerRadius == 6.0f,
+    Expect(miniAt120.pillCornerRadius == 3.0f,
            "120% mini pill corner stays concentric with 8px outer corner");
 
     const MiniBarMetrics miniHiDpiSmall = ScaledMiniBarMetricsForWindow(1.5f, 0.8f, true);
     Expect(miniHiDpiSmall.outerCornerRadius == 12.0f,
            "150% DPI + 80% mini outer corner matches unified DWMWCP_ROUND (8px * 1.5 = 12px)");
-    Expect(miniHiDpiSmall.contentInset == 2.0f,
-           "150% DPI + 80% mini inset rounds to 2px");
-    Expect(miniHiDpiSmall.pillCornerRadius == 10.0f,
-           "150% DPI + 80% mini pill stays concentric (12 - 2 = 10px)");
+    Expect(miniHiDpiSmall.contentInset == 5.0f,
+           "150% DPI + 80% mini inset rounds to 5px");
+    Expect(miniHiDpiSmall.pillCornerRadius == 7.0f,
+           "150% DPI + 80% mini pill stays concentric (12 - 5 = 7px)");
 
     const MiniBarMetrics miniHiDpiLarge = ScaledMiniBarMetricsForWindow(2.0f, 1.2f, true);
     Expect(miniHiDpiLarge.outerCornerRadius == 16.0f,
            "200% DPI + 120% mini outer corner matches DWMWCP_ROUND (16px)");
-    Expect(miniHiDpiLarge.contentInset == 5.0f,
-           "200% DPI + 120% mini inset rounds to 5px");
-    Expect(miniHiDpiLarge.pillCornerRadius == 11.0f,
-           "200% DPI + 120% mini pill stays concentric (16 - 5 = 11px)");
+    Expect(miniHiDpiLarge.contentInset == 10.0f,
+           "200% DPI + 120% mini inset rounds to 10px");
+    Expect(miniHiDpiLarge.pillCornerRadius == 6.0f,
+           "200% DPI + 120% mini pill stays concentric (16 - 10 = 6px)");
 
     const float monitorDpis[] = { 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
     struct MiniDpiCase {
@@ -196,6 +215,13 @@ int main() {
                        MiniBarPhysicalWidth(twoQuotas, uiScale) % 2 == 0 &&
                        MiniBarPhysicalHeight(uiScale) % 2 == 0,
                    "mini bar dimensions stay on even physical pixels across user and display scales");
+            const auto metrics = ScaledMiniBarMetricsForWindow(dpi, userScale);
+            const float slotWidth = MiniDualSlotWidth(
+                static_cast<float>(MiniBarPhysicalWidth(twoQuotas, uiScale)), metrics);
+            Expect(slotWidth > 0.0f && std::floor(slotWidth) == slotWidth &&
+                       static_cast<int>(metrics.centerGap) % 2 == 0 &&
+                       MiniBarPhysicalHeight(uiScale) > metrics.contentInset * 2.0f,
+                   "mini content remains positive, equal and pixel-aligned at every scale");
             const int expandedH = ExpandedPhysicalHeight(uiScale);
             const int bottomCardEnd =
                 static_cast<int>(SnapPx(static_cast<float>(COLLAPSED_HEIGHT), uiScale)) +
@@ -308,10 +334,10 @@ int main() {
             pastMargin, standardBar, monRect, rightMonitor, margin);
         Expect(released.x == pastMargin.x && released.y == pastMargin.y,
                "cursor motion resumes at the monitor's scaled seam margin");
-        const POINT crossingUp = { 42, -53 };
+        const POINT crossingUp = { 42, -COLLAPSED_HEIGHT / 2 - 1 };
         const POINT heldUp = TaskbarPlacement::HoldAtMonitorSeam(
             crossingUp, standardBar, monRect, upperMonitor, margin);
-        Expect(heldUp.x == crossingUp.x && heldUp.y == -51,
+        Expect(heldUp.x == crossingUp.x && heldUp.y == -COLLAPSED_HEIGHT / 2 + 1,
                "vertical seam holds the center without changing horizontal position");
     }
 

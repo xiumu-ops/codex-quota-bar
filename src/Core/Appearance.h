@@ -9,7 +9,8 @@ namespace CodexQuotaBar {
 
     enum class AppearanceMode {
         Default,
-        Custom
+        Custom,
+        Dark
     };
 
     std::map<std::wstring, std::wstring> DefaultAppearanceColors();

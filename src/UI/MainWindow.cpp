@@ -30,6 +30,7 @@ namespace CodexQuotaBar {
     constexpr UINT_PTR TIMER_RENDER_RETRY_ID = 1003;
     constexpr UINT_PTR TIMER_WEATHER_LAYOUT_ID = 1004;
     constexpr UINT_PTR TIMER_COMPONENT_ZORDER_ID = 1005;
+    thread_local MainWindow* MainWindow::s_componentEventTarget = nullptr;
 
     constexpr int IDM_TOGGLE_EXPAND = 2001;
     constexpr int IDM_REFRESH = 2002;
@@ -44,6 +45,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_APPEARANCE_DEFAULT = 2301;
     constexpr int IDM_APPEARANCE_CUSTOM = 2302;
     constexpr int IDM_APPEARANCE_EDIT = 2303;
+    constexpr int IDM_APPEARANCE_DARK = 2304;
     constexpr int IDM_FONT_SUB = 2400;
     constexpr int IDM_FONT_YAHEI_UI = 2401;
     constexpr int IDM_FONT_CHOOSE_SYSTEM = 2498;
@@ -52,6 +54,7 @@ namespace CodexQuotaBar {
     namespace {
         constexpr UINT kCompanionPollMs = 2000;
         constexpr UINT kComponentZOrderCheckMs = 100;
+        constexpr UINT kComponentZOrderFallbackMs = 500;
         constexpr int kRenderRetryLimit = 3;
         // 数值 → 最接近档位索引（配置读回时归一）
         int ClosestScaleLevel(float value) {
@@ -240,7 +243,7 @@ namespace CodexQuotaBar {
             ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
             if (IsWeatherDockActive()) ApplyWindowZOrder();
             UpdateComponentZOrderTimer();
-            RenderLayeredWindow();
+            RenderLayeredWindow(true);
         }
     }
 
@@ -379,7 +382,8 @@ namespace CodexQuotaBar {
         const AppearanceSettings& visualAppearance = custom
             ? m_settings.appearance
             : m_settings.defaultAppearance;
-        const ThemePalette palette = ThemePalette::Custom(visualAppearance);
+        const ThemePalette palette = m_settings.appearance.mode == AppearanceMode::Dark
+            ? ThemePalette::Dark() : ThemePalette::Custom(visualAppearance);
         const std::wstring& fontFamily = visualAppearance.fontFamily;
 
         std::wstring fontError;
@@ -634,11 +638,46 @@ namespace CodexQuotaBar {
     }
 
     void MainWindow::UpdateComponentZOrderTimer() {
-        if (IsWeatherDockActive() && IsWindowVisible(m_hwnd)) {
-            SetTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID, kComponentZOrderCheckMs, nullptr);
+        if (!m_shuttingDown && IsWeatherDockActive() && IsWindowVisible(m_hwnd)) {
+            s_componentEventTarget = this;
+            if (!m_componentForegroundHook) {
+                m_componentForegroundHook = SetWinEventHook(
+                    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, ComponentWinEvent,
+                    0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+            }
+            if (!m_componentObjectHook) {
+                m_componentObjectHook = SetWinEventHook(
+                    EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, ComponentWinEvent,
+                    0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+            }
+            const UINT interval = m_componentForegroundHook && m_componentObjectHook
+                ? kComponentZOrderFallbackMs : kComponentZOrderCheckMs;
+            SetTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID, interval, nullptr);
         } else {
             KillTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID);
+            if (m_componentForegroundHook) UnhookWinEvent(m_componentForegroundHook);
+            if (m_componentObjectHook) UnhookWinEvent(m_componentObjectHook);
+            m_componentForegroundHook = nullptr;
+            m_componentObjectHook = nullptr;
+            if (s_componentEventTarget == this) s_componentEventTarget = nullptr;
+            m_componentZOrderPending = false;
         }
+    }
+
+    void CALLBACK MainWindow::ComponentWinEvent(
+        HWINEVENTHOOK, DWORD event, HWND source, LONG objectId,
+        LONG childId, DWORD, DWORD)
+    {
+        MainWindow* window = s_componentEventTarget;
+        if (!window || window->m_shuttingDown || window->m_componentZOrderPending) return;
+        const bool windowEvent = objectId == OBJID_WINDOW && childId == CHILDID_SELF &&
+            (event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE ||
+             event == EVENT_OBJECT_LOCATIONCHANGE);
+        const bool reorder = event == EVENT_OBJECT_REORDER &&
+            (objectId == OBJID_WINDOW || objectId == OBJID_CLIENT);
+        if (!source || (event != EVENT_SYSTEM_FOREGROUND && !windowEvent && !reorder)) return;
+        window->m_componentZOrderPending = PostMessageW(
+            window->m_hwnd, WM_CQB_COMPONENT_ZORDER, 0, 0) != FALSE;
     }
 
     void MainWindow::RestoreComponentZOrder() {
@@ -680,7 +719,7 @@ namespace CodexQuotaBar {
             SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 
         ApplyCurrentWindowEffects();
-        RenderLayeredWindow();
+        RenderLayeredWindow(true);
         DwmFlush();
 
         if (!m_weatherLayoutPending && !m_weatherProbeState->inFlight) {
@@ -1149,7 +1188,7 @@ namespace CodexQuotaBar {
             SetWindowPos(
                 m_hwnd, NULL, clamped.x, clamped.y, sz.cx, sz.cy,
                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
-            RenderLayeredWindow();
+            RenderLayeredWindow(true);
         }
 
         if (m_hasCollapsedLocation) {
@@ -1159,6 +1198,7 @@ namespace CodexQuotaBar {
 
     void MainWindow::BeginShutdown() {
         if (m_shuttingDown.exchange(true)) return;
+        UpdateComponentZOrderTimer();
         {
             const std::lock_guard<std::mutex> lock(m_weatherProbeState->mutex);
             m_weatherProbeState->canceled = true;
@@ -1224,9 +1264,9 @@ namespace CodexQuotaBar {
 
     bool MainWindow::IsExpandButtonArea(POINT pt) const {
         if (m_settings.miniMode && !m_expanded) return false;
-        const int left = ScaleEven(345.0f, m_uiScale);
+        const int left = ScaleEven(StandardLayout::kExpandButtonLeft, m_uiScale);
         const int right = ScaleEven(static_cast<float>(BAR_WIDTH), m_uiScale);
-        const int top = ScaleEven(68.0f, m_uiScale);
+        const int top = ScaleEven(StandardLayout::kFooterTop, m_uiScale);
         const int bottom = ScaleEven(static_cast<float>(COLLAPSED_HEIGHT), m_uiScale);
         return pt.x >= left && pt.x < right && pt.y >= top && pt.y < bottom;
     }
@@ -1284,8 +1324,10 @@ namespace CodexQuotaBar {
         } else if (cmd == IDM_APPEARANCE_SUB) {
             const bool custom =
                 m_settings.appearance.mode == AppearanceMode::Custom;
+            const bool dark = m_settings.appearance.mode == AppearanceMode::Dark;
             const std::vector<MenuItem> appearanceItems = {
-                { IDM_APPEARANCE_DEFAULT, custom ? L"使用默认外观" : L"使用默认外观 (当前)" },
+                { IDM_APPEARANCE_DEFAULT, !custom && !dark ? L"浅色外观 (当前)" : L"浅色外观" },
+                { IDM_APPEARANCE_DARK, dark ? L"深色外观 (当前)" : L"深色外观" },
                 { IDM_APPEARANCE_CUSTOM, custom ? L"使用个性外观 (当前)" : L"使用个性外观" },
                 { IDM_FONT_SUB, L"选择界面字体" },
                 { IDM_APPEARANCE_EDIT, L"编辑个性外观与字体" },
@@ -1295,6 +1337,8 @@ namespace CodexQuotaBar {
                 m_renderer->Palette(), m_renderer->FontFamily());
             if (appearance == IDM_APPEARANCE_DEFAULT) {
                 SetAppearanceMode(AppearanceMode::Default);
+            } else if (appearance == IDM_APPEARANCE_DARK) {
+                SetAppearanceMode(AppearanceMode::Dark);
             } else if (appearance == IDM_APPEARANCE_CUSTOM) {
                 SetAppearanceMode(AppearanceMode::Custom);
             } else if (appearance == IDM_FONT_SUB) {
@@ -1496,6 +1540,11 @@ namespace CodexQuotaBar {
             HandleWeatherProbeResult();
             return 0;
 
+        case WM_CQB_COMPONENT_ZORDER:
+            m_componentZOrderPending = false;
+            RestoreComponentZOrder();
+            return 0;
+
         case WM_GETDPISCALEDSIZE: {
             if (lParam == 0 || wParam == 0) return FALSE;
             const float scale = (static_cast<float>(wParam) / BASE_DPI) *
@@ -1574,13 +1623,13 @@ namespace CodexQuotaBar {
         PAINTSTRUCT ps;
         BeginPaint(m_hwnd, &ps);
         EndPaint(m_hwnd, &ps);
-        RenderLayeredWindow();
+        RenderLayeredWindow(true);
     }
 
-    HRESULT MainWindow::RenderLayeredWindow() {
+    HRESULT MainWindow::RenderLayeredWindow(bool forcePresent) {
         if (!m_hwnd) return E_UNEXPECTED;
         HRESULT hr = m_renderer->Render(
-            m_expanded, m_settings.miniMode, m_snapshot, m_syncState);
+            m_expanded, m_settings.miniMode, m_snapshot, m_syncState, forcePresent);
         if (SUCCEEDED(hr)) {
             m_renderFailureCount = 0;
             KillTimer(m_hwnd, TIMER_RENDER_RETRY_ID);

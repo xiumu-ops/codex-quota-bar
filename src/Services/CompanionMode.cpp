@@ -1,4 +1,5 @@
 #include "Services/CompanionMode.h"
+#include "Core/WinHandle.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -11,6 +12,8 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <mutex>
+#include <optional>
 
 namespace CodexQuotaBar {
 namespace {
@@ -46,58 +49,66 @@ namespace {
     }
 
     DesktopProcessState CompanionMode::ProbeDesktopState() {
+        // Retaining the verified process handle also prevents PID reuse from
+        // identifying an unrelated process as the desktop application.
+        static std::mutex cacheMutex;
+        static std::optional<WinHandle> cachedProcess;
+        const std::lock_guard lock(cacheMutex);
+        if (cachedProcess) {
+            const DWORD wait = WaitForSingleObject(cachedProcess->Get(), 0);
+            if (wait == WAIT_TIMEOUT) return DesktopProcessState::Running;
+            cachedProcess.reset();
+        }
+
         DWORD currentSession = 0;
         if (!ProcessIdToSessionId(GetCurrentProcessId(), &currentSession)) {
             return DesktopProcessState::QueryFailed;
         }
-        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snapshot == INVALID_HANDLE_VALUE) return DesktopProcessState::QueryFailed;
+        WinHandle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+        if (!snapshot) return DesktopProcessState::QueryFailed;
 
-        bool found = false;
         bool queryFailed = false;
         PROCESSENTRY32W entry = {};
         entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry)) {
+        if (Process32FirstW(snapshot.Get(), &entry)) {
             do {
                 if (_wcsicmp(entry.szExeFile, L"ChatGPT.exe") != 0 &&
-                    _wcsicmp(entry.szExeFile, L"Codex.exe") != 0) {
-                    continue;
-                }
+                    _wcsicmp(entry.szExeFile, L"Codex.exe") != 0) continue;
                 DWORD processSession = 0;
                 if (!ProcessIdToSessionId(entry.th32ProcessID, &processSession) ||
                     processSession != currentSession) continue;
 
-                HANDLE process = OpenProcess(
-                    PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+                HANDLE opened = OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+                const bool canWait = opened != nullptr;
+                if (!opened) {
+                    opened = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+                }
+                WinHandle process(opened);
                 if (!process) {
                     queryFailed = true;
                     continue;
                 }
-
                 std::wstring path(32768, L'\0');
                 DWORD length = static_cast<DWORD>(path.size());
-                const BOOL queried = QueryFullProcessImageNameW(
-                    process, 0, path.data(), &length);
-                CloseHandle(process);
-                if (!queried || length == 0) {
+                if (!QueryFullProcessImageNameW(process.Get(), 0, path.data(), &length) || length == 0) {
                     queryFailed = true;
                     continue;
                 }
-
                 path.resize(length);
                 if (IsDesktopExecutablePath(path)) {
-                    found = true;
-                    break;
+                    if (canWait) {
+                        const DWORD wait = WaitForSingleObject(process.Get(), 0);
+                        if (wait == WAIT_OBJECT_0) continue;
+                        if (wait == WAIT_TIMEOUT) cachedProcess.emplace(std::move(process));
+                    }
+                    return DesktopProcessState::Running;
                 }
-            } while (Process32NextW(snapshot, &entry));
+            } while (Process32NextW(snapshot.Get(), &entry));
         } else if (GetLastError() != ERROR_NO_MORE_FILES) {
             queryFailed = true;
         }
-        CloseHandle(snapshot);
-        if (found) return DesktopProcessState::Running;
-        return queryFailed
-            ? DesktopProcessState::QueryFailed
-            : DesktopProcessState::NotRunning;
+        return queryFailed ? DesktopProcessState::QueryFailed : DesktopProcessState::NotRunning;
     }
 
     bool CompanionMode::IsDesktopRunning() {

@@ -13,7 +13,7 @@ namespace CodexQuotaBar {
         float outerCornerRadius = 0.0f;
         float contentInset = 0.0f;
         float pillCornerRadius = 0.0f;
-        float dividerThickness = 0.0f;
+        float centerGap = 0.0f;
         float outerBorderThickness = 0.0f;
     };
 
@@ -38,7 +38,7 @@ namespace CodexQuotaBar {
     inline MiniBarMetrics ScaledMiniBarMetrics(float uiScale, float outerCornerRadius) {
         const float safeUiScale = uiScale > 0.0f ? uiScale : 1.0f;
         const float clampedOuter = (std::max)(2.0f, std::round(outerCornerRadius));
-        const float contentInset = (std::max)(1.0f, std::round(2.0f * safeUiScale));
+        const float contentInset = (std::max)(1.0f, std::round(4.0f * safeUiScale));
         const int physicalHeight = MiniBarPhysicalHeight(safeUiScale);
         const float maxHalfPill = std::floor(
             (std::max)(0.0f, static_cast<float>(physicalHeight) - contentInset * 2.0f) / 2.0f);
@@ -50,7 +50,7 @@ namespace CodexQuotaBar {
             clampedOuter,
             contentInset,
             pillCornerRadius,
-            hairline,
+            static_cast<float>(ScaleEven(4.0f, safeUiScale)),
             hairline,
         };
     }
@@ -88,39 +88,26 @@ namespace CodexQuotaBar {
             static_cast<float>(MINI_SINGLE_WIDTH), uiScale));
     }
 
-    inline float MiniDividerPhysicalWidth(const MiniBarMetrics& metrics) {
-        return static_cast<float>((std::max)(2, ScaleEven(metrics.dividerThickness, 1.0f)));
-    }
-
     inline float MiniDualSlotWidth(float barWidth, const MiniBarMetrics& metrics) {
-        return (barWidth - MiniDividerPhysicalWidth(metrics)) / 2.0f - metrics.contentInset;
+        return (barWidth - metrics.centerGap) / 2.0f - metrics.contentInset;
     }
 
-    inline float MiniDividerHeight(int physicalHeight, const MiniBarMetrics& metrics) {
-        const float pillHeight = (std::max)(
-            0.0f,
-            static_cast<float>(physicalHeight) - metrics.contentInset * 2.0f);
-        return (std::max)(
-            metrics.dividerThickness,
-            pillHeight - metrics.pillCornerRadius * 2.0f);
-    }
-
-    // 标准栏与展开态布局（逻辑像素）。所有位置与尺寸都通过 SnapPx 统一取整到
-    // 物理偶数像素后再组合：四周边距留白统一为 8px，行与卡片之间的间隔边距统一为 6px。
+    // 标准面板使用 16px 内容边距，详情卡片使用 8px 外边距与 6px 间隔。
     namespace StandardLayout {
         inline constexpr float kMargin = 8.0f;          // 统一四周边距留白（左、右、上、下及展开栏底部）
         inline constexpr float kGap = 6.0f;             // 统一各行与各子卡片之间的间隔边距
-        inline constexpr float kPadX = kMargin;         // 保持兼容别名（统一 8px）
-        inline constexpr float kRowTextHeight = 20.0f;
-        inline constexpr float kTrackOffset = 24.0f;
+        inline constexpr float kPadX = 16.0f;
+        inline constexpr float kRowTextHeight = 24.0f;
+        inline constexpr float kTrackOffset = 32.0f;
         inline constexpr float kTrackHeight = 6.0f;
-        inline constexpr float kRowTops[2] = { kMargin, kMargin + 30.0f + kGap }; // { 8.0f, 44.0f }
-        inline constexpr float kFooterTop = kRowTops[1] + 30.0f + kGap;           // 80.0f
-        inline constexpr float kFooterHeight = 16.0f;
-        inline constexpr float kDetailLeft = 114.0f;
-        inline constexpr float kDetailRight = 306.0f;
-        inline constexpr float kSyncCenterX = 346.0f;
-        inline constexpr float kChevronCenterX = 364.0f;
+        inline constexpr float kDetailOffset = 44.0f;
+        inline constexpr float kDetailHeight = 18.0f;
+        inline constexpr float kRowTops[2] = { 16.0f, 96.0f };
+        inline constexpr float kFooterTop = 164.0f;
+        inline constexpr float kFooterHeight = 24.0f;
+        inline constexpr float kExpandButtonLeft = 270.0f;
+        inline constexpr float kSyncCenterX = 20.0f;
+        inline constexpr float kChevronCenterX = 356.0f;
         inline constexpr float kCardGapTop = kGap;      // 6.0f：展开态第一张子卡片上方间隔（与普通栏间隔边距统一）
         inline constexpr float kCardHeight = 66.0f;
         inline constexpr float kCardGap = kGap;         // 6.0f：子卡片之间的间隔（与普通栏间隔边距统一）
