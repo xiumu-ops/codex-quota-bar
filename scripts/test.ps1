@@ -226,6 +226,8 @@ public static class CqbNative {
     [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint threadId, ref CqbGuiThreadInfo info);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out CqbRect rect);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
+    [DllImport("user32.dll")] public static extern void NotifyWinEvent(uint eventId, IntPtr hwnd, int objectId, int childId);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(CqbPoint point);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
     public static IntPtr RootWindowAt(CqbPoint point) { return GetAncestor(WindowFromPoint(point), 2); }
@@ -311,6 +313,9 @@ function Assert-CqbTaskbarRecovery([IntPtr]$Component) {
         return
     }
     try {
+        $recoveryWatch = [Diagnostics.Stopwatch]::StartNew()
+        # Explorer also reports top-level reorders on the desktop HWND.
+        [CqbNative]::NotifyWinEvent(0x8004, [CqbNative]::GetDesktopWindow(), 0, 0)
         $deadline = [DateTime]::UtcNow.AddSeconds(2)
         while ([CqbNative]::RootWindowAt($point) -ne $Component -and [DateTime]::UtcNow -lt $deadline) {
             Start-Sleep -Milliseconds 30
@@ -318,6 +323,8 @@ function Assert-CqbTaskbarRecovery([IntPtr]$Component) {
         $after = Get-CqbWindowRect $Component
         if ([CqbNative]::RootWindowAt($point) -ne $Component -or -not $before.Equals($after)) {
             Fail-Test "任务栏遮挡后组件未在原位置恢复"
+        } elseif ($recoveryWatch.ElapsedMilliseconds -ge 400) {
+            Fail-Test "组件层级事件未及时处理，仍依赖定时器恢复"
         } else {
             Write-Host "  [PASS] 组件被同为置顶窗口的任务栏遮挡后在原位置恢复" -ForegroundColor Green
         }
@@ -596,6 +603,13 @@ try {
                     $style = [CqbNative]::GetWindowLongPtr($miniHwnd, -20).ToInt64()
                     if (($style -band 0x8) -eq 0) {
                         Fail-Test "旧配置关闭置顶时，组件模式未强制置顶"
+                    }
+                    $activation = [CqbNative]::SendMessage(
+                        $miniHwnd, 0x0021, $miniHwnd, [IntPtr]::new(0x02010001)).ToInt64()
+                    if (($style -band 0x08000000) -ne 0 -and $activation -eq 3) {
+                        Write-Host "  [PASS] 组件点击保持不激活，避免焦点与层级往返切换" -ForegroundColor Green
+                    } else {
+                        Fail-Test "组件点击仍会激活窗口"
                     }
 
                     $gui = [CqbGuiThreadInfo]::new()

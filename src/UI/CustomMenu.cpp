@@ -1,6 +1,7 @@
 #include "UI/CustomMenu.h"
 #include "UI/WindowEffects.h"
 #include "Core/DpiHelper.h"
+#include "Graphics/PixelText.h"
 
 #include <algorithm>
 #include <cmath>
@@ -69,7 +70,7 @@ namespace CodexQuotaBar {
                 return false;
             }
             st->pMenuRenderTarget->SetDpi(96.0f, 96.0f);
-            st->pMenuRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+            st->pMenuRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             return true;
         }
 
@@ -124,7 +125,7 @@ namespace CodexQuotaBar {
                 if (st->pFontMenu) {
                     st->pMenuBrush->SetColor(st->ids[i] != 0 ? st->palette.text : st->palette.muted);
                     D2D1_RECT_F textRect = D2D1::RectF(rc.left + padX, rc.top, rc.right - padX, rc.bottom);
-                    st->pMenuRenderTarget->DrawTextW(
+                    DrawPixelText(st->pMenuRenderTarget.Get(), st->pDWriteFactory.Get(),
                         row.text.c_str(), static_cast<UINT32>(row.text.size()),
                         st->pFontMenu.Get(), textRect, st->pMenuBrush.Get());
                 }
@@ -271,7 +272,7 @@ namespace CodexQuotaBar {
         if (FAILED(st.pDWriteFactory->CreateTextFormat(
                 fontFamily.c_str(), NULL,
                 DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                14.0f * dpiScale, L"zh-cn", &st.pFontMenu))) {
+                static_cast<float>(Scale(14.0f, dpiScale)), L"zh-cn", &st.pFontMenu))) {
             return 0;
         }
         st.pFontMenu->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);

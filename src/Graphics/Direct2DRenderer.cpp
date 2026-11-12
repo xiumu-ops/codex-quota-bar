@@ -1,4 +1,5 @@
 #include "Graphics/Direct2DRenderer.h"
+#include "Graphics/PixelText.h"
 #include "Core/Constants.h"
 #include "Core/DpiHelper.h"
 #include "Core/Layout.h"
@@ -631,7 +632,7 @@ namespace CodexQuotaBar {
                     std::round((pillTop + pillBottom) * 0.5f - cached.inkCenter.y));
                 m_pRenderTarget->DrawTextLayout(origin, cached.layout.Get(), brush);
             } else {
-                m_pRenderTarget->DrawTextW(
+                DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                     value.c_str(), static_cast<UINT32>(value.size()),
                     m_pFontMiniValue.Get(), pillRect.rect, brush);
             }
@@ -689,13 +690,13 @@ namespace CodexQuotaBar {
         if (m_pFontFooter) {
             m_pFontFooter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             m_pFontFooter->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            m_pRenderTarget->DrawTextW(
+            DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                 status.c_str(), static_cast<UINT32>(status.size()), m_pFontFooter.Get(),
                 D2D1::RectF(Px(30.0f), footerTop, Px(kExpandButtonLeft), footerBottom),
                 m_pBrushMuted.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             const wchar_t* action = expanded ? L"收起详情" : L"展开详情";
             m_pFontFooter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-            m_pRenderTarget->DrawTextW(
+            DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                 action, static_cast<UINT32>(wcslen(action)), m_pFontFooter.Get(),
                 D2D1::RectF(Px(kExpandButtonLeft), footerTop, Px(kChevronCenterX - 12.0f), footerBottom),
                 m_pBrushMuted.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -780,7 +781,7 @@ namespace CodexQuotaBar {
         if (m_pFontRowTitle) {
             m_pFontRowTitle->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             m_pFontRowTitle->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            m_pRenderTarget->DrawTextW(
+            DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                 title.c_str(), static_cast<UINT32>(title.size()), m_pFontRowTitle.Get(),
                 D2D1::RectF(left, topY, valueLeft, bottom), m_pBrushText.Get(),
                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -791,7 +792,7 @@ namespace CodexQuotaBar {
                 : L"---";
             m_pFontRowValueBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
             m_pFontRowValueBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            m_pRenderTarget->DrawTextW(
+            DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                 value.c_str(), static_cast<UINT32>(value.size()), m_pFontRowValueBold.Get(),
                 D2D1::RectF(valueLeft, topY, right, bottom),
                 window.available ? ProgressBrushFor(window.remainingPercent, true) : m_pBrushProgressBlue.Get(),
@@ -804,12 +805,12 @@ namespace CodexQuotaBar {
             const float detailLeft = left + Px(80.0f);
             m_pFontRowDetail->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             m_pFontRowDetail->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            m_pRenderTarget->DrawTextW(
+            DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                 L"剩余额度", 4, m_pFontRowDetail.Get(),
                 D2D1::RectF(left, detailTop, detailLeft, detailBottom),
                 m_pBrushMuted.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             m_pFontRowDetail->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-            m_pRenderTarget->DrawTextW(
+            DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(),
                 detail.c_str(), static_cast<UINT32>(detail.size()), m_pFontRowDetail.Get(),
                 D2D1::RectF(detailLeft, detailTop, right, detailBottom),
                 m_pBrushMuted.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -877,14 +878,14 @@ namespace CodexQuotaBar {
                 m_pFontStatsNum->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 D2D1_RECT_F numRect = D2D1::RectF(colLeft, topY + Px(8.0f), colRight, topY + Px(32.0f));
                 ID2D1SolidColorBrush* numBrush = val.empty() ? m_pBrushMuted.Get() : m_pBrushText.Get();
-                m_pRenderTarget->DrawTextW(numText, numLen, m_pFontStatsNum.Get(), numRect, numBrush);
+                DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(), numText, numLen, m_pFontStatsNum.Get(), numRect, numBrush);
             }
 
             if (m_pFontStatsLabel) {
                 m_pFontStatsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsLabel->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 D2D1_RECT_F lblRect = D2D1::RectF(colLeft, topY + Px(36.0f), colRight, topY + Px(58.0f));
-                m_pRenderTarget->DrawTextW(cols[i].label, static_cast<UINT32>(wcslen(cols[i].label)), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
+                DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(), cols[i].label, static_cast<UINT32>(wcslen(cols[i].label)), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
             }
         }
     }
@@ -943,14 +944,14 @@ namespace CodexQuotaBar {
                 D2D1_RECT_F numRect = D2D1::RectF(colLeft, topY + Px(8.0f), colRight, topY + Px(32.0f));
                 ID2D1SolidColorBrush* numBrush =
                     (*values[i] == L"--") ? m_pBrushMuted.Get() : m_pBrushText.Get();
-                m_pRenderTarget->DrawTextW(values[i]->c_str(), static_cast<UINT32>(values[i]->size()), m_pFontRowValue.Get(), numRect, numBrush);
+                DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(), values[i]->c_str(), static_cast<UINT32>(values[i]->size()), m_pFontRowValue.Get(), numRect, numBrush);
             }
 
             if (m_pFontStatsLabel) {
                 m_pFontStatsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_pFontStatsLabel->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 D2D1_RECT_F lblRect = D2D1::RectF(colLeft, topY + Px(36.0f), colRight, topY + Px(58.0f));
-                m_pRenderTarget->DrawTextW(labels[i], static_cast<UINT32>(wcslen(labels[i])), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
+                DrawPixelText(m_pRenderTarget.Get(), m_pDWriteFactory.Get(), labels[i], static_cast<UINT32>(wcslen(labels[i])), m_pFontStatsLabel.Get(), lblRect, m_pBrushMuted.Get());
             }
         }
     }

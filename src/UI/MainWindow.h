@@ -26,7 +26,6 @@ namespace CodexQuotaBar {
     constexpr UINT WM_CQB_QUOTA_RESULT = WM_APP + 7; // 数据从共享抓取状态读取
     constexpr UINT WM_CQB_COMPANION_RESULT = WM_APP + 8;
     constexpr UINT WM_CQB_WEATHER_RESULT = WM_APP + 9;
-    constexpr UINT WM_CQB_COMPONENT_ZORDER = WM_APP + 10;
 
     class MainWindow {
     public:
@@ -62,7 +61,7 @@ namespace CodexQuotaBar {
         bool SetComponentMode(bool enabled);
         void DockToWeatherWidget(bool waitForProbe = false);
         WeatherWidgetPlacement GetWeatherPlacement(SIZE size);
-        void InvalidateWeatherProbe();
+        void InvalidateWeatherProbe(bool clearPlacement = false);
         void ScheduleWeatherLayout();
         void HandleWeatherProbeResult();
         bool IsWeatherDockActive() const;
@@ -130,8 +129,9 @@ namespace CodexQuotaBar {
         bool m_contextMenuOpen = false;
         HWINEVENTHOOK m_componentForegroundHook = nullptr;
         HWINEVENTHOOK m_componentObjectHook = nullptr;
+        HWINEVENTHOOK m_componentReorderHook = nullptr;
         DWORD m_componentObjectProcess = 0;
-        bool m_componentZOrderPending = false;
+        bool m_restoringComponentZOrder = false;
         POINT m_collapsedLocation = { 0, 0 };
         bool m_hasCollapsedLocation = false;
 

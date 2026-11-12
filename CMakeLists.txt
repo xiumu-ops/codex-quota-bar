@@ -38,6 +38,7 @@ set(CORE_SOURCES
 set(GRAPHICS_HEADERS
     src/Graphics/D2DCommon.h
     src/Graphics/Theme.h
+    src/Graphics/PixelText.h
     src/Graphics/Direct2DRenderer.h
 )
 

@@ -633,11 +633,15 @@ namespace CodexQuotaBar {
 
     void MainWindow::ApplyWindowZOrder() {
         const bool componentMode = IsWeatherDockActive();
+        const LONG_PTR style = GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE);
+        const LONG_PTR targetStyle = componentMode ? style | WS_EX_NOACTIVATE : style & ~WS_EX_NOACTIVATE;
+        if (style != targetStyle) SetWindowLongPtrW(m_hwnd, GWL_EXSTYLE, targetStyle);
         const bool topmost = m_settings.alwaysOnTop || componentMode;
-        const bool currentlyTopmost = (GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        const bool currentlyTopmost = (style & WS_EX_TOPMOST) != 0;
         if (!componentMode && topmost == currentlyTopmost) return;
         SetWindowPos(m_hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-                     0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                     0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                     SWP_NOOWNERZORDER | SWP_NOREDRAW);
     }
 
     void MainWindow::UpdateComponentZOrderTimer() {
@@ -646,6 +650,13 @@ namespace CodexQuotaBar {
             if (!m_componentForegroundHook) {
                 m_componentForegroundHook = SetWinEventHook(
                     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, ComponentWinEvent,
+                    0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+            }
+            if (!m_componentReorderHook) {
+                // Top-level Z-order changes are reported on the desktop, not
+                // necessarily on an Explorer-owned taskbar HWND.
+                m_componentReorderHook = SetWinEventHook(
+                    EVENT_OBJECT_REORDER, EVENT_OBJECT_REORDER, nullptr, ComponentWinEvent,
                     0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
             }
             DWORD taskbarProcess = 0;
@@ -662,18 +673,19 @@ namespace CodexQuotaBar {
                     EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, ComponentWinEvent,
                     taskbarProcess, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
             }
-            const UINT interval = m_componentForegroundHook && m_componentObjectHook
+            const UINT interval = m_componentForegroundHook && m_componentObjectHook && m_componentReorderHook
                 ? kComponentZOrderFallbackMs : kComponentZOrderCheckMs;
             SetTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID, interval, nullptr);
         } else {
             KillTimer(m_hwnd, TIMER_COMPONENT_ZORDER_ID);
             if (m_componentForegroundHook) UnhookWinEvent(m_componentForegroundHook);
             if (m_componentObjectHook) UnhookWinEvent(m_componentObjectHook);
+            if (m_componentReorderHook) UnhookWinEvent(m_componentReorderHook);
             m_componentForegroundHook = nullptr;
             m_componentObjectHook = nullptr;
+            m_componentReorderHook = nullptr;
             m_componentObjectProcess = 0;
             if (s_componentEventTarget == this) s_componentEventTarget = nullptr;
-            m_componentZOrderPending = false;
         }
     }
 
@@ -682,22 +694,24 @@ namespace CodexQuotaBar {
         LONG childId, DWORD, DWORD)
     {
         MainWindow* window = s_componentEventTarget;
-        if (!window || window->m_shuttingDown || window->m_componentZOrderPending) return;
+        if (!window || window->m_shuttingDown || window->m_restoringComponentZOrder) return;
         const bool windowEvent = objectId == OBJID_WINDOW && childId == CHILDID_SELF &&
             (event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE ||
              event == EVENT_OBJECT_LOCATIONCHANGE);
         const bool reorder = event == EVENT_OBJECT_REORDER &&
             (objectId == OBJID_WINDOW || objectId == OBJID_CLIENT);
         if (!source || (event != EVENT_SYSTEM_FOREGROUND && !windowEvent && !reorder)) return;
-        if (event != EVENT_SYSTEM_FOREGROUND && source != window->m_weatherMetrics.hTaskbar &&
+        const bool desktopReorder = reorder && source == GetDesktopWindow();
+        if (event != EVENT_SYSTEM_FOREGROUND && !desktopReorder && source != window->m_weatherMetrics.hTaskbar &&
             GetAncestor(source, GA_ROOT) != window->m_weatherMetrics.hTaskbar) return;
-        window->m_componentZOrderPending = PostMessageW(
-            window->m_hwnd, WM_CQB_COMPONENT_ZORDER, 0, 0) != FALSE;
+        // OUTOFCONTEXT callbacks run on our UI thread. Correct Z-order here,
+        // before another queued message/compositor frame can expose the taskbar.
+        window->RestoreComponentZOrder();
     }
 
     void MainWindow::RestoreComponentZOrder() {
         const HWND taskbar = m_weatherMetrics.hTaskbar;
-        if (!IsWeatherDockActive() || !IsWindowVisible(m_hwnd) || m_contextMenuOpen ||
+        if (m_restoringComponentZOrder || !IsWeatherDockActive() || !IsWindowVisible(m_hwnd) || m_contextMenuOpen ||
             !taskbar || !IsWindowVisible(taskbar)) return;
 
         RECT componentRect = {};
@@ -706,12 +720,16 @@ namespace CodexQuotaBar {
         if (!GetWindowRect(m_hwnd, &componentRect) || !GetWindowRect(taskbar, &taskbarRect) ||
             !IntersectRect(&overlap, &componentRect, &taskbarRect)) return;
 
-        const POINT center = { overlap.left + (overlap.right - overlap.left) / 2,
-                               overlap.top + (overlap.bottom - overlap.top) / 2 };
-        // Explorer can raise its taskbar above an already-topmost component.
-        const HWND coveringWindow = WindowFromPoint(center);
-        if (coveringWindow && GetAncestor(coveringWindow, GA_ROOT) == taskbar) {
-            ApplyWindowZOrder();
+        // Inspect ordering itself, rather than waiting for hit-testing to show
+        // the taskbar already covering the component. Preserve the backing bitmap.
+        for (HWND above = GetWindow(m_hwnd, GW_HWNDPREV); above;
+             above = GetWindow(above, GW_HWNDPREV)) {
+            if (above == taskbar) {
+                m_restoringComponentZOrder = true;
+                ApplyWindowZOrder();
+                m_restoringComponentZOrder = false;
+                break;
+            }
         }
     }
 
@@ -729,17 +747,18 @@ namespace CodexQuotaBar {
         m_collapsedLocation = pos;
         m_hasCollapsedLocation = true;
 
-        SetWindowPos(
-            m_hwnd, HWND_TOPMOST,
-            pos.x, pos.y,
-            sz.cx, sz.cy,
-            SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+        RECT current = {};
+        const bool geometryChanged = !GetWindowRect(m_hwnd, &current) ||
+            current.left != pos.x || current.top != pos.y ||
+            current.right - current.left != sz.cx || current.bottom - current.top != sz.cy;
+        if (geometryChanged) {
+            SetWindowPos(m_hwnd, nullptr, pos.x, pos.y, sz.cx, sz.cy,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOREDRAW);
+        }
+        RestoreComponentZOrder();
+        RenderLayeredWindow();
 
-        ApplyCurrentWindowEffects();
-        RenderLayeredWindow(true);
-        DwmFlush();
-
-        if (!m_weatherLayoutPending && !m_weatherProbeState->inFlight) {
+        if (geometryChanged && !m_weatherLayoutPending && !m_weatherProbeState->inFlight) {
             ConfigStore::SavePosition(m_collapsedLocation);
         }
     }
@@ -751,10 +770,10 @@ namespace CodexQuotaBar {
         if (!m_weatherLayoutPending) DockToWeatherWidget(true);
     }
 
-    void MainWindow::InvalidateWeatherProbe() {
+    void MainWindow::InvalidateWeatherProbe(bool clearPlacement) {
         ++m_weatherGeneration;
         m_weatherProbeNeeded = true;
-        m_weatherWidgetRect.reset();
+        if (clearPlacement) m_weatherWidgetRect.reset();
     }
 
     WeatherWidgetPlacement MainWindow::GetWeatherPlacement(SIZE size) {
@@ -767,7 +786,7 @@ namespace CodexQuotaBar {
             metrics.dpiScale != m_weatherMetrics.dpiScale ||
             !EqualRect(&metrics.taskbarRect, &m_weatherMetrics.taskbarRect) ||
             !EqualRect(&metrics.monitorRect, &m_weatherMetrics.monitorRect)) {
-            InvalidateWeatherProbe();
+            InvalidateWeatherProbe(true);
         }
         m_weatherMetrics = metrics;
         auto state = m_weatherProbeState;
@@ -797,7 +816,7 @@ namespace CodexQuotaBar {
     void MainWindow::HandleWeatherProbeResult() {
         {
             const std::lock_guard<std::mutex> lock(m_weatherProbeState->mutex);
-            if (m_weatherProbeState->generation == m_weatherGeneration) {
+            if (m_weatherProbeState->generation == m_weatherGeneration && m_weatherProbeState->result) {
                 m_weatherWidgetRect = m_weatherProbeState->result;
             }
             m_weatherProbeState->inFlight = false;
@@ -1377,6 +1396,10 @@ namespace CodexQuotaBar {
         case WM_ERASEBKGND:
             return 1; // 阻止背景默认抹除，杜绝白闪
 
+        case WM_MOUSEACTIVATE:
+            if (IsWeatherDockActive()) return MA_NOACTIVATE;
+            break;
+
         case 0x0083: // WM_NCCALCSIZE
             if (wParam != 0) {
                 NCCALCSIZE_PARAMS* pnc = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
@@ -1501,6 +1524,7 @@ namespace CodexQuotaBar {
             m_contextMenuOpen = true;
             HandleContextMenu(pt.x, pt.y);
             m_contextMenuOpen = false;
+            RestoreComponentZOrder();
             return 0;
         }
 
@@ -1555,11 +1579,6 @@ namespace CodexQuotaBar {
 
         case WM_CQB_WEATHER_RESULT:
             HandleWeatherProbeResult();
-            return 0;
-
-        case WM_CQB_COMPONENT_ZORDER:
-            m_componentZOrderPending = false;
-            RestoreComponentZOrder();
             return 0;
 
         case WM_GETDPISCALEDSIZE: {

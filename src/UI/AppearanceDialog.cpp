@@ -1,4 +1,5 @@
 #include "UI/AppearanceDialog.h"
+#include "Graphics/PixelText.h"
 
 #include "Core/Appearance.h"
 #include "Core/Constants.h"
@@ -241,7 +242,7 @@ namespace {
             return false;
         }
         state->renderTarget->SetDpi(96.0f, 96.0f);
-        state->renderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+        state->renderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         return true;
     }
 
@@ -254,7 +255,7 @@ namespace {
     {
         if (!format || !text) return;
         state->brush->SetColor(color);
-        state->renderTarget->DrawTextW(
+        DrawPixelText(state->renderTarget.Get(), state->writeFactory.Get(),
             text,
             static_cast<UINT32>(std::wcslen(text)),
             format,
@@ -951,7 +952,7 @@ namespace {
         HFONT font = CreateFontW(
             -Scale(14.0f, scale), 0, 0, 0, FW_REGULAR,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family);
+            CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family);
         if (!font) return false;
 
         title->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
