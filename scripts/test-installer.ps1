@@ -82,7 +82,7 @@ try {
         throw "The installer created mutable data before the application needed it."
     }
     $defaultConfig = Get-Content -LiteralPath $defaultConfigPath -Raw | ConvertFrom-Json
-    if ($defaultConfig.Settings.Appearance.Mode -ne "Default" -or
+    if ($defaultConfig.Settings.Appearance.Mode -ne "Light" -or
         $defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF") {
         throw "The installed default configuration is invalid."
     }
