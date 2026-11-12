@@ -112,6 +112,13 @@ namespace CodexQuotaBar {
         ComPtr<IDWriteTextFormat> m_pFontStatsNum;
         ComPtr<IDWriteTextFormat> m_pFontStatsLabel;
 
+        struct MiniTextLayout {
+            ComPtr<IDWriteTextLayout> layout;
+            D2D1_POINT_2F inkCenter = {};
+        };
+        // Lazy, bounded cache for 0% through 100% and the unavailable label.
+        std::array<MiniTextLayout, 102> m_miniTextLayouts;
+
         // 设备相关资源 (Device-Dependent Resources)
         ComPtr<ID2D1DCRenderTarget> m_pRenderTarget;
         HDC m_memoryDc = nullptr;

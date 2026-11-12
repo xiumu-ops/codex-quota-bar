@@ -150,6 +150,7 @@ namespace CodexQuotaBar {
     }
 
     void Direct2DRenderer::DiscardTextFormats() {
+        for (auto& cached : m_miniTextLayouts) cached = {};
         m_pFontRowTitle.Reset();
         m_pFontRowDetail.Reset();
         m_pFontRowValue.Reset();
@@ -550,8 +551,11 @@ namespace CodexQuotaBar {
         float pillRadius,
         const QuotaWindow& window)
     {
+        const size_t valueIndex = window.available
+            ? static_cast<size_t>(std::round(std::clamp(window.remainingPercent, 0.0, 100.0)))
+            : 101;
         const std::wstring value = window.available
-            ? std::to_wstring(static_cast<int>(std::round(window.remainingPercent))) + L"%"
+            ? std::to_wstring(valueIndex) + L"%"
             : L"---";
 
         // 1. 胶囊槽底色（接入已有 TrackBackground 自定义外观与透明度逻辑）
@@ -596,21 +600,41 @@ namespace CodexQuotaBar {
             }
         }
 
-        // 3. 百分比文字（动态绑定实际胶囊槽物理高度与基线，杜绝缩放时行高溢出导致的错位）
+        // 3. Center the visible glyphs, not the font's ascent/descent whitespace.
+        // Layouts survive quota refreshes; font or DPI changes clear the cache.
         if (m_pFontMiniValue) {
-            const float pillH = pillBottom - pillTop;
-            const float baseline = std::round(pillH * 0.75f);
-            m_pFontMiniValue->SetLineSpacing(
-                DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                pillH,
-                baseline);
+            auto& cached = m_miniTextLayouts[valueIndex];
+            if (!cached.layout) {
+                constexpr float extent = 1024.0f;
+                ComPtr<IDWriteTextLayout> layout;
+                if (SUCCEEDED(m_pDWriteFactory->CreateTextLayout(
+                        value.c_str(), static_cast<UINT32>(value.size()),
+                        m_pFontMiniValue.Get(), extent, extent, layout.GetAddressOf()))) {
+                    layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                    DWRITE_OVERHANG_METRICS ink = {};
+                    if (SUCCEEDED(layout->GetOverhangMetrics(&ink))) {
+                        cached.inkCenter = D2D1::Point2F(
+                            (extent + ink.right - ink.left) * 0.5f,
+                            (extent + ink.bottom - ink.top) * 0.5f);
+                        cached.layout = std::move(layout);
+                    }
+                }
+            }
             ID2D1SolidColorBrush* brush = window.available
                 ? ProgressBrushFor(window.remainingPercent, true)
                 : m_pBrushProgressBlue.Get();
             m_pRenderTarget->PushAxisAlignedClip(pillRect.rect, D2D1_ANTIALIAS_MODE_ALIASED);
-            m_pRenderTarget->DrawTextW(
-                value.c_str(), static_cast<UINT32>(value.size()),
-                m_pFontMiniValue.Get(), pillRect.rect, brush);
+            if (cached.layout) {
+                const D2D1_POINT_2F origin = D2D1::Point2F(
+                    std::round((pillLeft + pillRight) * 0.5f - cached.inkCenter.x),
+                    std::round((pillTop + pillBottom) * 0.5f - cached.inkCenter.y));
+                m_pRenderTarget->DrawTextLayout(origin, cached.layout.Get(), brush);
+            } else {
+                m_pRenderTarget->DrawTextW(
+                    value.c_str(), static_cast<UINT32>(value.size()),
+                    m_pFontMiniValue.Get(), pillRect.rect, brush);
+            }
             m_pRenderTarget->PopAxisAlignedClip();
         }
     }
