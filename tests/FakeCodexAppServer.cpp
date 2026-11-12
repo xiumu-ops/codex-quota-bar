@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
             if (!Contains(line, "\"method\":\"initialize\"") ||
                 !Contains(line, "\"id\":1") ||
                 !Contains(line, "\"name\":\"codex_quota_bar\"") ||
-                !Contains(line, "\"version\":\"3.0.3\"")) {
+                !Contains(line, "\"version\":\"3.1.0\"")) {
                 return ProtocolFailure(1, "invalid initialize request");
             }
             if (scenario == "hang_before_initialize") {
