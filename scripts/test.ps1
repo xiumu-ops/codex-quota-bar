@@ -158,6 +158,14 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8BOM -Value @'
     "CompanionMode": false,
     "AlwaysOnTop": true,
     "MiniMode": false,
+    "Appearance": {
+      "Mode": "Dark",
+      "Colors": {
+        "ProgressHigh": "#77CC99",
+        "ProgressCritical": "#FF8899",
+        "ProgressCriticalText": "#FFCCDD"
+      }
+    },
     "RefreshIntervalMinutes": 5,
     "FutureSetting": { "Flag": true }
   },
@@ -515,6 +523,14 @@ if ($saved.Settings.FutureSetting.Flag -eq $true -and
     Write-Host "  [PASS] 含 BOM 的配置可读取并保存，未知字段保持原值" -ForegroundColor Green
 } else {
     Fail-Test "带 BOM 的配置保存失败或未知字段被改写"
+}
+
+if ($saved.Settings.Appearance.Mode -eq "Dark" -and
+    $saved.Settings.Appearance.Colors.ProgressHighText -eq "#77CC99" -and
+    $saved.Settings.Appearance.Colors.ProgressCriticalText -eq "#FFCCDD") {
+    Write-Host "  [PASS] 深色模式可保存，旧配色迁移保留数字颜色与显式覆盖" -ForegroundColor Green
+} else {
+    Fail-Test "深色模式或旧配色迁移未正确保存"
 }
 
 # 9. 冷启动组件模式时，旧配置中关闭的迷你与置顶仍应被强制开启。

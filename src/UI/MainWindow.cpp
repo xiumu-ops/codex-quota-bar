@@ -384,7 +384,8 @@ namespace CodexQuotaBar {
             : m_settings.defaultAppearance;
         const ThemePalette palette = m_settings.appearance.mode == AppearanceMode::Dark
             ? ThemePalette::Dark() : ThemePalette::Custom(visualAppearance);
-        const std::wstring& fontFamily = visualAppearance.fontFamily;
+        const std::wstring& fontFamily = m_settings.appearance.mode == AppearanceMode::Dark
+            ? m_settings.appearance.fontFamily : visualAppearance.fontFamily;
 
         std::wstring fontError;
         m_renderer->SetAppearance(
@@ -518,7 +519,9 @@ namespace CodexQuotaBar {
         m_settings.appearance = loaded.appearance;
         m_settings.defaultAppearance = loaded.defaultAppearance;
         m_settings.appearance.fontFamily = font;
-        m_settings.appearance.mode = AppearanceMode::Custom;
+        if (m_settings.appearance.mode != AppearanceMode::Dark) {
+            m_settings.appearance.mode = AppearanceMode::Custom;
+        }
         if (!SaveSettingsWithFeedback(false)) {
             m_settings.appearance = previous;
             m_settings.defaultAppearance = previousDefault;
@@ -645,10 +648,19 @@ namespace CodexQuotaBar {
                     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, ComponentWinEvent,
                     0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
             }
-            if (!m_componentObjectHook) {
+            DWORD taskbarProcess = 0;
+            if (IsWindow(m_weatherMetrics.hTaskbar)) {
+                GetWindowThreadProcessId(m_weatherMetrics.hTaskbar, &taskbarProcess);
+            }
+            if (m_componentObjectHook && taskbarProcess != m_componentObjectProcess) {
+                UnhookWinEvent(m_componentObjectHook);
+                m_componentObjectHook = nullptr;
+            }
+            m_componentObjectProcess = taskbarProcess;
+            if (!m_componentObjectHook && taskbarProcess != 0) {
                 m_componentObjectHook = SetWinEventHook(
                     EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, ComponentWinEvent,
-                    0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+                    taskbarProcess, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
             }
             const UINT interval = m_componentForegroundHook && m_componentObjectHook
                 ? kComponentZOrderFallbackMs : kComponentZOrderCheckMs;
@@ -659,6 +671,7 @@ namespace CodexQuotaBar {
             if (m_componentObjectHook) UnhookWinEvent(m_componentObjectHook);
             m_componentForegroundHook = nullptr;
             m_componentObjectHook = nullptr;
+            m_componentObjectProcess = 0;
             if (s_componentEventTarget == this) s_componentEventTarget = nullptr;
             m_componentZOrderPending = false;
         }
@@ -676,6 +689,8 @@ namespace CodexQuotaBar {
         const bool reorder = event == EVENT_OBJECT_REORDER &&
             (objectId == OBJID_WINDOW || objectId == OBJID_CLIENT);
         if (!source || (event != EVENT_SYSTEM_FOREGROUND && !windowEvent && !reorder)) return;
+        if (event != EVENT_SYSTEM_FOREGROUND && source != window->m_weatherMetrics.hTaskbar &&
+            GetAncestor(source, GA_ROOT) != window->m_weatherMetrics.hTaskbar) return;
         window->m_componentZOrderPending = PostMessageW(
             window->m_hwnd, WM_CQB_COMPONENT_ZORDER, 0, 0) != FALSE;
     }

@@ -130,6 +130,7 @@ namespace CodexQuotaBar {
         bool m_contextMenuOpen = false;
         HWINEVENTHOOK m_componentForegroundHook = nullptr;
         HWINEVENTHOOK m_componentObjectHook = nullptr;
+        DWORD m_componentObjectProcess = 0;
         bool m_componentZOrderPending = false;
         POINT m_collapsedLocation = { 0, 0 };
         bool m_hasCollapsedLocation = false;

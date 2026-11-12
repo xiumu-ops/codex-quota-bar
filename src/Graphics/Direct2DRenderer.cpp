@@ -179,13 +179,13 @@ namespace CodexQuotaBar {
             }
         };
 
-        // 标题：14px 半粗体（单行禁止折行，杜绝分数缩放下尾字跳行）
+        // 标题：13px 半粗体（单行禁止折行，杜绝分数缩放下尾字跳行）
         createSingleLineFormat(DWRITE_FONT_WEIGHT_SEMI_BOLD, 13.0f, m_pFontRowTitle);
-        // 每行重置时间与状态说明：12px 常规体
+        // 每行重置时间与状态说明：11px 常规体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 11.0f, m_pFontRowDetail);
-        // 右侧数值 / 未返回状态（常规体备用）：16px
+        // 详情卡片的时间与数值：13px 中等字重
         createSingleLineFormat(DWRITE_FONT_WEIGHT_MEDIUM, 13.0f, m_pFontRowValue);
-        // 右侧百分比数值：16px 粗体
+        // 右侧百分比数值：20px 粗体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 20.0f, m_pFontRowValueBold);
         // Fit the longest percentage in the narrower dual-slot layout.
         createSingleLineFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, m_pFontMiniValue);
@@ -212,11 +212,11 @@ namespace CodexQuotaBar {
             m_pFontMiniValue->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_pFontMiniValue->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
-        // 常驻卡片底部说明文本：12px 常规体
+        // 常驻卡片底部说明文本：11px 常规体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 11.0f, m_pFontFooter);
-        // 统计子卡片数值（加粗）：16px 粗体
+        // 统计子卡片数值：16px 半粗体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_SEMI_BOLD, 16.0f, m_pFontStatsNum);
-        // 统计子卡片标签：12px 常规体
+        // 统计子卡片标签：11px 常规体
         createSingleLineFormat(DWRITE_FONT_WEIGHT_REGULAR, 11.0f, m_pFontStatsLabel);
     }
 
@@ -539,7 +539,6 @@ namespace CodexQuotaBar {
 
             DrawMiniQuotaSlot(pad, pillTop, divLeft, pillBottom, pillRadius, *windows[0]);
             DrawMiniQuotaSlot(divRight, pillTop, w - pad, pillBottom, pillRadius, *windows[1]);
-
         }
     }
 
