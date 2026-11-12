@@ -302,7 +302,7 @@ namespace CodexQuotaBar {
             SWP_NOZORDER | SWP_NOACTIVATE |
             SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_FRAMECHANGED);
         ApplyCurrentWindowEffects();
-        RenderLayeredWindow();
+        RenderLayeredWindow(true);
         DwmFlush();
         if (IsWeatherDockActive() && !m_dragging) ScheduleWeatherLayout();
     }
