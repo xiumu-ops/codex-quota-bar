@@ -69,7 +69,8 @@ if (-not (Test-Path -LiteralPath $DefaultConfigFile)) {
     throw "Default configuration was not copied beside the application."
 }
 $defaultConfig = Get-Content -LiteralPath $DefaultConfigFile -Raw | ConvertFrom-Json
-if ($defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
+if ($defaultConfig.Settings.Appearance.Mode -ne "Light" -or
+    $defaultConfig.Settings.Appearance.Colors.Surface -ne "#FFFFFF" -or
     $defaultConfig.Settings.Appearance.BackgroundTransparency -ne 0 -or
     $defaultConfig.Settings.AlwaysOnTop -ne $true -or
     $defaultConfig.Settings.MiniMode -ne $false) {
@@ -159,7 +160,7 @@ Set-Content -LiteralPath $ConfigFile -Encoding utf8BOM -Value @'
     "AlwaysOnTop": true,
     "MiniMode": false,
     "Appearance": {
-      "Mode": "Dark",
+      "Mode": "Default",
       "Colors": {
         "ProgressHigh": "#77CC99",
         "ProgressCritical": "#FF8899",
@@ -532,12 +533,12 @@ if ($saved.Settings.FutureSetting.Flag -eq $true -and
     Fail-Test "带 BOM 的配置保存失败或未知字段被改写"
 }
 
-if ($saved.Settings.Appearance.Mode -eq "Dark" -and
+if ($saved.Settings.Appearance.Mode -eq "Light" -and
     $saved.Settings.Appearance.Colors.ProgressHighText -eq "#77CC99" -and
     $saved.Settings.Appearance.Colors.ProgressCriticalText -eq "#FFCCDD") {
-    Write-Host "  [PASS] 深色模式可保存，旧配色迁移保留数字颜色与显式覆盖" -ForegroundColor Green
+    Write-Host "  [PASS] 旧 Default 自动保存为 Light，旧配色保留数字颜色与显式覆盖" -ForegroundColor Green
 } else {
-    Fail-Test "深色模式或旧配色迁移未正确保存"
+    Fail-Test "Light 模式或旧配色迁移未正确保存"
 }
 
 # 9. 冷启动组件模式时，旧配置中关闭的迷你与置顶仍应被强制开启。
@@ -557,6 +558,7 @@ try {
         $miniConfig.Settings.AlwaysOnTop = $false
         $miniConfig.Settings | Add-Member -NotePropertyName DockToWeather -NotePropertyValue $true -Force
         $miniConfig.Settings.UserScale = 1.2
+        $miniConfig.Settings.Appearance.Mode = "Dark"
         $miniConfig | ConvertTo-Json -Depth 10 | Set-Content `
             -LiteralPath $ConfigFile -Encoding utf8NoBOM
 
@@ -585,7 +587,11 @@ try {
                     if ($miniHwnd -ne [IntPtr]::Zero) {
                         $miniRect = Get-CqbWindowRect $miniHwnd
                         $dpiScale = [CqbNative]::GetDpiForWindow($miniHwnd) / 96.0
-                        $expectedMiniWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.2, [MidpointRounding]::AwayFromZero)
+                        $nominalWidth = 2 * [int][Math]::Round(56 * $dpiScale * 1.2, [MidpointRounding]::AwayFromZero)
+                        $inset = [int][Math]::Round(4 * $dpiScale * 1.2, [MidpointRounding]::AwayFromZero)
+                        $inset += $inset % 2
+                        $slot = 2 * [int][Math]::Round(($nominalWidth - 3 * $inset) / 4, [MidpointRounding]::AwayFromZero)
+                        $expectedMiniWidth = 2 * $slot + 3 * $inset
                         $roundedMiniHeight = [int][Math]::Round(28 * $dpiScale * 1.2, [MidpointRounding]::AwayFromZero)
                         $expectedMiniHeight = $roundedMiniHeight + ($roundedMiniHeight % 2)
                         $miniSizeOk = ($miniRect.Right - $miniRect.Left) -eq $expectedMiniWidth -and
@@ -629,6 +635,10 @@ try {
                         [void][CqbNative]::SendMessage($miniHwnd, 0x0202, [IntPtr]::Zero, $hit)
                     }
 
+                    $componentSettings = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
+                    if ($componentSettings.Settings.Appearance.Mode -ne "Dark") {
+                        Fail-Test "Dark 模式保存后发生变化"
+                    }
                     Assert-CqbTaskbarRecovery $miniHwnd
 
                     $classStyle = [CqbNative]::GetClassLongPtr($miniHwnd, -26).ToInt64()

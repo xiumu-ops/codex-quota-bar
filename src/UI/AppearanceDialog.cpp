@@ -110,6 +110,7 @@ namespace {
         ComPtr<IDWriteTextFormat> hintFont;
         ComPtr<ID2D1DCRenderTarget> renderTarget;
         ComPtr<ID2D1SolidColorBrush> brush;
+        PixelTextCache textCache;
     };
 
     bool InitializeDrawing(AppearanceDialogState& state);
@@ -118,7 +119,7 @@ namespace {
 
     void LayoutAppearanceDialog(HWND hwnd, AppearanceDialogState& state) {
         const float scale = state.dpiScale;
-        const auto pixels = [scale](float value) { return Scale(value, scale); };
+        const auto pixels = [scale](float value) { return ScaleEven(value, scale); };
         const int outlineWidth = pixels(152.0f);
         const int outlineHeight = pixels(28.0f);
         const int swatchWidth = pixels(36.0f);
@@ -136,7 +137,7 @@ namespace {
             if (oldFont) SelectObject(dc, oldFont);
             ReleaseDC(hwnd, dc);
         }
-        const int editHeight = (std::max)(1, (std::min)(outlineHeight - 2, measuredFontHeight));
+        const int editHeight = (std::max)(2, (std::min)(outlineHeight - 2, SnapEven(measuredFontHeight)));
         const int editOffsetY = (outlineHeight - editHeight) / 2;
         const auto placeEdit = [&](HWND edit, const RECT& outline) {
             SetWindowPos(edit, nullptr, outline.left + editPadX, outline.top + editOffsetY,
@@ -255,7 +256,7 @@ namespace {
     {
         if (!format || !text) return;
         state->brush->SetColor(color);
-        DrawPixelText(state->renderTarget.Get(), state->writeFactory.Get(),
+        state->textCache.Draw(state->renderTarget.Get(), state->writeFactory.Get(),
             text,
             static_cast<UINT32>(std::wcslen(text)),
             format,
@@ -291,7 +292,7 @@ namespace {
             static_cast<float>(buttonRect.top),
             static_cast<float>(buttonRect.right),
             static_cast<float>(buttonRect.bottom));
-        const float radius = static_cast<float>(Scale(6.0f, state->dpiScale));
+        const float radius = SurfaceCornerRadius(state->dpiScale, rect.right - rect.left, rect.bottom - rect.top);
         const D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(rect, radius, radius);
         state->brush->SetColor(hovered ? state->palette.menuHover : state->palette.statsCardBg);
         state->renderTarget->FillRoundedRectangle(rounded, state->brush.Get());
@@ -326,7 +327,7 @@ namespace {
         return IsValidBackgroundTransparency(transparency);
     }
 
-    bool TryReadScale(HWND edit, int& scalePercent) {
+    bool TryReadScaleEven(HWND edit, int& scalePercent) {
         const std::wstring value = ReadFieldText(edit);
         if (value.empty()) return false;
         wchar_t* end = nullptr;
@@ -349,7 +350,7 @@ namespace {
         const float width = static_cast<float>(clientRect.right);
         const float height = static_cast<float>(clientRect.bottom);
         const float scale = state->dpiScale;
-        const float hairline = (std::max)(1.0f, std::round(scale));
+        const float hairline = static_cast<float>(ScaleEven(1.0f, scale));
         state->renderTarget->BeginDraw();
         state->renderTarget->SetDpi(96.0f, 96.0f);
         state->brush->SetColor(state->palette.surface);
@@ -365,21 +366,21 @@ namespace {
         DrawText(
             state, L"编辑个性外观", state->titleFont.Get(),
             D2D1::RectF(
-                static_cast<float>(Scale(16.0f, scale)),
-                static_cast<float>(Scale(8.0f, scale)),
+                static_cast<float>(ScaleEven(16.0f, scale)),
+                static_cast<float>(ScaleEven(8.0f, scale)),
                 width,
-                static_cast<float>(Scale(42.0f, scale))),
+                static_cast<float>(ScaleEven(42.0f, scale))),
             state->palette.text);
-        const float dividerPadX = static_cast<float>(Scale(12.0f, scale));
-        const float dividerTop = static_cast<float>(Scale(44.0f, scale));
+        const float dividerPadX = static_cast<float>(ScaleEven(12.0f, scale));
+        const float dividerTop = static_cast<float>(ScaleEven(44.0f, scale));
         state->brush->SetColor(state->palette.menuDivider);
         state->renderTarget->FillRectangle(
             D2D1::RectF(dividerPadX, dividerTop, width - dividerPadX, dividerTop + hairline),
             state->brush.Get());
 
-        const float labelW = static_cast<float>(Scale(108.0f, scale));
-        const float leftColX = static_cast<float>(Scale(18.0f, scale));
-        const float rightColX = static_cast<float>(Scale(386.0f, scale));
+        const float labelW = static_cast<float>(ScaleEven(108.0f, scale));
+        const float leftColX = static_cast<float>(ScaleEven(18.0f, scale));
+        const float rightColX = static_cast<float>(ScaleEven(386.0f, scale));
 
         for (size_t index = 0; index < kColorCount; ++index) {
             ColorField& field = state->fields[index];
@@ -399,7 +400,7 @@ namespace {
                     static_cast<float>(field.outline.bottom)),
                 state->palette.text);
 
-            const float radius = static_cast<float>(Scale(5.0f, scale));
+            const float radius = SurfaceCornerRadius(scale, 100.0f * scale, 28.0f * scale);
             state->brush->SetColor(state->palette.trackBg);
             state->renderTarget->FillRoundedRectangle(
                 D2D1::RoundedRect(outline, radius, radius), state->brush.Get());
@@ -451,7 +452,7 @@ namespace {
             static_cast<float>(state->transparencyOutline.top),
             static_cast<float>(state->transparencyOutline.right),
             static_cast<float>(state->transparencyOutline.bottom));
-        const float transparencyRadius = static_cast<float>(Scale(5.0f, scale));
+        const float transparencyRadius = SurfaceCornerRadius(scale, 100.0f * scale, 28.0f * scale);
         state->brush->SetColor(state->palette.trackBg);
         state->renderTarget->FillRoundedRectangle(
             D2D1::RoundedRect(
@@ -470,8 +471,8 @@ namespace {
             transparencyRadius,
             2.0f);
         state->bodyFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        const float percentLeft = static_cast<float>(Scale(660.0f, scale));
-        const float percentWidth = static_cast<float>(Scale(36.0f, scale));
+        const float percentLeft = static_cast<float>(ScaleEven(660.0f, scale));
+        const float percentWidth = static_cast<float>(ScaleEven(36.0f, scale));
         DrawText(
             state, L"%", state->bodyFont.Get(),
             D2D1::RectF(
@@ -496,7 +497,7 @@ namespace {
             static_cast<float>(state->scaleOutline.top),
             static_cast<float>(state->scaleOutline.right),
             static_cast<float>(state->scaleOutline.bottom));
-        const float scaleRadius = static_cast<float>(Scale(5.0f, scale));
+        const float scaleRadius = SurfaceCornerRadius(scale, 100.0f * scale, 28.0f * scale);
         state->brush->SetColor(state->palette.trackBg);
         state->renderTarget->FillRoundedRectangle(
             D2D1::RoundedRect(scaleOutline, scaleRadius, scaleRadius),
@@ -538,7 +539,7 @@ namespace {
             static_cast<float>(state->fontOutline.top),
             static_cast<float>(state->fontOutline.right),
             static_cast<float>(state->fontOutline.bottom));
-        const float fontRadius = static_cast<float>(Scale(5.0f, scale));
+        const float fontRadius = SurfaceCornerRadius(scale, 100.0f * scale, 28.0f * scale);
         state->brush->SetColor(state->palette.trackBg);
         state->renderTarget->FillRoundedRectangle(
             D2D1::RoundedRect(fontOutline, fontRadius, fontRadius), state->brush.Get());
@@ -562,14 +563,14 @@ namespace {
             : (state->appliedNotice
                 ? L"个性外观与字体已应用"
                 : L"透明度 0%–90%；缩放 20%–180%（步进20%）；点击应用生效");
-        const float hintRight = static_cast<float>(state->applyRect.left - Scale(8.0f, scale));
+        const float hintRight = static_cast<float>(state->applyRect.left - ScaleEven(8.0f, scale));
         DrawText(
             state, hint, state->hintFont.Get(),
             D2D1::RectF(
                 leftColX,
-                static_cast<float>(Scale(512.0f, scale)),
+                static_cast<float>(ScaleEven(512.0f, scale)),
                 hintRight,
-                static_cast<float>(Scale(550.0f, scale))),
+                static_cast<float>(ScaleEven(550.0f, scale))),
             state->invalidField >= 0
                 ? state->palette.progressRed
                 : (state->appliedNotice
@@ -580,7 +581,7 @@ namespace {
         DrawButton(state, state->confirmRect, L"确定", state->hoverButton == 1);
         DrawButton(state, state->cancelRect, L"取消", state->hoverButton == 2);
 
-        const float borderStroke = (std::max)(2.0f, static_cast<float>(SnapEven(Scale(1.0f, scale))));
+        const float borderStroke = (std::max)(2.0f, static_cast<float>(SnapEven(ScaleEven(1.0f, scale))));
         const float borderInset = borderStroke * 0.5f;
         const float outerCorner = (std::max)(0.0f, state->windowCornerRadius - borderInset);
         state->brush->SetColor(state->palette.statsCardBorder);
@@ -636,7 +637,7 @@ namespace {
         }
 
         int scalePercent = 100;
-        state->scaleInvalid = !TryReadScale(state->scaleEdit, scalePercent);
+        state->scaleInvalid = !TryReadScaleEven(state->scaleEdit, scalePercent);
         if (state->invalidField < 0 && state->scaleInvalid) {
             state->invalidField = static_cast<int>(kColorCount) + 2;
         }
@@ -718,7 +719,7 @@ namespace {
             if (scale != state->dpiScale && !UpdateDialogFonts(*state, scale)) return 0;
             state->windowCornerRadius = WindowOuterCornerRadius(monitorScale);
             SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
-                         Scale(kDialogWidth, scale), Scale(kDialogHeight, scale),
+                         ScaleEven(kDialogWidth, scale), ScaleEven(kDialogHeight, scale),
                          SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
             LayoutAppearanceDialog(hwnd, *state);
             RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
@@ -881,7 +882,7 @@ namespace {
             return 0;
         case WM_LBUTTONDOWN: {
             const POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            if (point.y < Scale(44.0f, state->dpiScale)) {
+            if (point.y < ScaleEven(44.0f, state->dpiScale)) {
                 ReleaseCapture();
                 SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
                 return 0;
@@ -944,14 +945,14 @@ namespace {
             return SUCCEEDED(state.writeFactory->CreateTextFormat(
                 family, nullptr, weight,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                std::round(size * scale), L"zh-cn", format));
+                static_cast<float>(ScaleEven(size, scale)), L"zh-cn", format));
         };
         ComPtr<IDWriteTextFormat> title, body, hint;
         if (!createFormat(DWRITE_FONT_WEIGHT_BOLD, 16.0f, title.GetAddressOf()) ||
             !createFormat(DWRITE_FONT_WEIGHT_REGULAR, 14.0f, body.GetAddressOf()) ||
             !createFormat(DWRITE_FONT_WEIGHT_REGULAR, 12.0f, hint.GetAddressOf())) return false;
         HFONT font = CreateFontW(
-            -Scale(14.0f, scale), 0, 0, 0, FW_REGULAR,
+            -ScaleEven(14.0f, scale), 0, 0, 0, FW_REGULAR,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family);
         if (!font) return false;
@@ -959,6 +960,7 @@ namespace {
         title->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         body->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         hint->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        state.textCache.Clear();
         state.titleFont = std::move(title);
         state.bodyFont = std::move(body);
         state.hintFont = std::move(hint);
@@ -1037,8 +1039,8 @@ namespace {
         }
 
         const float scale = state.dpiScale;
-        const int width = Scale(kDialogWidth, scale);
-        const int height = Scale(kDialogHeight, scale);
+        const int width = ScaleEven(kDialogWidth, scale);
+        const int height = ScaleEven(kDialogHeight, scale);
         const POINT position = CenterAndClamp(owner, width, height);
 
         HWND dialog = CreateWindowExW(

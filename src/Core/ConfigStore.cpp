@@ -132,11 +132,11 @@ namespace {
                 AppendValidationError(errors, L"Settings.Appearance.Mode 必须是字符串");
             } else {
                 const std::wstring mode = object[L"Mode"].as_string();
-                if (mode == L"Default") appearance.mode = AppearanceMode::Default;
+                if (mode == L"Light" || mode == L"Default") appearance.mode = AppearanceMode::Light;
                 else if (mode == L"Custom") appearance.mode = AppearanceMode::Custom;
                 else if (mode == L"Dark") appearance.mode = AppearanceMode::Dark;
                 else AppendValidationError(
-                    errors, L"Settings.Appearance.Mode 只能是 Default、Dark 或 Custom");
+                    errors, L"Settings.Appearance.Mode 只能是 Light、Dark 或 Custom");
             }
         }
 
@@ -290,9 +290,10 @@ namespace {
         }
         if (!appearance.has_key(L"Mode") ||
             !appearance[L"Mode"].is_string() ||
-            appearance[L"Mode"].as_string() != L"Default") {
+            (appearance[L"Mode"].as_string() != L"Light" &&
+             appearance[L"Mode"].as_string() != L"Default")) {
             AppendValidationError(
-                errors, L"config-default.json 的 Appearance.Mode 必须是 Default");
+                errors, L"config-default.json 的 Appearance.Mode 必须是 Light");
         }
         if (!appearance.has_key(L"FontFamily") ||
             !appearance.has_key(L"BackgroundTransparency") ||
@@ -474,7 +475,7 @@ namespace {
         const auto& current = data.settings.appearance;
         ObjectMember(appearance, L"Mode") = String(
             current.mode == AppearanceMode::Custom ? L"Custom" :
-            current.mode == AppearanceMode::Dark ? L"Dark" : L"Default");
+            current.mode == AppearanceMode::Dark ? L"Dark" : L"Light");
         ObjectMember(appearance, L"FontFamily") = String(current.fontFamily);
         ObjectMember(appearance, L"BackgroundTransparency") = Number(current.backgroundTransparency);
         auto& colors = ObjectMember(appearance, L"Colors");

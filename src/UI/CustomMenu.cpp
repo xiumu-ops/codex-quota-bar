@@ -1,6 +1,6 @@
 #include "UI/CustomMenu.h"
 #include "UI/WindowEffects.h"
-#include "Core/DpiHelper.h"
+#include "Core/Layout.h"
 #include "Graphics/PixelText.h"
 
 #include <algorithm>
@@ -33,6 +33,7 @@ namespace CodexQuotaBar {
             ComPtr<IDWriteTextFormat> pFontMenu;
             ComPtr<ID2D1DCRenderTarget> pMenuRenderTarget;
             ComPtr<ID2D1SolidColorBrush> pMenuBrush;
+            PixelTextCache textCache;
         };
 
         bool MeasureMenuText(
@@ -82,9 +83,9 @@ namespace CodexQuotaBar {
 
             const float w = static_cast<float>(clientRect.right - clientRect.left);
             const float h = static_cast<float>(clientRect.bottom - clientRect.top);
-            const float padX = static_cast<float>(Scale(12.0f, st->dpiScale));
-            const float hoverRadius = static_cast<float>(Scale(4.0f, st->dpiScale));
-            const float hairline = (std::max)(1.0f, std::round(st->dpiScale));
+            const float padX = static_cast<float>(ScaleEven(12.0f, st->dpiScale));
+            const float hoverRadius = SurfaceCornerRadius(st->dpiScale, w, h);
+            const float hairline = static_cast<float>(ScaleEven(1.0f, st->dpiScale));
 
             st->pMenuRenderTarget->BeginDraw();
             st->pMenuRenderTarget->SetDpi(96.0f, 96.0f);
@@ -125,7 +126,7 @@ namespace CodexQuotaBar {
                 if (st->pFontMenu) {
                     st->pMenuBrush->SetColor(st->ids[i] != 0 ? st->palette.text : st->palette.muted);
                     D2D1_RECT_F textRect = D2D1::RectF(rc.left + padX, rc.top, rc.right - padX, rc.bottom);
-                    DrawPixelText(st->pMenuRenderTarget.Get(), st->pDWriteFactory.Get(),
+                    st->textCache.Draw(st->pMenuRenderTarget.Get(), st->pDWriteFactory.Get(),
                         row.text.c_str(), static_cast<UINT32>(row.text.size()),
                         st->pFontMenu.Get(), textRect, st->pMenuBrush.Get());
                 }
@@ -272,7 +273,7 @@ namespace CodexQuotaBar {
         if (FAILED(st.pDWriteFactory->CreateTextFormat(
                 fontFamily.c_str(), NULL,
                 DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                static_cast<float>(Scale(14.0f, dpiScale)), L"zh-cn", &st.pFontMenu))) {
+                static_cast<float>(ScaleEven(14.0f, dpiScale)), L"zh-cn", &st.pFontMenu))) {
             return 0;
         }
         st.pFontMenu->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -287,10 +288,10 @@ namespace CodexQuotaBar {
             }
         }
 
-        const int surfacePad = Scale(4.0f, dpiScale);   // 菜单内容到窗口边
-        const int itemHPad = Scale(8.0f, dpiScale);     // 文字上下留白
-        const int sepH = Scale(8.0f, dpiScale);         // 分隔线行高
-        int menuW = static_cast<int>(std::ceil(maxTextW)) + Scale(24.0f + 8.0f, dpiScale) + Scale(8.0f, dpiScale);
+        const int surfacePad = ScaleEven(4.0f, dpiScale);   // 菜单内容到窗口边
+        const int itemHPad = ScaleEven(8.0f, dpiScale);     // 文字上下留白
+        const int sepH = ScaleEven(8.0f, dpiScale);         // 分隔线行高
+        int menuW = static_cast<int>(std::ceil(maxTextW)) + ScaleEven(24.0f + 8.0f, dpiScale) + ScaleEven(8.0f, dpiScale);
         if (menuW % 2 != 0) menuW++;
 
         int y = surfacePad;

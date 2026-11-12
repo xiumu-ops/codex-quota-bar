@@ -8,7 +8,7 @@
 namespace CodexQuotaBar {
 
     enum class AppearanceMode {
-        Default,
+        Light,
         Custom,
         Dark
     };
@@ -16,7 +16,7 @@ namespace CodexQuotaBar {
     std::map<std::wstring, std::wstring> DefaultAppearanceColors();
 
     struct AppearanceSettings {
-        AppearanceMode mode = AppearanceMode::Default;
+        AppearanceMode mode = AppearanceMode::Light;
         std::wstring fontFamily = L"Microsoft YaHei UI";
         int backgroundTransparency = 0;
         std::map<std::wstring, std::wstring> colors = DefaultAppearanceColors();

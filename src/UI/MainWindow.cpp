@@ -42,7 +42,7 @@ namespace CodexQuotaBar {
     constexpr int IDM_REFRESH_INTERVAL_SUB = 2200;
     constexpr int IDM_REFRESH_INTERVAL_BASE = 2201; // 二级菜单：刷新档位 id 基址（+0..4）
     constexpr int IDM_APPEARANCE_SUB = 2300;
-    constexpr int IDM_APPEARANCE_DEFAULT = 2301;
+    constexpr int IDM_APPEARANCE_LIGHT = 2301;
     constexpr int IDM_APPEARANCE_CUSTOM = 2302;
     constexpr int IDM_APPEARANCE_EDIT = 2303;
     constexpr int IDM_APPEARANCE_DARK = 2304;
@@ -1362,7 +1362,7 @@ namespace CodexQuotaBar {
                 m_settings.appearance.mode == AppearanceMode::Custom;
             const bool dark = m_settings.appearance.mode == AppearanceMode::Dark;
             const std::vector<MenuItem> appearanceItems = {
-                { IDM_APPEARANCE_DEFAULT, !custom && !dark ? L"浅色外观 (当前)" : L"浅色外观" },
+                { IDM_APPEARANCE_LIGHT, !custom && !dark ? L"浅色外观 (当前)" : L"浅色外观" },
                 { IDM_APPEARANCE_DARK, dark ? L"深色外观 (当前)" : L"深色外观" },
                 { IDM_APPEARANCE_CUSTOM, custom ? L"使用个性外观 (当前)" : L"使用个性外观" },
                 { IDM_FONT_SUB, L"选择界面字体" },
@@ -1371,8 +1371,8 @@ namespace CodexQuotaBar {
             const int appearance = CustomMenu::Show(
                 m_hwnd, m_uiScale, screenX, screenY, appearanceItems,
                 m_renderer->Palette(), m_renderer->FontFamily());
-            if (appearance == IDM_APPEARANCE_DEFAULT) {
-                SetAppearanceMode(AppearanceMode::Default);
+            if (appearance == IDM_APPEARANCE_LIGHT) {
+                SetAppearanceMode(AppearanceMode::Light);
             } else if (appearance == IDM_APPEARANCE_DARK) {
                 SetAppearanceMode(AppearanceMode::Dark);
             } else if (appearance == IDM_APPEARANCE_CUSTOM) {

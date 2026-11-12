@@ -8,7 +8,7 @@
     "DockToWeather": false,
     "RefreshIntervalMinutes": 1,
     "Appearance": {
-      "Mode": "Default",
+      "Mode": "Light",
       "FontFamily": "Microsoft YaHei UI",
       "BackgroundTransparency": 0,
       "Colors": {

@@ -2,6 +2,7 @@
 
 #include "Graphics/D2DCommon.h"
 #include "Graphics/Theme.h"
+#include "Graphics/PixelText.h"
 #include "Core/Models.h"
 
 namespace CodexQuotaBar {
@@ -98,6 +99,8 @@ namespace CodexQuotaBar {
         bool m_lastMini = false;
         SyncState m_lastSyncState = SyncState::Waiting;
         QuotaSnapshot m_lastSnapshot;
+        int64_t m_lastRemainingDays = -1;
+        PixelTextCache m_textCache;
 
         // 设备无关资源 (Device-Independent Resources)
         ComPtr<ID2D1Factory> m_pD2DFactory;
